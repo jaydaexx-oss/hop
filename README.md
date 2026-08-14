@@ -2,23 +2,24 @@
 
 Privacy-first hybrid messenger. **Messages find a way.**
 
-This repository is an incremental skeleton. Features that are not implemented are labeled as such. Nothing here is a working messenger yet.
+First usable internet chat is in place. Chat send chooses internet or BLE automatically. Nearby BLE can exchange a libsodium `crypto_box` application message in code and has **not** been verified on hardware here. Mesh is **not** implemented. Internet chat is still `alg: none`.
 
 ## Status (honest)
 
 | Area | Status |
 |---|---|
-| Monorepo + git | Implemented |
-| Message model + state machine | Implemented, unit tested |
-| TransportManager abstraction | Implemented, unit tested |
-| LocalTransport | Partially implemented (in-memory, not SQLite) |
-| Internet / BLE / Relay transports | Not implemented (explicit stubs) |
-| FastAPI `/health` | Implemented, unit tested |
-| Auth, messages, sync APIs | Not implemented (HTTP 501) |
-| Expo tab shell | Implemented (source only until `npm install`) |
-| E2EE | Not implemented |
-| BLE on physical devices | Not implemented |
-| Docker Compose | Implemented as files; Docker is not installed on this machine |
+| Register, login, logout, username profile | Implemented, API tested |
+| 1:1 chats over the internet | Implemented, API tested |
+| WebSocket realtime | Implemented, API tested |
+| Delivery status (sent / delivered / read) | Implemented, API tested |
+| Alembic `001_initial` | Implemented (not applied to a live Postgres here) |
+| TransportManager + InternetTransport | Implemented, unit tested (internet/BLE/neither/both + fallback) |
+| SQLite local DB, offline queue, retry/backoff, reconnect sync | Implemented, protocol-tested (file DB restart) |
+| Nearby BLE proof of concept | Implemented in code; **not verified on physical iPhone/Android** |
+| Nearby BLE encrypted message | libsodium `crypto_box` in code; protocol-tested; **not verified on hardware** |
+| BLE / relay / mesh routing | **Mesh not implemented** |
+| Internet E2EE | **Not implemented** — internet bodies are `alg: none` over TLS |
+| Docker / Redis | Compose files only; Docker not installed |
 
 ## Layout
 
@@ -27,52 +28,50 @@ apps/mobile     Expo / React Native / TypeScript
 apps/api        FastAPI / Python
 packages/protocol   Shared message + transport types
 infra           docker-compose (Postgres, Redis, API)
-docs            Architecture, BLE PoC, platform limits
+.github/workflows   CI
+docs
 ```
 
 ## Run tests
 
-Protocol:
-
 ```bash
-cd packages/protocol
-npm install
-npm test
+cd packages/protocol && npm test
+cd apps/api && pytest
+cd apps/mobile && npm run typecheck
 ```
 
-API (no Postgres required for current tests):
+## Run locally
+
+API (SQLite, no Docker):
 
 ```bash
 cd apps/api
-python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements-test.txt
-pytest
+pip install uvicorn
+DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=* uvicorn app.main:app --reload --port 8000
 ```
 
-API process:
+Postgres migrations (when Postgres is running):
 
 ```bash
 cd apps/api
-source .venv/bin/activate
-uvicorn app.main:app --reload --port 8000
-# GET http://127.0.0.1:8000/health
+alembic upgrade head
 ```
 
-Mobile (after `npm install` in `apps/mobile`):
-
-```bash
-cd apps/mobile
-npx expo start
-```
-
-Docker (when Docker is installed):
+Mobile:
 
 ```bash
 cp .env.example .env
-docker compose -f infra/docker-compose.yml up --build
+cd apps/mobile
+npm install
+npx expo start --dev-client
 ```
+
+Nearby BLE requires a **development build** on a physical iPhone and Android phone. Expo Go, simulators, and web are not valid BLE tests. Exact steps: `docs/BLE_TESTING.md`.
+
+Android emulator: `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000`.
 
 ## Next recommended step
 
-Wire `InternetTransport` to the FastAPI health/WebSocket path, still without BLE or E2EE.
+Confirm Nearby BLE encrypted send on a physical iPhone and Android phone (`docs/BLE_TESTING.md`). Do not add mesh yet. Internet E2EE is still `alg: none`.

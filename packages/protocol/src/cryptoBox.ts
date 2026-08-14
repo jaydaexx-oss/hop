@@ -1,0 +1,135 @@
+import sodium from "libsodium-wrappers";
+
+/** libsodium NaCl crypto_box (X25519 + XSalsa20-Poly1305). Not a custom construction. */
+
+export const CRYPTO_BOX_ALG = "crypto_box_xsalsa20poly1305";
+
+export interface IdentityKeyPair {
+  publicKey: string;
+  secretKey: string;
+}
+
+export interface ApplicationPlaintext {
+  message_id: string;
+  sender_id: string;
+  recipient_id: string;
+  conversation_id: string;
+  text: string;
+  created_at: string;
+  expires_at: string;
+  ttl: number;
+  hop_count: number;
+}
+
+export interface CryptoBoxPayload {
+  v: 1;
+  alg: typeof CRYPTO_BOX_ALG;
+  sender_pk: string;
+  nonce: string;
+  ciphertext: string;
+}
+
+let readyPromise: Promise<typeof sodium> | null = null;
+
+export async function readySodium(): Promise<typeof sodium> {
+  if (!readyPromise) {
+    readyPromise = Promise.resolve(sodium.ready).then(() => sodium);
+  }
+  return readyPromise;
+}
+
+export async function generateIdentityKeyPair(): Promise<IdentityKeyPair> {
+  const s = await readySodium();
+  const pair = s.crypto_box_keypair();
+  const variant = s.base64_variants.ORIGINAL;
+  return {
+    publicKey: s.to_base64(pair.publicKey, variant),
+    secretKey: s.to_base64(pair.privateKey, variant),
+  };
+}
+
+export async function encryptApplicationMessage(
+  plain: ApplicationPlaintext,
+  recipientPublicKey: string,
+  sender: IdentityKeyPair,
+): Promise<string> {
+  if (!plain.text.trim()) {
+    throw new Error("Refusing to encrypt empty plaintext");
+  }
+  const s = await readySodium();
+  const variant = s.base64_variants.ORIGINAL;
+  const nonce = s.randombytes_buf(s.crypto_box_NONCEBYTES);
+  const ciphertext = s.crypto_box_easy(
+    s.from_string(JSON.stringify(plain)),
+    nonce,
+    s.from_base64(recipientPublicKey, variant),
+    s.from_base64(sender.secretKey, variant),
+  );
+  const payload: CryptoBoxPayload = {
+    v: 1,
+    alg: CRYPTO_BOX_ALG,
+    sender_pk: sender.publicKey,
+    nonce: s.to_base64(nonce, variant),
+    ciphertext: s.to_base64(ciphertext, variant),
+  };
+  return JSON.stringify(payload);
+}
+
+export async function decryptApplicationMessage(
+  encryptedPayload: string,
+  recipient: IdentityKeyPair,
+  expectedSenderPk?: string,
+  expectedMessageId?: string,
+): Promise<ApplicationPlaintext> {
+  const parsed = parseCryptoBoxPayload(encryptedPayload);
+  if (!parsed) {
+    throw new Error("Not a libsodium crypto_box payload");
+  }
+  if (expectedSenderPk && expectedSenderPk !== parsed.sender_pk) {
+    throw new Error("Sender public key does not match the handshake session");
+  }
+  const s = await readySodium();
+  const variant = s.base64_variants.ORIGINAL;
+  const opened = s.crypto_box_open_easy(
+    s.from_base64(parsed.ciphertext, variant),
+    s.from_base64(parsed.nonce, variant),
+    s.from_base64(parsed.sender_pk, variant),
+    s.from_base64(recipient.secretKey, variant),
+  );
+  const plain = JSON.parse(s.to_string(opened)) as ApplicationPlaintext;
+  if (!plain?.message_id || typeof plain.text !== "string") {
+    throw new Error("Decrypted payload is not a HOP application message");
+  }
+  if (expectedMessageId && plain.message_id !== expectedMessageId) {
+    throw new Error("Authenticated message_id does not match the envelope");
+  }
+  return plain;
+}
+
+export function parseCryptoBoxPayload(encryptedPayload: string): CryptoBoxPayload | null {
+  try {
+    const data = JSON.parse(encryptedPayload) as Partial<CryptoBoxPayload>;
+    if (
+      data.v !== 1 ||
+      data.alg !== CRYPTO_BOX_ALG ||
+      typeof data.sender_pk !== "string" ||
+      typeof data.nonce !== "string" ||
+      typeof data.ciphertext !== "string"
+    ) {
+      return null;
+    }
+    return {
+      v: 1,
+      alg: CRYPTO_BOX_ALG,
+      sender_pk: data.sender_pk,
+      nonce: data.nonce,
+      ciphertext: data.ciphertext,
+    };
+  } catch {
+    return null;
+  }
+}
+
+export function isCryptoBoxPayload(encryptedPayload: string): boolean {
+  return parseCryptoBoxPayload(encryptedPayload) !== null;
+}

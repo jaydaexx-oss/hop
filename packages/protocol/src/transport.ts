@@ -39,6 +39,11 @@ export interface TransportRuntimeStatus {
 export interface Transport {
   readonly id: TransportId;
   isAvailable(): Promise<boolean>;
+  /**
+   * Recipient-aware check. Defaults to `isAvailable()` when omitted.
+   * BLE uses this to require a mapped nearby peer, not just radio-on.
+   */
+  canSend?(envelope: EncryptedEnvelope): Promise<boolean>;
   send(envelope: EncryptedEnvelope): Promise<SendResult>;
   subscribe(handler: (envelope: EncryptedEnvelope) => void): () => void;
   status(): TransportRuntimeStatus;

@@ -20,10 +20,9 @@ node_modules/
 npm-debug.log*
 yarn-error.log*
 
-# Expo / React Native
-.expo/
-apps/mobile/ios/Pods/
-apps/mobile/android/.gradle/
+# Generated native projects (Expo CNG / prebuild)
+apps/mobile/ios/
+apps/mobile/android/
 *.jks
 *.p8
 *.p12

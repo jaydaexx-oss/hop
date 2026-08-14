@@ -3,9 +3,8 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@/*": [
-        "./*"
-      ]
+      "@/*": ["./*"],
+      "@hop/protocol": ["../../packages/protocol/src/index.ts"]
     }
   },
   "include": [

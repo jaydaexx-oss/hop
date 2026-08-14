@@ -28,20 +28,6 @@ class UnavailableTransport implements Transport {
   }
 }
 
-export function createInternetTransport(): Transport {
-  return new UnavailableTransport(
-    "internet",
-    "Not implemented. Requires FastAPI WebSocket delivery.",
-  );
-}
-
-export function createBluetoothTransport(): Transport {
-  return new UnavailableTransport(
-    "bluetooth",
-    "Not implemented. BLE is not complete until tested on a physical iPhone and Android phone.",
-  );
-}
-
 export function createRelayTransport(): Transport {
   return new UnavailableTransport(
     "relay",

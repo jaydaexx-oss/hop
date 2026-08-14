@@ -1,10 +1,13 @@
-import { useFonts } from 'expo-font';
 import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
+import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
 import 'react-native-reanimated';
 
 import { useColorScheme } from '@/components/useColorScheme';
+import { AuthProvider, useAuth } from '@/src/auth/AuthProvider';
+import { BleProvider } from '@/src/ble/BleProvider';
+import { OfflineProvider } from '@/src/offline/OfflineProvider';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -24,25 +27,34 @@ export default function RootLayout() {
   }, [error]);
 
   useEffect(() => {
-    if (loaded) {
-      SplashScreen.hideAsync();
-    }
+    if (loaded) SplashScreen.hideAsync();
   }, [loaded]);
 
-  if (!loaded) {
-    return null;
-  }
+  if (!loaded) return null;
 
-  return <RootLayoutNav />;
+  return (
+    <AuthProvider>
+      <OfflineProvider>
+        <BleProvider>
+          <RootLayoutNav />
+        </BleProvider>
+      </OfflineProvider>
+    </AuthProvider>
+  );
 }
 
 function RootLayoutNav() {
   const colorScheme = useColorScheme();
+  const { ready } = useAuth();
+
+  if (!ready) return null;
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
       <Stack>
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+        <Stack.Screen name="chat/[id]" options={{ title: 'Chat' }} />
+        <Stack.Screen name="login" options={{ headerShown: false }} />
       </Stack>
     </ThemeProvider>
   );

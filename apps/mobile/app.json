@@ -9,10 +9,23 @@
     "userInterfaceStyle": "automatic",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "app.hop.mobile"
+      "bundleIdentifier": "app.hop.mobile",
+      "infoPlist": {
+        "NSBluetoothAlwaysUsageDescription": "HOP uses Bluetooth to find nearby HOP users and exchange a message when Nearby is open.",
+        "NSBluetoothPeripheralUsageDescription": "HOP uses Bluetooth to be discoverable by nearby HOP users while Nearby is open."
+      }
     },
     "android": {
       "package": "app.hop.mobile",
+      "permissions": [
+        "android.permission.BLUETOOTH",
+        "android.permission.BLUETOOTH_ADMIN",
+        "android.permission.BLUETOOTH_SCAN",
+        "android.permission.BLUETOOTH_CONNECT",
+        "android.permission.BLUETOOTH_ADVERTISE",
+        "android.permission.ACCESS_FINE_LOCATION",
+        "android.permission.ACCESS_COARSE_LOCATION"
+      ],
       "adaptiveIcon": {
         "backgroundColor": "#0B0F14",
         "foregroundImage": "./assets/images/android-icon-foreground.png",
@@ -28,12 +41,21 @@
     },
     "plugins": [
       "expo-router",
+      "expo-dev-client",
       [
         "expo-splash-screen",
         {
           "image": "./assets/images/splash-icon.png",
           "resizeMode": "contain",
           "backgroundColor": "#0B0F14"
+        }
+      ],
+      "expo-secure-store",
+      [
+        "munim-bluetooth",
+        {
+          "androidBluetoothPermissions": ["scan", "connect", "advertise"],
+          "localNetworkUsageDescription": "HOP Nearby uses Bluetooth Low Energy, not your local network, to find nearby HOP users."
         }
       ]
     ],

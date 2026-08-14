@@ -1,12 +1,10 @@
 import { ProcessedIdSet } from "./duplicates.js";
+import { createInternetTransport } from "./internetTransport.js";
 import { LocalTransport } from "./localTransport.js";
 import { isExpired } from "./message.js";
 import { DEFAULT_RETRY_POLICY, nextBackoffMs, type RetryPolicy } from "./retry.js";
-import {
-  createBluetoothTransport,
-  createInternetTransport,
-  createRelayTransport,
-} from "./stubTransports.js";
+import { createBluetoothTransport } from "./bluetoothTransport.js";
+import { createRelayTransport } from "./stubTransports.js";
 import type {
   EncryptedEnvelope,
   NetworkStatus,
@@ -15,7 +13,8 @@ import type {
   TransportId,
 } from "./transport.js";
 
-const PRIORITY: TransportId[] = ["internet", "bluetooth", "relay", "local"];
+/** Live delivery routes. Relay is not selected (unimplemented, no consent). Local is fallback only. */
+export const LIVE_TRANSPORT_PRIORITY: TransportId[] = ["internet", "bluetooth"];
 
 export interface QueueItem {
   envelope: EncryptedEnvelope;
@@ -50,6 +49,45 @@ export class TransportManager {
     return this.processed.remember(envelope.message_id);
   }
 
+  async canUse(transport: Transport, envelope: EncryptedEnvelope): Promise<boolean> {
+    if (transport.canSend) return transport.canSend(envelope);
+    return transport.isAvailable();
+  }
+
+  /** First live route that can carry this envelope, or null to queue locally. */
+  async select(envelope: EncryptedEnvelope): Promise<TransportId | null> {
+    for (const id of LIVE_TRANSPORT_PRIORITY) {
+      const transport = this.transports.get(id);
+      if (!transport) continue;
+      if (await this.canUse(transport, envelope)) return id;
+    }
+    return null;
+  }
+
+  /**
+   * Try internet, then BLE. Does not use local queue or relay.
+   * If a selected transport's send fails, the next live route is tried.
+   */
+  async send(envelope: EncryptedEnvelope): Promise<SendResult> {
+    if (!envelope.encrypted_payload) {
+      return { ok: false, transport: "local", error: "Refusing to send empty/plaintext payload" };
+    }
+    if (isExpired(envelope)) {
+      return { ok: false, transport: envelope.transport, error: "Message expired" };
+    }
+
+    let last: SendResult = { ok: false, transport: "local", error: "No transport available" };
+    for (const id of LIVE_TRANSPORT_PRIORITY) {
+      const transport = this.transports.get(id);
+      if (!transport) continue;
+      if (!(await this.canUse(transport, envelope))) continue;
+      const result = await transport.send({ ...envelope, transport: transport.id });
+      if (result.ok) return result;
+      last = result;
+    }
+    return last.ok ? last : { ok: false, transport: "local", error: last.error ?? "No transport available" };
+  }
+
   async enqueue(envelope: EncryptedEnvelope, now = new Date()): Promise<SendResult> {
     if (!envelope.encrypted_payload) {
       return { ok: false, transport: "local", error: "Refusing to send empty/plaintext payload" };
@@ -61,9 +99,17 @@ export class TransportManager {
       return { ok: false, transport: envelope.transport, error: "Duplicate message_id" };
     }
 
-    const sent = await this.trySend(envelope);
+    const sent = await this.send(envelope);
     if (sent.ok) {
       return sent;
+    }
+
+    const local = this.transports.get("local");
+    if (local) {
+      const queued = await local.send({ ...envelope, transport: "local" });
+      if (queued.ok) {
+        return { ok: true, transport: "local", error: "Queued for retry" };
+      }
     }
 
     this.outbound.push({ envelope, attempts: 0 });
@@ -80,7 +126,7 @@ export class TransportManager {
       if (backoff === null) {
         continue;
       }
-      const sent = await this.trySend(item.envelope);
+      const sent = await this.send(item.envelope);
       if (!sent.ok) {
         this.outbound.push({ ...item, attempts: item.attempts + 1 });
       }
@@ -101,20 +147,6 @@ export class TransportManager {
 
   peekQueue(): readonly QueueItem[] {
     return this.outbound;
-  }
-
-  private async trySend(envelope: EncryptedEnvelope): Promise<SendResult> {
-    const ordered = PRIORITY.map((id) => this.transports.get(id)).filter(
-      (t): t is Transport => t !== undefined,
-    );
-
-    for (const transport of ordered) {
-      if (!(await transport.isAvailable())) continue;
-      const result = await transport.send({ ...envelope, transport: transport.id });
-      if (result.ok) return result;
-    }
-
-    return { ok: false, transport: "local", error: "No transport available" };
   }
 }
 

@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated with Step 1 (repository skeleton).
+Updated after the architecture-docs pass. Roadmap: [ROADMAP.md](./ROADMAP.md).
 
 | Item | Status | Tested |
 |---|---|---|

@@ -27,7 +27,7 @@ apps/mobile     Expo / React Native / TypeScript
 apps/api        FastAPI / Python
 packages/protocol   Shared message + transport types
 infra           docker-compose (Postgres, Redis, API)
-docs            Architecture, BLE PoC, platform limits
+docs            ARCHITECTURE, ROADMAP, SECURITY, BLE
 ```
 
 ## Run tests
@@ -73,6 +73,13 @@ cp .env.example .env
 docker compose -f infra/docker-compose.yml up --build
 ```
 
+## Docs
+
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)
+- [docs/ROADMAP.md](docs/ROADMAP.md)
+- [docs/SECURITY.md](docs/SECURITY.md)
+- [docs/BLE.md](docs/BLE.md)
+
 ## Next recommended step
 
-Wire `InternetTransport` to the FastAPI health/WebSocket path, still without BLE or E2EE.
+See [docs/ROADMAP.md](docs/ROADMAP.md). Do not start BLE or mesh until Internet + local persistence are real, except as a later dedicated milestone.

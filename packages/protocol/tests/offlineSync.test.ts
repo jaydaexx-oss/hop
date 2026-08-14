@@ -3,6 +3,12 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
+import {
+  encryptApplicationMessage,
+  generateIdentityKeyPair,
+  type IdentityKeyPair,
+  type MessageCrypto,
+} from "../src/index.js";
 import type { HopHttpClient } from "../src/http.js";
 import { InternetTransport } from "../src/internetTransport.js";
 import { MessageStatus } from "../src/message.js";
@@ -22,9 +28,20 @@ const sendInput = {
   recipient_id: RECIPIENT,
 };
 
+function testCrypto(sender: IdentityKeyPair, recipientPk: string): MessageCrypto {
+  return {
+    encrypt(plain) {
+      return encryptApplicationMessage(plain, recipientPk, sender);
+    },
+    decrypt() {
+      throw new Error("offline sync tests do not decrypt inbound internet rows");
+    },
+  };
+}
+
 function mockWorld(options?: { failPost?: boolean }) {
   let online = true;
-  const posts: { message_id: string; text: string }[] = [];
+  const posts: { message_id: string; encrypted_payload: string }[] = [];
   const server = new Map<string, Record<string, unknown>>();
   const http: HopHttpClient = {
     async request(path, init) {
@@ -40,8 +57,8 @@ function mockWorld(options?: { failPost?: boolean }) {
         if (options?.failPost) {
           return { ok: false, status: 500, data: { detail: "upstream" } };
         }
-        const body = init.body as { text: string; message_id: string };
-        posts.push({ message_id: body.message_id, text: body.text });
+        const body = init.body as { encrypted_payload: string; message_id: string };
+        posts.push({ message_id: body.message_id, encrypted_payload: body.encrypted_payload });
         const existing = server.get(body.message_id);
         if (existing) return { ok: true, status: 200, data: existing };
         const row = {
@@ -49,14 +66,15 @@ function mockWorld(options?: { failPost?: boolean }) {
           conversation_id: CONVO,
           sender_id: SENDER,
           recipient_id: RECIPIENT,
-          text: body.text,
-          encrypted_payload: "e30=",
+          text: null,
+          encrypted_payload: body.encrypted_payload,
           status: "SENT",
           transport: "internet",
           created_at: new Date().toISOString(),
           expires_at: new Date(Date.now() + 86_400_000).toISOString(),
           ttl: 86_400_000,
           hop_count: 0,
+          e2ee: true,
         };
         server.set(body.message_id, row);
         return { ok: true, status: 200, data: row };
@@ -77,13 +95,13 @@ function mockWorld(options?: { failPost?: boolean }) {
   };
 }
 
-async function openService(file: string, http: HopHttpClient) {
+async function openService(file: string, http: HopHttpClient, crypto: MessageCrypto) {
   const driver = await SqlJsDriver.open(file);
   const store = new HopSqliteStore(driver);
   await store.init();
   const manager = new TransportManager();
   manager.register(new InternetTransport(http));
-  const service = new MessageService(store, manager, http, () => "token");
+  const service = new MessageService(store, manager, http, () => "token", crypto);
   return { driver, store, service, manager };
 }
 
@@ -106,10 +124,14 @@ describe("offline persistence and sync", () => {
   it("Internet → send → disable internet → send → restart → reconnect → synchronize", async () => {
     const file = tempDb();
     const world = mockWorld();
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const crypto = testCrypto(alice, blake.publicKey);
 
-    const session1 = await openService(file, world.http);
+    const session1 = await openService(file, world.http, crypto);
     const onlineMsg = await session1.service.sendText({ ...sendInput, text: "online hello" });
     expect(onlineMsg.status).toBe(MessageStatus.SENT);
+    expect(onlineMsg.encrypted_payload).not.toContain("online hello");
     expect(await session1.store.queuedCount()).toBe(0);
     expect(await session1.service.getNetworkStatus()).toBe("Online");
 
@@ -121,7 +143,7 @@ describe("offline persistence and sync", () => {
     expect(await session1.service.getNetworkStatus()).toBe("Queued");
     session1.driver.close();
 
-    const session2 = await openService(file, world.http);
+    const session2 = await openService(file, world.http, crypto);
     const restored = await session2.service.listMessages(CONVO);
     expect(restored.map((row) => row.text).sort()).toEqual(["offline hello", "online hello"]);
     expect(restored.find((row) => row.text === "offline hello")?.status).toBe(MessageStatus.QUEUED);
@@ -139,6 +161,7 @@ describe("offline persistence and sync", () => {
     expect(await session2.store.queuedCount()).toBe(0);
     expect(world.posts.filter((post) => post.message_id === queuedMsg.message_id)).toHaveLength(1);
     expect(world.posts.filter((post) => post.message_id === onlineMsg.message_id)).toHaveLength(1);
+    expect(world.posts[0]?.encrypted_payload).not.toContain("online hello");
 
     await session2.service.sync();
     expect(world.posts.filter((post) => post.message_id === queuedMsg.message_id)).toHaveLength(1);
@@ -148,8 +171,10 @@ describe("offline persistence and sync", () => {
   it("retries with exponential backoff while the server is failing", async () => {
     const file = tempDb();
     const world = mockWorld({ failPost: true });
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
     const now = new Date("2026-08-13T00:00:00.000Z");
-    const session = await openService(file, world.http);
+    const session = await openService(file, world.http, testCrypto(alice, blake.publicKey));
     const sent = await session.service.sendText({ ...sendInput, text: "retry me", now });
     expect(sent.status).toBe(MessageStatus.QUEUED);
 
@@ -173,6 +198,9 @@ describe("offline persistence and sync", () => {
   it("drops duplicate inbound message ids across app restart", async () => {
     const file = tempDb();
     const world = mockWorld();
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const crypto = testCrypto(alice, blake.publicKey);
     const inbound: StoredMessage = {
       message_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       conversation_id: CONVO,
@@ -188,12 +216,12 @@ describe("offline persistence and sync", () => {
       hop_count: 0,
     };
 
-    const session1 = await openService(file, world.http);
+    const session1 = await openService(file, world.http, crypto);
     expect(await session1.service.acceptInbound(inbound)).toBe(true);
     expect(await session1.service.acceptInbound(inbound)).toBe(false);
     session1.driver.close();
 
-    const session2 = await openService(file, world.http);
+    const session2 = await openService(file, world.http, crypto);
     expect(await session2.service.acceptInbound(inbound)).toBe(false);
     expect(await session2.service.listMessages(CONVO)).toHaveLength(1);
     session2.driver.close();
@@ -203,7 +231,9 @@ describe("offline persistence and sync", () => {
     const file = tempDb();
     const world = mockWorld();
     world.setOnline(false);
-    const session = await openService(file, world.http);
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const session = await openService(file, world.http, testCrypto(alice, blake.publicKey));
     const bleSent: string[] = [];
     session.manager.register({
       id: "bluetooth",

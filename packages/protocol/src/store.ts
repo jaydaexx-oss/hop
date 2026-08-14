@@ -30,6 +30,7 @@ CREATE TABLE IF NOT EXISTS conversations (
   id TEXT PRIMARY KEY,
   peer_id TEXT,
   peer_username TEXT,
+  peer_public_key TEXT,
   created_at TEXT NOT NULL
 );
 
@@ -69,6 +70,7 @@ export interface StoredConversation {
   id: string;
   peer_id: string | null;
   peer_username: string | null;
+  peer_public_key: string | null;
   created_at: string;
 }
 
@@ -78,6 +80,11 @@ export class HopSqliteStore {
   async init(): Promise<void> {
     for (const statement of SCHEMA_SQL.split(";").map((part) => part.trim()).filter(Boolean)) {
       await this.db.execute(`${statement};`);
+    }
+    try {
+      await this.db.execute("ALTER TABLE conversations ADD COLUMN peer_public_key TEXT");
+    } catch {
+      /* column already exists on new databases */
     }
   }
 
@@ -135,18 +142,33 @@ export class HopSqliteStore {
 
   async saveConversation(conversation: StoredConversation): Promise<void> {
     await this.db.execute(
-      `INSERT INTO conversations (id, peer_id, peer_username, created_at) VALUES (?, ?, ?, ?)
+      `INSERT INTO conversations (id, peer_id, peer_username, peer_public_key, created_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          peer_id=excluded.peer_id,
-         peer_username=excluded.peer_username`,
-      [conversation.id, conversation.peer_id, conversation.peer_username, conversation.created_at],
+         peer_username=excluded.peer_username,
+         peer_public_key=excluded.peer_public_key`,
+      [
+        conversation.id,
+        conversation.peer_id,
+        conversation.peer_username,
+        conversation.peer_public_key ?? null,
+        conversation.created_at,
+      ],
     );
   }
 
   async listConversations(): Promise<StoredConversation[]> {
     return this.db.query<StoredConversation>(
-      "SELECT id, peer_id, peer_username, created_at FROM conversations ORDER BY created_at DESC",
+      "SELECT id, peer_id, peer_username, peer_public_key, created_at FROM conversations ORDER BY created_at DESC",
     );
+  }
+
+  async peerPublicKey(peerId: string): Promise<string | null> {
+    const rows = await this.db.query<{ peer_public_key: string | null }>(
+      "SELECT peer_public_key FROM conversations WHERE peer_id = ? AND peer_public_key IS NOT NULL AND peer_public_key != '' LIMIT 1",
+      [peerId],
+    );
+    return rows[0]?.peer_public_key ?? null;
   }
 
   async queuedCount(): Promise<number> {

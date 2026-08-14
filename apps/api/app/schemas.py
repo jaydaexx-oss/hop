@@ -33,6 +33,7 @@ class UserOut(BaseModel):
     id: str
     username: str
     created_at: datetime
+    identity_public_key: str = ""
 
 
 class AuthOut(BaseModel):
@@ -47,6 +48,7 @@ class ConversationCreateIn(BaseModel):
 class MemberOut(BaseModel):
     id: str
     username: str
+    identity_public_key: str = ""
 
 
 class ConversationOut(BaseModel):
@@ -56,8 +58,16 @@ class ConversationOut(BaseModel):
 
 
 class TextMessageIn(BaseModel):
-    text: str = Field(min_length=1, max_length=4000)
+    encrypted_payload: str = Field(min_length=32, max_length=65536)
     message_id: Optional[str] = None
+
+
+class IdentityIn(BaseModel):
+    public_key: str = Field(min_length=32, max_length=128)
+
+
+class BlockIn(BaseModel):
+    username: str
 
 
 class AckIn(BaseModel):

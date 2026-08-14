@@ -1,6 +1,21 @@
 from fastapi.testclient import TestClient
 
 
+BOXED = {
+    "v": 1,
+    "alg": "crypto_box_xsalsa20poly1305",
+    "sender_pk": "pk",
+    "nonce": "nonce",
+    "ciphertext": "ct",
+}
+
+
+def boxed() -> dict:
+    import json
+
+    return {"encrypted_payload": json.dumps(BOXED)}
+
+
 def _auth(client: TestClient, username: str) -> tuple[str, str]:
     response = client.post("/auth/register", json={"username": username, "password": "secret123"})
     body = response.json()
@@ -26,20 +41,22 @@ def test_one_to_one_chat_and_delivery(client: TestClient) -> None:
 
     sent = client.post(
         f"/conversations/{convo_id}/messages",
-        json={"text": "hello hop"},
+        json=boxed(),
         headers=headers_a,
     )
     assert sent.status_code == 200
     message = sent.json()
-    assert message["text"] == "hello hop"
-    assert message["e2ee"] is False
+    assert message["text"] is None
+    assert message["e2ee"] is True
     assert message["status"] == "SENT"
     assert message["sender_id"] == id_a
     assert message["recipient_id"] == id_b
+    assert "hello hop" not in sent.text
 
     inbox = client.get(f"/conversations/{convo_id}/messages", headers=headers_b)
     assert inbox.status_code == 200
-    assert inbox.json()[0]["text"] == "hello hop"
+    assert inbox.json()[0]["text"] is None
+    assert inbox.json()[0]["e2ee"] is True
 
     delivered = client.post(
         f"/messages/{message['message_id']}/acks",
@@ -62,19 +79,21 @@ def test_websocket_delivers_in_realtime(client: TestClient) -> None:
     headers_a = {"Authorization": f"Bearer {token_a}"}
     convo_id = client.post("/conversations", json={"username": "drew"}, headers=headers_a).json()["id"]
 
-    with client.websocket_connect(f"/ws?token={token_b}") as ws:
+    with client.websocket_connect("/ws") as ws:
+        ws.send_json({"type": "auth", "token": token_b})
         hello = ws.receive_json()
         assert hello["type"] == "hello"
         sent = client.post(
             f"/conversations/{convo_id}/messages",
-            json={"text": "over the wire"},
+            json=boxed(),
             headers=headers_a,
         )
         assert sent.status_code == 200
         assert sent.json()["status"] == "DELIVERED"
         event = ws.receive_json()
         assert event["type"] == "message"
-        assert event["message"]["text"] == "over the wire"
+        assert event["message"]["text"] is None
+        assert event["message"]["e2ee"] is True
 
 
 def test_cannot_message_without_auth(client: TestClient) -> None:
@@ -91,12 +110,12 @@ def test_client_message_id_is_idempotent(client: TestClient) -> None:
 
     first = client.post(
         f"/conversations/{convo_id}/messages",
-        json={"text": "queued retry", "message_id": message_id},
+        json={**boxed(), "message_id": message_id},
         headers=headers_a,
     )
     second = client.post(
         f"/conversations/{convo_id}/messages",
-        json={"text": "queued retry", "message_id": message_id},
+        json={**boxed(), "message_id": message_id},
         headers=headers_a,
     )
     assert first.status_code == 200

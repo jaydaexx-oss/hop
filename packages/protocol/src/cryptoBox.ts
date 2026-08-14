@@ -19,6 +19,8 @@ export interface ApplicationPlaintext {
   expires_at: string;
   ttl: number;
   hop_count: number;
+  kind?: "message" | "delivery_ack";
+  ack_of?: string;
 }
 
 export interface CryptoBoxPayload {
@@ -53,7 +55,7 @@ export async function encryptApplicationMessage(
   recipientPublicKey: string,
   sender: IdentityKeyPair,
 ): Promise<string> {
-  if (!plain.text.trim()) {
+  if (plain.kind !== "delivery_ack" && !plain.text.trim()) {
     throw new Error("Refusing to encrypt empty plaintext");
   }
   const s = await readySodium();
@@ -75,11 +77,18 @@ export async function encryptApplicationMessage(
   return JSON.stringify(payload);
 }
 
+export interface DecryptOptions {
+  expectedSenderId?: string;
+  expectedRecipientId?: string;
+  tofu?: { bind(userId: string, publicKey: string): boolean };
+}
+
 export async function decryptApplicationMessage(
   encryptedPayload: string,
   recipient: IdentityKeyPair,
   expectedSenderPk?: string,
   expectedMessageId?: string,
+  options?: DecryptOptions,
 ): Promise<ApplicationPlaintext> {
   const parsed = parseCryptoBoxPayload(encryptedPayload);
   if (!parsed) {
@@ -102,6 +111,15 @@ export async function decryptApplicationMessage(
   }
   if (expectedMessageId && plain.message_id !== expectedMessageId) {
     throw new Error("Authenticated message_id does not match the envelope");
+  }
+  if (options?.expectedSenderId && plain.sender_id !== options.expectedSenderId) {
+    throw new Error("Authenticated sender_id does not match the envelope");
+  }
+  if (options?.expectedRecipientId && plain.recipient_id !== options.expectedRecipientId) {
+    throw new Error("Authenticated recipient_id does not match this device");
+  }
+  if (options?.tofu && !options.tofu.bind(plain.sender_id, parsed.sender_pk)) {
+    throw new Error("Sender public key does not match the bound identity");
   }
   return plain;
 }

@@ -89,6 +89,6 @@ def user_from_token(session: Session, token: str) -> User:
     if row is None or row.expires_at < utcnow():
         raise HTTPException(status_code=401, detail="Invalid or expired session")
     user = session.get(User, row.user_id)
-    if user is None:
+    if user is None or user.deleted_at is not None:
         raise HTTPException(status_code=401, detail="Invalid session")
     return user

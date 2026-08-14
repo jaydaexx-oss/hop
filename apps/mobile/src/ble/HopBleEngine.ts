@@ -17,7 +17,9 @@ import {
   encodeHandshake,
   hexToBytes,
   isCryptoBoxPayload,
+  PublicKeyTofu,
   sendWithAckRetry,
+  decideRelay,
   type AckAttempt,
   type BleLink,
   type BleLinkStatus,
@@ -70,6 +72,7 @@ export class HopBleEngine implements BleLink {
   private readonly peerListeners = new Set<() => void>();
   private readonly connectionListeners = new Set<(deviceId: string, connected: boolean) => void>();
   private readonly processed = new ProcessedIdSet();
+  readonly tofu = new PublicKeyTofu();
   private readonly reassemblers = new Map<string, BleReassembler>();
   private readonly pendingAcks = new Map<string, () => void>();
   private subscriptions: unknown[] = [];
@@ -333,6 +336,10 @@ export class HopBleEngine implements BleLink {
     return this.connected.has(deviceId);
   }
 
+  setRelayConsent(enabled: boolean): void {
+    if (this.session) this.session.relayConsent = enabled;
+  }
+
   private async writeChunks(native: NativeBle, deviceId: string, bytes: Uint8Array, size: number): Promise<void> {
     const frames = chunkBytes(bytes, size);
     for (const frame of frames) {
@@ -359,6 +366,9 @@ export class HopBleEngine implements BleLink {
       const hex = typeof raw === 'string' ? raw : raw.value;
       const handshake = decodeHandshake(hex);
       if (handshake) {
+        if (handshake.user_id && handshake.pk && !this.tofu.bind(handshake.user_id, handshake.pk)) {
+          throw new Error('Peer identity key does not match the key already bound to this user.');
+        }
         return {
           deviceId,
           displayName: handshake.username,
@@ -474,7 +484,6 @@ export class HopBleEngine implements BleLink {
     if (!complete) return;
     const envelope = decodeEnvelope(complete);
     if (!envelope?.encrypted_payload) return;
-    if (envelope.hop_count > 0) return;
     if (!isCryptoBoxPayload(envelope.encrypted_payload)) return;
 
     const peer: BlePeer = this.peers.get(centralId) ?? {
@@ -487,18 +496,53 @@ export class HopBleEngine implements BleLink {
       return;
     }
 
-    let accepted = true;
-    for (const handler of this.inbound) {
-      try {
-        const result = await handler(envelope, peer);
-        if (result === false) accepted = false;
-      } catch {
-        accepted = false;
+    const selfId = this.session?.userId;
+    if (selfId && envelope.recipient_id === selfId) {
+      let accepted = true;
+      for (const handler of this.inbound) {
+        try {
+          const result = await handler(envelope, peer);
+          if (result === false) accepted = false;
+        } catch {
+          accepted = false;
+        }
       }
+      if (!accepted) return;
+      this.processed.remember(envelope.message_id);
+      await this.notifyAck(native, envelope.message_id);
+      return;
     }
-    if (!accepted) return;
+
+    if (!selfId || !this.session?.relayConsent) return;
+    const decision = decideRelay({
+      selfId,
+      envelope,
+      neighbors: this.neighborUserIds(),
+      consent: true,
+      duplicate: false,
+    });
+    if (decision.action !== 'relay') return;
+    const nextDeviceId = this.deviceIdForUser(decision.nextHop);
+    if (!nextDeviceId) return;
+    const forwarded = await this.send(nextDeviceId, decision.envelope);
+    if (!forwarded.ok) return;
     this.processed.remember(envelope.message_id);
     await this.notifyAck(native, envelope.message_id);
+  }
+
+  private neighborUserIds(): string[] {
+    const ids: string[] = [];
+    for (const peer of this.peers.values()) {
+      if (peer.userId) ids.push(peer.userId);
+    }
+    return ids;
+  }
+
+  private deviceIdForUser(userId: string): string | null {
+    for (const [deviceId, peer] of this.peers) {
+      if (peer.userId === userId) return deviceId;
+    }
+    return null;
   }
 
   private async notifyAck(native: NativeBle, messageId: string): Promise<void> {

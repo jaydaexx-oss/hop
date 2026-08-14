@@ -31,6 +31,6 @@ class UnavailableTransport implements Transport {
 export function createRelayTransport(): Transport {
   return new UnavailableTransport(
     "relay",
-    "Not implemented. Direct BLE must work before relay/mesh routing.",
+    "Not implemented. Direct BLE must work before physical mesh. A protocol simulator covers A→B→C.",
   );
 }

@@ -12,13 +12,20 @@ import { AppState } from 'react-native';
 import {
   HopSqliteStore,
   MessageService,
+  decryptApplicationMessage,
+  encryptApplicationMessage,
+  isCryptoBoxPayload,
+  type IdentityKeyPair,
+  type MessageCrypto,
   type NetworkStatus,
+  type StoredConversation,
   type StoredMessage,
   type TransportManager,
 } from '@hop/protocol';
 
-import { type ChatMessage, type Conversation } from '@/src/api/hop';
+import { api, type ChatMessage, type Conversation } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { loadOrCreateIdentity } from '@/src/crypto/identity';
 import { createAppTransportManager, createHopHttp } from '@/src/hopRuntime';
 import { ExpoSqliteDriver } from '@/src/offline/driver';
 
@@ -45,18 +52,32 @@ export function storedToChat(row: StoredMessage): ChatMessage {
     text: row.text,
     status: row.status,
     created_at: row.created_at,
-    e2ee: false,
+    e2ee: isCryptoBoxPayload(row.encrypted_payload),
+    encrypted_payload: row.encrypted_payload,
   };
 }
 
-function toConversation(row: { id: string; peer_id: string | null; peer_username: string | null; created_at: string }): Conversation {
+function toConversation(row: StoredConversation): Conversation {
   return {
     id: row.id,
     created_at: row.created_at,
     peer: {
       id: row.peer_id ?? '',
       username: row.peer_username ?? 'unknown',
+      identity_public_key: row.peer_public_key ?? '',
     },
+  };
+}
+
+function createAppCrypto(identity: IdentityKeyPair, store: HopSqliteStore): MessageCrypto {
+  return {
+    encrypt: async (plain) => {
+      const pk = await store.peerPublicKey(plain.recipient_id);
+      if (!pk) throw new Error('Peer has not published an identity public key.');
+      return encryptApplicationMessage(plain, pk, identity);
+    },
+    decrypt: (payload, expectedSenderPk, expectedMessageId, options) =>
+      decryptApplicationMessage(payload, identity, expectedSenderPk, expectedMessageId, options),
   };
 }
 
@@ -107,9 +128,18 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       const driver = await ExpoSqliteDriver.open(`hop-${user.id}.db`);
       const sqlite = new HopSqliteStore(driver);
       await sqlite.init();
+      const identity = await loadOrCreateIdentity(user.id);
+      const token = tokenRef.current;
+      if (token) {
+        try {
+          await api.putIdentity(token, identity.publicKey);
+        } catch {
+          /* identity publish is best-effort while offline */
+        }
+      }
       const http = createHopHttp(() => tokenRef.current);
       const transports = createAppTransportManager(http);
-      const svc = new MessageService(sqlite, transports, http, () => tokenRef.current);
+      const svc = new MessageService(sqlite, transports, http, () => tokenRef.current, createAppCrypto(identity, sqlite));
       if (cancelled) return;
       serviceRef.current = svc;
       storeRef.current = sqlite;
@@ -150,6 +180,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       id: convo.id,
       peer_id: convo.peer.id,
       peer_username: convo.peer.username,
+      peer_public_key: convo.peer.identity_public_key ?? null,
       created_at: convo.created_at,
     });
   }, []);

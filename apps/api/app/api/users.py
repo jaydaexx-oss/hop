@@ -4,16 +4,65 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, select
 
 from app.db import get_session
-from app.models.tables import User
-from app.schemas import UserOut
+from app.models.tables import BlockedUser, Device, User
+from app.schemas import BlockIn, IdentityIn, UserOut
 from app.security import get_current_user, validate_username
 
 router = APIRouter(prefix="/users", tags=["users"])
 
 
+def _user_out(session: Session, user: User) -> UserOut:
+    device = session.exec(select(Device).where(Device.user_id == user.id)).first()
+    return UserOut(
+        id=user.id,
+        username=user.username,
+        created_at=user.created_at,
+        identity_public_key=device.identity_public_key if device else "",
+    )
+
+
 @router.get("/me", response_model=UserOut)
-def me(user: User = Depends(get_current_user)) -> UserOut:
-    return UserOut(id=user.id, username=user.username, created_at=user.created_at)
+def me(session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> UserOut:
+    return _user_out(session, user)
+
+
+@router.put("/me/identity", response_model=UserOut)
+def put_identity(
+    body: IdentityIn,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> UserOut:
+    public_key = body.public_key.strip()
+    if not public_key or "\n" in public_key or " " in public_key:
+        raise HTTPException(status_code=400, detail="Invalid identity public key")
+    device = session.exec(select(Device).where(Device.user_id == user.id)).first()
+    if device is None:
+        device = Device(user_id=user.id, platform="mobile", identity_public_key=public_key)
+        session.add(device)
+    else:
+        device.identity_public_key = public_key
+        session.add(device)
+    session.commit()
+    return _user_out(session, user)
+
+
+@router.post("/me/blocks")
+def block_user(
+    body: BlockIn,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    handle = validate_username(body.username)
+    if handle == user.username:
+        raise HTTPException(status_code=400, detail="Cannot block yourself")
+    peer = session.exec(select(User).where(User.username == handle)).first()
+    if peer is None:
+        raise HTTPException(status_code=404, detail="User not found")
+    existing = session.get(BlockedUser, (user.id, peer.id))
+    if existing is None:
+        session.add(BlockedUser(user_id=user.id, blocked_user_id=peer.id))
+        session.commit()
+    return {"status": "ok"}
 
 
 @router.get("/{username}", response_model=UserOut)
@@ -24,6 +73,6 @@ def get_user(
 ) -> UserOut:
     handle = validate_username(username)
     found = session.exec(select(User).where(User.username == handle)).first()
-    if found is None:
+    if found is None or found.deleted_at is not None:
         raise HTTPException(status_code=404, detail="User not found")
-    return UserOut(id=found.id, username=found.username, created_at=found.created_at)
+    return _user_out(session, found)

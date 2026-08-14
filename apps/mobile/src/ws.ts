@@ -11,7 +11,10 @@ export function useHopSocket(
 
   useEffect(() => {
     if (!token) return;
-    const socket = new WebSocket(wsUrl(token));
+    const socket = new WebSocket(wsUrl());
+    socket.onopen = () => {
+      socket.send(JSON.stringify({ type: 'auth', token }));
+    };
     socket.onmessage = (event) => {
       try {
         handler.current(JSON.parse(String(event.data)));

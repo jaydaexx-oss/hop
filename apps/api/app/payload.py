@@ -1,25 +1,30 @@
 from __future__ import annotations
 
-import base64
 import json
 
 from typing import Optional
 
-UNENCRYPTED_ALG = "none"
+CRYPTO_BOX_ALG = "crypto_box_xsalsa20poly1305"
 
 
-def encode_text(text: str) -> str:
-    blob = json.dumps({"v": 0, "alg": UNENCRYPTED_ALG, "text": text}, ensure_ascii=False)
-    return base64.b64encode(blob.encode("utf-8")).decode("ascii")
+def is_crypto_box_payload(payload: str) -> bool:
+    try:
+        data = json.loads(payload)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return False
+    if not isinstance(data, dict):
+        return False
+    if data.get("v") != 1 or data.get("alg") != CRYPTO_BOX_ALG:
+        return False
+    for key in ("sender_pk", "nonce", "ciphertext"):
+        value = data.get(key)
+        if not isinstance(value, str) or not value:
+            return False
+    return True
 
 
 def decode_text(payload: str) -> Optional[str]:
-    try:
-        raw = base64.b64decode(payload.encode("ascii"))
-        data = json.loads(raw.decode("utf-8"))
-        if data.get("alg") != UNENCRYPTED_ALG:
-            return None
-        text = data.get("text")
-        return text if isinstance(text, str) else None
-    except Exception:
+    """Never used to open crypto_box. Returns None for sealed payloads."""
+    if is_crypto_box_payload(payload):
         return None
+    return None

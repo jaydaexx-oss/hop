@@ -7,6 +7,7 @@ import {
   isCryptoBoxPayload,
   parseCryptoBoxPayload,
 } from "../src/cryptoBox.js";
+import { PublicKeyTofu } from "../src/tofu.js";
 import { sendWithAckRetry } from "../src/ackRetry.js";
 import { createMessageId } from "../src/ids.js";
 
@@ -47,6 +48,36 @@ describe("libsodium crypto_box application messages", () => {
     await expect(decryptApplicationMessage(packed, blake, eve.publicKey)).rejects.toThrow(/public key/i);
     await expect(decryptApplicationMessage(packed, eve)).rejects.toThrow();
     await expect(decryptApplicationMessage(packed, blake, alice.publicKey, "other-id")).rejects.toThrow(/message_id/i);
+  });
+
+  it("rejects inner sender_id that does not match the envelope", async () => {
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const packed = await encryptApplicationMessage(plain, blake.publicKey, alice);
+    await expect(
+      decryptApplicationMessage(packed, blake, alice.publicKey, plain.message_id, {
+        expectedSenderId: "not-alice",
+      }),
+    ).rejects.toThrow(/sender_id/i);
+  });
+
+  it("TOFU-binds sender_pk and rejects a later key change", async () => {
+    const alice = await generateIdentityKeyPair();
+    const mallory = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const tofu = new PublicKeyTofu();
+    const packed = await encryptApplicationMessage(plain, blake.publicKey, alice);
+    await decryptApplicationMessage(packed, blake, alice.publicKey, plain.message_id, {
+      expectedSenderId: plain.sender_id,
+      tofu,
+    });
+    const spoofed = await encryptApplicationMessage(plain, blake.publicKey, mallory);
+    await expect(
+      decryptApplicationMessage(spoofed, blake, mallory.publicKey, plain.message_id, {
+        expectedSenderId: plain.sender_id,
+        tofu,
+      }),
+    ).rejects.toThrow(/bound identity/i);
   });
 
   it("refuses empty plaintext", async () => {

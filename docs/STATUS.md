@@ -1,6 +1,6 @@
 # Implementation status
 
-Updated after Nearby BLE encrypted application messages (libsodium `crypto_box`). Mesh relay is **not** implemented.
+Updated after controlled peer-relay (protocol simulator). Physical multi-device mesh is **not** complete.
 
 | Item | Status | Tested |
 |---|---|---|
@@ -24,24 +24,28 @@ Updated after Nearby BLE encrypted application messages (libsodium `crypto_box`)
 | Nearby BLE PoC (scan, advertise, connect, chunked payload) | Implemented in code | **Not verified on physical devices** |
 | Nearby BLE secure session + `crypto_box` payload + ack/retry | Implemented in code | Protocol unit tests + mobile typecheck; **not verified on physical devices** |
 | TransportManager internet/BLE selection + fallback | Implemented | Protocol unit tests (availability matrix + fallback) |
-| Internet E2EE | **Not implemented** (`alg: none`) | Documented |
-| BLE mesh / multi-hop relay | **Not implemented** | Incoming `hop_count > 0` dropped |
+| Controlled peer-relay (A→B→C, consent, hops, TTL, loops) | Implemented in protocol simulator | Protocol simulator tests; **not verified on physical devices** |
+| Internet E2EE | libsodium `crypto_box`; opaque server storage | API + protocol tests |
+| Identity public key publish | Implemented (`PUT /users/me/identity`) | API tests |
+| Rate limits (in-process) | Implemented | Unit + API 429 test |
+| Blocked users | Enforced on conversation create | API tests |
+| Real-world BLE mesh / multi-hop | **Not complete** | Simulator only; phones untested |
 | Docker / live Postgres / Redis | Configured | Docker not installed; Redis not running |
 
-## BLE encryption — tested vs untested
+## Tested vs untested
 
 **Tested in this environment**
 
-- Protocol unit tests (43 passed): `crypto_box` round-trip, tamper rejection, wrong-key rejection, inner/outer `message_id` bind, empty plaintext refusal, ack retry success + max-attempts timeout, BLE codec handshake v2, BluetoothTransport refuses `alg: none`, TransportManager internet/BLE/neither/both + fallback
-- Mobile `tsc --noEmit` (passed)
+- Protocol unit tests (63 passed): crypto_box, sender-id bind, TOFU, opaque internet transport, A→B→C / A→B→C→D relay simulator
+- Mobile `tsc --noEmit`
 
 **Not tested in this environment**
 
 - Any physical iPhone ↔ Android BLE session
+- Physical A→B→C or A→B→C→D
 - Handshake `pk` over real GATT
-- Encrypted send, decrypt, ack notify, timeout, or retry on hardware
-- Duplicate protection on hardware
+- Encrypted send, decrypt, ack, timeout, retry, or relay on hardware
 - Internet-off BLE path on hardware
-- Expo Go / simulators / web (invalid for this feature)
+- Expo Go / simulators / web (invalid for BLE)
 
-Chat send goes `MessageService → TransportManager` (internet if the API is up, else BLE if that recipient is nearby, else the local queue). There is no transport picker. Physical BLE remains unverified here.
+Chat send goes `MessageService → TransportManager`. Relay details: `docs/RELAY.md`. Real-world mesh is **not** complete.

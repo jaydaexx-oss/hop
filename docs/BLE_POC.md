@@ -2,7 +2,7 @@
 
 Status: **implemented in code, not verified on physical devices.** Simulator, Expo Go, and web do not count.
 
-Mesh / multi-hop relay is **not** implemented. Incoming BLE envelopes with `hop_count > 0` are dropped so this phone cannot act as a relay.
+Mesh / multi-hop relay is a **protocol simulator** (`docs/RELAY.md`). Incoming BLE envelopes are only forwarded if Settings → Relay is on. Physical multi-device mesh is **not** complete.
 
 ## Milestone
 
@@ -30,7 +30,7 @@ HOP does not invent a protocol. Nearby uses **libsodium `crypto_box`** (NaCl box
 
 This is **not** Signal Protocol and **not** a forward-secret ratchet. Each application message is sealed to the peer’s long-term `crypto_box` public key. `crypto_kx` is unused (the JS wrapper used here does not expose it; `crypto_box` is the established NaCl API).
 
-Internet chat is still `alg: none`. Only the Nearby BLE path encrypts.
+Internet chat uses the same `crypto_box` construction. The API stores opaque ciphertext.
 
 Empty plaintext is refused. BLE also refuses `alg: none` and any payload that is not `crypto_box_xsalsa20poly1305`.
 

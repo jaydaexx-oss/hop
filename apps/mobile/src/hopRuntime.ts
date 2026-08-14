@@ -7,11 +7,12 @@ import {
   type HopHttpClient,
 } from '@hop/protocol';
 
-import { API_URL } from './api/client';
+import { API_URL, assertSafeApiUrl } from './api/client';
 
 export function createHopHttp(getToken?: () => string | null): HopHttpClient {
   return {
     async request(path, init) {
+      assertSafeApiUrl(API_URL);
       const headers: Record<string, string> = {
         Accept: 'application/json',
         'Content-Type': 'application/json',

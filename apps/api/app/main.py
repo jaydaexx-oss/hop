@@ -19,7 +19,7 @@ async def lifespan(_app: FastAPI):
 app = FastAPI(
     title="HOP API",
     version="0.1.0",
-    description="Privacy-first hybrid messaging backend. BLE/relay/E2EE are not implemented.",
+    description="Privacy-first hybrid messaging backend. Internet bodies are opaque libsodium crypto_box payloads.",
     lifespan=lifespan,
 )
 

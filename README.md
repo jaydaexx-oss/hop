@@ -2,23 +2,24 @@
 
 Privacy-first hybrid messenger. **Messages find a way.**
 
-First usable internet chat is in place. Chat send chooses internet or BLE automatically. Nearby BLE can exchange a libsodium `crypto_box` application message in code and has **not** been verified on hardware here. Mesh is **not** implemented. Internet chat is still `alg: none`.
+Chat send chooses internet or BLE automatically. Nearby BLE and internet chat both use libsodium `crypto_box` (X25519 + XSalsa20-Poly1305). Controlled peer-relay is **simulated** (A→B→C→D tests); real-world mesh is **not** complete.
 
 ## Status (honest)
 
 | Area | Status |
 |---|---|
 | Register, login, logout, username profile | Implemented, API tested |
-| 1:1 chats over the internet | Implemented, API tested |
-| WebSocket realtime | Implemented, API tested |
+| 1:1 chats over the internet | Opaque `crypto_box` payloads; server cannot read plaintext |
+| WebSocket realtime | First-frame token auth (no query-string tokens) |
 | Delivery status (sent / delivered / read) | Implemented, API tested |
 | Alembic `001_initial` | Implemented (not applied to a live Postgres here) |
 | TransportManager + InternetTransport | Implemented, unit tested (internet/BLE/neither/both + fallback) |
 | SQLite local DB, offline queue, retry/backoff, reconnect sync | Implemented, protocol-tested (file DB restart) |
-| Nearby BLE proof of concept | Implemented in code; **not verified on physical iPhone/Android** |
+| Nearby BLE proof of concept | Implemented in code; **not verified on a physical iPhone and Android phone** |
 | Nearby BLE encrypted message | libsodium `crypto_box` in code; protocol-tested; **not verified on hardware** |
-| BLE / relay / mesh routing | **Mesh not implemented** |
-| Internet E2EE | **Not implemented** — internet bodies are `alg: none` over TLS |
+| Controlled peer-relay | Protocol simulator (A→B→C→D); **physical mesh not complete** |
+| BLE / relay / mesh routing | Simulator only — do not claim real-world mesh |
+| Internet E2EE | libsodium `crypto_box`; server stores ciphertext only. Identity keys are client-published, not CA-attested |
 | Docker / Redis | Compose files only; Docker not installed |
 
 ## Layout
@@ -49,7 +50,7 @@ cd apps/api
 source .venv/bin/activate
 pip install -r requirements-test.txt
 pip install uvicorn
-DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=* uvicorn app.main:app --reload --port 8000
+DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=http://localhost:8081 uvicorn app.main:app --reload --port 8000
 ```
 
 Postgres migrations (when Postgres is running):
@@ -74,4 +75,4 @@ Android emulator: `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000`.
 
 ## Next recommended step
 
-Confirm Nearby BLE encrypted send on a physical iPhone and Android phone (`docs/BLE_TESTING.md`). Do not add mesh yet. Internet E2EE is still `alg: none`.
+Confirm Nearby BLE encrypted send on a physical iPhone and Android phone (`docs/BLE_TESTING.md`). Do not add mesh yet. Internet E2EE uses libsodium `crypto_box`; identity keys are still client-published and not hardware-verified.

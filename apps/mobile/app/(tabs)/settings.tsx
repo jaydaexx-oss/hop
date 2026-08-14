@@ -5,9 +5,11 @@ import { StatusBanner } from '@/components/StatusBanner';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { useBle } from '@/src/ble/BleProvider';
 
 export default function SettingsScreen() {
   const { user, logout } = useAuth();
+  const { relayConsent, setRelayConsent } = useBle();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
 
@@ -19,11 +21,25 @@ export default function SettingsScreen() {
         <Text style={{ color: colors.muted }}>Username</Text>
         <Text style={styles.username}>{user?.username}</Text>
       </View>
+      <View style={[styles.card, { backgroundColor: colors.card, marginTop: 12 }]}>
+        <Text style={styles.cardTitle}>Relay consent</Text>
+        <Text style={{ color: colors.muted, marginBottom: 10 }}>
+          When on, this phone may forward encrypted envelopes it cannot decrypt (A → B → C). Off by
+          default. Relays never see plaintext. Physical multi-hop has not been verified.
+        </Text>
+        <Pressable
+          onPress={() => setRelayConsent(!relayConsent)}
+          style={[styles.button, { borderColor: colors.tint, marginTop: 0 }]}>
+          <Text style={[styles.buttonLabel, { color: colors.tint }]}>
+            {relayConsent ? 'Relay is on' : 'Relay is off'}
+          </Text>
+        </Pressable>
+      </View>
       <Text style={{ color: colors.muted, marginTop: 16 }}>
-        Messages over the internet currently travel without end-to-end encryption (`alg: none`).
-        Chat chooses internet or Nearby BLE automatically. BLE uses libsodium crypto_box after a
-        public-key handshake and has not been verified on physical devices here. Mesh relay is not
-        implemented.
+        Messages over the internet are sealed with libsodium crypto_box. The API stores ciphertext
+        only. Identity public keys are published by each client and are not certificate-attested.
+        Chat chooses internet or Nearby BLE automatically. Controlled peer-relay is simulated in
+        protocol tests; real-world mesh is not complete.
       </Text>
       <Pressable onPress={logout} style={[styles.button, { borderColor: colors.tint }]}>
         <Text style={[styles.buttonLabel, { color: colors.tint }]}>Log out</Text>
@@ -36,6 +52,7 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 20 },
   title: { fontSize: 28, fontWeight: '700', marginBottom: 16 },
   card: { borderRadius: 16, padding: 16, gap: 4 },
+  cardTitle: { fontSize: 16, fontWeight: '700', marginBottom: 4 },
   username: { fontSize: 22, fontWeight: '700' },
   button: { marginTop: 28, borderWidth: 1.5, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   buttonLabel: { fontWeight: '700', fontSize: 16 },

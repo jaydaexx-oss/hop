@@ -31,6 +31,7 @@ export interface HopMessage {
   hop_count: number;
   transport: TransportId;
   status: MessageStatus;
+  path?: string[];
 }
 
 export interface CreateMessageInput {

@@ -28,6 +28,8 @@ export interface BleSessionOptions {
   username: string;
   scanMode: BleScanMode;
   identityPublicKey: string;
+  /** Opt-in: forward others' encrypted envelopes. Default off. */
+  relayConsent?: boolean;
 }
 
 export interface BleLink {

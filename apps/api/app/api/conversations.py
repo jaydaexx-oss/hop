@@ -4,12 +4,23 @@ from datetime import timedelta
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlmodel import Session, col, select
 
 from app.db import get_session
-from app.models.tables import Conversation, ConversationMember, Message, MessageDelivery, User, new_id, utcnow
-from app.payload import decode_text, encode_text
+from app.models.tables import (
+    BlockedUser,
+    Conversation,
+    ConversationMember,
+    Device,
+    Message,
+    MessageDelivery,
+    User,
+    new_id,
+    utcnow,
+)
+from app.payload import is_crypto_box_payload
+from app.rate_limit import limit_messages
 from app.schemas import AckIn, ConversationCreateIn, ConversationOut, MemberOut, MessageOut, TextMessageIn
 from app.security import get_current_user, validate_username
 from app.ws import hub, message_event
@@ -17,6 +28,18 @@ from app.ws import hub, message_event
 router = APIRouter(tags=["conversations"])
 
 DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000
+
+
+def identity_public_key(session: Session, user_id: str) -> str:
+    device = session.exec(select(Device).where(Device.user_id == user_id)).first()
+    return device.identity_public_key if device and device.identity_public_key else ""
+
+
+def is_blocked(session: Session, user_a: str, user_b: str) -> bool:
+    return (
+        session.get(BlockedUser, (user_a, user_b)) is not None
+        or session.get(BlockedUser, (user_b, user_a)) is not None
+    )
 
 
 def _peer(session: Session, conversation_id: str, me: User) -> User:
@@ -43,20 +66,21 @@ def _require_member(session: Session, conversation_id: str, user: User) -> Conve
 
 
 def _message_out(row: Message) -> MessageOut:
+    boxed = is_crypto_box_payload(row.encrypted_payload)
     return MessageOut(
         message_id=row.id,
         sender_id=row.sender_id,
         recipient_id=row.recipient_id,
         conversation_id=row.conversation_id,
         encrypted_payload=row.encrypted_payload,
-        text=decode_text(row.encrypted_payload),
+        text=None,
         created_at=row.created_at,
         expires_at=row.expires_at,
         ttl=row.ttl,
         hop_count=row.hop_count,
         transport=row.transport,
         status=row.status,
-        e2ee=False,
+        e2ee=boxed,
     )
 
 
@@ -65,7 +89,11 @@ def _conversation_out(session: Session, convo: Conversation, me: User) -> Conver
     return ConversationOut(
         id=convo.id,
         created_at=convo.created_at,
-        peer=MemberOut(id=peer.id, username=peer.username),
+        peer=MemberOut(
+            id=peer.id,
+            username=peer.username,
+            identity_public_key=identity_public_key(session, peer.id),
+        ),
     )
 
 
@@ -93,6 +121,8 @@ def create_conversation(
     peer = session.exec(select(User).where(User.username == username)).first()
     if peer is None:
         raise HTTPException(status_code=404, detail="User not found")
+    if is_blocked(session, user.id, peer.id):
+        raise HTTPException(status_code=403, detail="Cannot start a conversation with this user")
     existing = _find_direct(session, user.id, peer.id)
     if existing:
         return _conversation_out(session, existing, user)
@@ -128,8 +158,12 @@ def list_messages(
     user: User = Depends(get_current_user),
 ) -> list[MessageOut]:
     _require_member(session, conversation_id, user)
+    now = utcnow()
     rows = session.exec(
-        select(Message).where(Message.conversation_id == conversation_id).order_by(col(Message.created_at))
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .where(Message.expires_at > now)
+        .order_by(col(Message.created_at))
     ).all()
     return [_message_out(row) for row in rows]
 
@@ -138,11 +172,20 @@ def list_messages(
 async def send_message(
     conversation_id: str,
     body: TextMessageIn,
+    request: Request,
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> MessageOut:
+    limit_messages(request)
     _require_member(session, conversation_id, user)
     peer = _peer(session, conversation_id, user)
+    if is_blocked(session, user.id, peer.id):
+        raise HTTPException(status_code=403, detail="Cannot message this user")
+    if not is_crypto_box_payload(body.encrypted_payload):
+        raise HTTPException(
+            status_code=400,
+            detail="Internet messages must be libsodium crypto_box payloads",
+        )
     now = utcnow()
     message_id = body.message_id or new_id()
     existing = session.get(Message, message_id)
@@ -156,7 +199,7 @@ async def send_message(
         conversation_id=conversation_id,
         sender_id=user.id,
         recipient_id=peer.id,
-        encrypted_payload=encode_text(body.text.strip()),
+        encrypted_payload=body.encrypted_payload,
         created_at=now,
         expires_at=now + timedelta(milliseconds=DEFAULT_TTL_MS),
         ttl=DEFAULT_TTL_MS,

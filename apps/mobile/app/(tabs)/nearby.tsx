@@ -53,9 +53,9 @@ export default function NearbyScreen() {
       <StatusBanner />
       <Text style={styles.title}>Nearby</Text>
       <Text style={[styles.lead, { color: colors.muted }]}>
-        Direct Bluetooth between two phones. Chat picks internet or BLE automatically — there is no
-        transport switch. BLE messages use libsodium crypto_box. Mesh relay is not implemented.
-        Physical-device BLE has not been verified in this environment.
+        Direct Bluetooth between two phones. Chat picks internet or BLE automatically. With Relay
+        consent on, this phone may forward ciphertext it cannot read (A → B → C). That path is
+        protocol-simulated; physical multi-hop is not complete.
       </Text>
 
       <View style={[styles.card, { backgroundColor: colors.card }]}>
@@ -135,9 +135,9 @@ export default function NearbyScreen() {
       <Text style={styles.section}>Limits</Text>
       <Text style={[styles.lead, { color: colors.muted }]}>
         iOS and Android only advertise a local name plus the HOP service UUID — never a MAC in this UI. Reliable
-        Nearby requires the app in the foreground. Expo Go cannot run this. BLE payloads are
-        libsodium crypto_box, not Signal Protocol. Internet chat is still `alg: none`. See
-        docs/PLATFORM_LIMITATIONS.md and docs/BLE_TESTING.md.
+        Nearby requires the app in the foreground. Expo Go cannot run this. BLE and internet payloads
+        use libsodium crypto_box, not Signal Protocol. See docs/PLATFORM_LIMITATIONS.md and
+        docs/BLE_TESTING.md.
       </Text>
     </ScrollView>
   );

@@ -5,15 +5,25 @@ import { encodeUnencryptedText } from "../src/payload.js";
 import { toEnvelope } from "../src/transport.js";
 import { TransportManager } from "../src/transportManager.js";
 import { LocalTransport } from "../src/localTransport.js";
+import { CRYPTO_BOX_ALG } from "../src/cryptoBox.js";
 import type { HopHttpClient } from "../src/http.js";
 
-function encryptedEnvelope() {
+function boxedEnvelope() {
   const message = createMessage({
     sender_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
     recipient_id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
     conversation_id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
   });
-  return toEnvelope({ ...message, encrypted_payload: encodeUnencryptedText("hello") });
+  return toEnvelope({
+    ...message,
+    encrypted_payload: JSON.stringify({
+      v: 1,
+      alg: CRYPTO_BOX_ALG,
+      sender_pk: "pk",
+      nonce: "n",
+      ciphertext: "ct",
+    }),
+  });
 }
 
 function mockHttp(handler: HopHttpClient["request"]): HopHttpClient {
@@ -35,7 +45,7 @@ describe("InternetTransport", () => {
     expect(await manager.getNetworkStatus()).toBe("Online");
   });
 
-  it("POSTs plaintext to the conversation messages endpoint", async () => {
+  it("POSTs an opaque crypto_box payload and refuses alg:none", async () => {
     const seen: unknown[] = [];
     const transport = new InternetTransport(
       mockHttp(async (path, init) => {
@@ -44,14 +54,28 @@ describe("InternetTransport", () => {
         return { ok: true, status: 200, data: { status: "SENT" } };
       }),
     );
-    const envelope = encryptedEnvelope();
+    const envelope = boxedEnvelope();
     const result = await transport.send(envelope);
     expect(result.ok).toBe(true);
     expect(result.transport).toBe("internet");
     expect(seen[0]).toMatchObject({
       path: `/conversations/${envelope.conversation_id}/messages`,
-      init: { method: "POST", body: { text: "hello", message_id: envelope.message_id } },
+      init: {
+        method: "POST",
+        body: { encrypted_payload: envelope.encrypted_payload, message_id: envelope.message_id },
+      },
     });
+    const plaintext = toEnvelope({
+      ...createMessage({
+        sender_id: envelope.sender_id,
+        recipient_id: envelope.recipient_id,
+        conversation_id: envelope.conversation_id,
+      }),
+      encrypted_payload: encodeUnencryptedText("hello"),
+    });
+    const refused = await transport.send(plaintext);
+    expect(refused.ok).toBe(false);
+    expect(refused.error).toMatch(/crypto_box/i);
   });
 
   it("falls through to local queue when internet HTTP fails", async () => {
@@ -65,7 +89,7 @@ describe("InternetTransport", () => {
       ),
     );
     manager.register(local);
-    const result = await manager.enqueue(encryptedEnvelope());
+    const result = await manager.enqueue(boxedEnvelope());
     expect(result.ok).toBe(true);
     expect(result.transport).toBe("local");
     expect(local.length).toBe(1);

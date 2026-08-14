@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import asyncio
+
 from fastapi import HTTPException, WebSocket, WebSocketDisconnect
 from sqlmodel import Session
 
@@ -12,8 +14,15 @@ router = APIRouter()
 
 
 @router.websocket("/ws")
-async def websocket_endpoint(ws: WebSocket, token: str = "") -> None:
-    if not token:
+async def websocket_endpoint(ws: WebSocket) -> None:
+    await ws.accept()
+    try:
+        first = await asyncio.wait_for(ws.receive_json(), timeout=5)
+    except Exception:
+        await ws.close(code=4401)
+        return
+    token = first.get("token") if isinstance(first, dict) and first.get("type") == "auth" else None
+    if not isinstance(token, str) or not token:
         await ws.close(code=4401)
         return
     with Session(get_engine()) as session:
@@ -23,7 +32,6 @@ async def websocket_endpoint(ws: WebSocket, token: str = "") -> None:
             await ws.close(code=4401)
             return
         user_id = user.id
-    await ws.accept()
     await hub.connect(user_id, ws)
     try:
         await ws.send_json({"type": "hello", "user_id": user_id})

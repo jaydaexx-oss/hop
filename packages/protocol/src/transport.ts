@@ -21,6 +21,8 @@ export interface EncryptedEnvelope {
   ttl: number;
   hop_count: number;
   transport: TransportId;
+  /** Visited user IDs (routing metadata). Relays use this for loop prevention; it is not ciphertext. */
+  path?: string[];
 }
 
 export interface SendResult {
@@ -62,5 +64,6 @@ export function toEnvelope(message: HopMessage): EncryptedEnvelope {
     ttl: message.ttl,
     hop_count: message.hop_count,
     transport: message.transport,
+    path: message.path,
   };
 }

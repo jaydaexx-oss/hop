@@ -1,8 +1,17 @@
-import { API_URL } from './client';
+import { API_URL, assertSafeApiUrl } from './client';
 
-export type User = { id: string; username: string; created_at: string };
+export type User = {
+  id: string;
+  username: string;
+  created_at: string;
+  identity_public_key?: string;
+};
 export type AuthResponse = { token: string; user: User };
-export type Conversation = { id: string; created_at: string; peer: { id: string; username: string } };
+export type Conversation = {
+  id: string;
+  created_at: string;
+  peer: { id: string; username: string; identity_public_key?: string };
+};
 export type ChatMessage = {
   message_id: string;
   sender_id: string;
@@ -12,6 +21,11 @@ export type ChatMessage = {
   status: string;
   created_at: string;
   e2ee: boolean;
+  encrypted_payload?: string;
+  expires_at?: string;
+  ttl?: number;
+  hop_count?: number;
+  transport?: string;
 };
 
 export class ApiError extends Error {
@@ -28,6 +42,7 @@ async function request<T>(
   path: string,
   opts: { method?: string; token?: string | null; body?: unknown } = {},
 ): Promise<T> {
+  assertSafeApiUrl(API_URL);
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
@@ -56,22 +71,26 @@ export const api = {
     request<AuthResponse>('/auth/login', { method: 'POST', body: { username, password } }),
   logout: (token: string) => request<{ status: string }>('/auth/logout', { method: 'POST', token }),
   me: (token: string) => request<User>('/users/me', { token }),
+  putIdentity: (token: string, publicKey: string) =>
+    request<User>('/users/me/identity', { method: 'PUT', token, body: { public_key: publicKey } }),
+  blockUser: (token: string, username: string) =>
+    request<{ status: string }>('/users/me/blocks', { method: 'POST', token, body: { username } }),
   conversations: (token: string) => request<Conversation[]>('/conversations', { token }),
   createConversation: (token: string, username: string) =>
     request<Conversation>('/conversations', { method: 'POST', token, body: { username } }),
   messages: (token: string, conversationId: string) =>
     request<ChatMessage[]>(`/conversations/${conversationId}/messages`, { token }),
-  sendMessage: (token: string, conversationId: string, text: string) =>
+  sendMessage: (token: string, conversationId: string, encryptedPayload: string, messageId?: string) =>
     request<ChatMessage>(`/conversations/${conversationId}/messages`, {
       method: 'POST',
       token,
-      body: { text },
+      body: { encrypted_payload: encryptedPayload, message_id: messageId },
     }),
   ack: (token: string, messageId: string, status: 'DELIVERED' | 'READ') =>
     request<ChatMessage>(`/messages/${messageId}/acks`, { method: 'POST', token, body: { status } }),
 };
 
-export function wsUrl(token: string): string {
-  const base = API_URL.replace(/^http/, 'ws');
-  return `${base}/ws?token=${encodeURIComponent(token)}`;
+export function wsUrl(): string {
+  assertSafeApiUrl(API_URL);
+  return `${API_URL.replace(/^http/, 'ws')}/ws`;
 }

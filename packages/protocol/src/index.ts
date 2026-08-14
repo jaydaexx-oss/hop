@@ -60,7 +60,8 @@ export {
   type StoredConversation,
   type StoredMessage,
 } from "./store.js";
-export { MessageService, type SendTextInput } from "./messageService.js";
+export { MessageService, type MessageCrypto, type SendTextInput } from "./messageService.js";
+export { PublicKeyTofu } from "./tofu.js";
 export { encodeUnencryptedText, decodeUnencryptedText } from "./payload.js";
 export {
   CRYPTO_BOX_ALG,
@@ -72,6 +73,16 @@ export {
   readySodium,
   type ApplicationPlaintext,
   type CryptoBoxPayload,
+  type DecryptOptions,
   type IdentityKeyPair,
 } from "./cryptoBox.js";
 export { sendWithAckRetry, type AckAttempt } from "./ackRetry.js";
+export {
+  chooseNextHop,
+  decideRelay,
+  forwardedEnvelope,
+  visitedPath,
+  type RelayDecision,
+  type RelayDropReason,
+} from "./relayPolicy.js";
+export { SimulatedNetwork, type SimEvent, type SimulatedNode } from "./simulatedNetwork.js";

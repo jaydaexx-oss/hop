@@ -1,7 +1,8 @@
+import type { ApplicationPlaintext, DecryptOptions } from "./cryptoBox.js";
+import { isCryptoBoxPayload } from "./cryptoBox.js";
 import type { HopHttpClient } from "./http.js";
 import { createMessageId } from "./ids.js";
 import { DEFAULT_TTL_MS, MessageStatus, isExpired } from "./message.js";
-import { encodeUnencryptedText } from "./payload.js";
 import { DEFAULT_RETRY_POLICY, nextBackoffMs, type RetryPolicy } from "./retry.js";
 import { canTransition, transition } from "./stateMachine.js";
 import type { HopSqliteStore, StoredMessage } from "./store.js";
@@ -16,28 +17,60 @@ export interface SendTextInput {
   now?: Date;
 }
 
+export interface MessageCrypto {
+  encrypt(plain: ApplicationPlaintext): Promise<string>;
+  decrypt(
+    payload: string,
+    expectedSenderPk?: string,
+    expectedMessageId?: string,
+    options?: DecryptOptions,
+  ): Promise<ApplicationPlaintext>;
+}
+
 export class MessageService {
   constructor(
     private readonly store: HopSqliteStore,
     private readonly manager: TransportManager,
     private readonly http: HopHttpClient,
     private readonly getToken: () => string | null,
+    private readonly crypto?: MessageCrypto,
     private readonly retry: RetryPolicy = DEFAULT_RETRY_POLICY,
   ) {}
 
   async sendText(input: SendTextInput): Promise<StoredMessage> {
+    if (!this.crypto) {
+      throw new Error("Refusing to send without libsodium crypto_box keys");
+    }
     const now = input.now ?? new Date();
+    const created_at = now.toISOString();
+    const expires_at = new Date(now.getTime() + DEFAULT_TTL_MS).toISOString();
+    const message_id = createMessageId();
+    const plain: ApplicationPlaintext = {
+      message_id,
+      sender_id: input.sender_id,
+      recipient_id: input.recipient_id,
+      conversation_id: input.conversation_id,
+      text: input.text,
+      created_at,
+      expires_at,
+      ttl: DEFAULT_TTL_MS,
+      hop_count: 0,
+    };
+    const encrypted_payload = await this.crypto.encrypt(plain);
+    if (!isCryptoBoxPayload(encrypted_payload)) {
+      throw new Error("encrypt() must return a libsodium crypto_box payload");
+    }
     let record: StoredMessage = {
-      message_id: createMessageId(),
+      message_id,
       conversation_id: input.conversation_id,
       sender_id: input.sender_id,
       recipient_id: input.recipient_id,
       text: input.text,
-      encrypted_payload: encodeUnencryptedText(input.text),
+      encrypted_payload,
       status: MessageStatus.CREATED,
       transport: "local",
-      created_at: now.toISOString(),
-      expires_at: new Date(now.getTime() + DEFAULT_TTL_MS).toISOString(),
+      created_at,
+      expires_at,
       ttl: DEFAULT_TTL_MS,
       hop_count: 0,
     };
@@ -104,13 +137,14 @@ export class MessageService {
 
   async acceptInbound(message: StoredMessage, now = new Date()): Promise<boolean> {
     if (isExpired(message, now)) return false;
+    const opened = await this.openInbound(message);
     const existing = await this.store.getMessage(message.message_id);
     if (existing) {
       const merged = this.advanceToward(
         {
           ...existing,
-          text: message.text ?? existing.text,
-          encrypted_payload: message.encrypted_payload || existing.encrypted_payload,
+          text: opened.text ?? existing.text,
+          encrypted_payload: opened.encrypted_payload || existing.encrypted_payload,
           transport: message.transport || existing.transport,
         },
         message.status,
@@ -120,7 +154,7 @@ export class MessageService {
     }
     const fresh = await this.store.rememberProcessed(message.message_id, now);
     if (!fresh) return false;
-    await this.store.saveMessage(message);
+    await this.store.saveMessage(opened);
     return true;
   }
 
@@ -191,6 +225,21 @@ export class MessageService {
         hop_count: Number(row.hop_count ?? 0),
       };
       await this.acceptInbound(stored);
+    }
+  }
+
+  private async openInbound(message: StoredMessage): Promise<StoredMessage> {
+    if (!isCryptoBoxPayload(message.encrypted_payload) || !this.crypto) {
+      return { ...message, text: message.text ?? null };
+    }
+    try {
+      const plain = await this.crypto.decrypt(message.encrypted_payload, undefined, message.message_id, {
+        expectedSenderId: message.sender_id,
+        expectedRecipientId: message.recipient_id,
+      });
+      return { ...message, text: plain.text };
+    } catch {
+      return { ...message, text: message.text ?? null };
     }
   }
 

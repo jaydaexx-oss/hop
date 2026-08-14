@@ -28,6 +28,7 @@ import { useAuth } from '@/src/auth/AuthProvider';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { HopBleEngine } from '@/src/ble/HopBleEngine';
 import { loadOrCreateIdentity } from '@/src/crypto/identity';
+import { loadRelayConsent, saveRelayConsent } from '@/src/ble/relayConsent';
 
 export type NearbyLog = {
   at: string;
@@ -48,6 +49,8 @@ type BleContextValue = {
   connectPeer: (deviceId: string) => Promise<void>;
   disconnectPeer: () => Promise<void>;
   sendTestPayload: (deviceId: string) => Promise<void>;
+  relayConsent: boolean;
+  setRelayConsent: (enabled: boolean) => Promise<void>;
 };
 
 const BleContext = createContext<BleContextValue | null>(null);
@@ -67,6 +70,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<NearbyLog[]>([]);
   const [sessionActive, setSessionActive] = useState(false);
+  const [relayConsent, setRelayConsentState] = useState(false);
   const storeRef = useRef(store);
   storeRef.current = store;
   const serviceRef = useRef(service);
@@ -74,6 +78,16 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const userRef = useRef(user);
   userRef.current = user;
   const identityRef = useRef<IdentityKeyPair | null>(null);
+
+  useEffect(() => {
+    if (!user) {
+      setRelayConsentState(false);
+      return;
+    }
+    loadRelayConsent(user.id)
+      .then(setRelayConsentState)
+      .catch(() => setRelayConsentState(false));
+  }, [user]);
 
   const refresh = useCallback(() => {
     setStatus(engineRef.current.status());
@@ -102,10 +116,19 @@ export function BleProvider({ children }: { children: ReactNode }) {
         const plain = await decryptApplicationMessage(
           envelope.encrypted_payload,
           keys,
-          from.publicKey,
+          from.userId === envelope.sender_id ? from.publicKey : undefined,
           envelope.message_id,
+          {
+            expectedSenderId: envelope.sender_id,
+            expectedRecipientId: userRef.current?.id,
+            tofu: engine.tofu,
+          },
         );
-        appendLog(`Received encrypted message from ${from.displayName}: ${plain.text}`);
+        if (plain.kind === 'delivery_ack') {
+          appendLog(`Delivery acknowledgment for ${plain.ack_of ?? envelope.message_id}.`);
+          return true;
+        }
+        appendLog(`Received encrypted message from ${from.displayName}.`);
         const stored = {
           message_id: plain.message_id,
           conversation_id: plain.conversation_id,
@@ -199,11 +222,14 @@ export function BleProvider({ children }: { children: ReactNode }) {
     try {
       const identity = await loadOrCreateIdentity(me.id);
       identityRef.current = identity;
+      const consent = await loadRelayConsent(me.id);
+      setRelayConsentState(consent);
       await engineRef.current.startSession({
         userId: me.id,
         username: me.username,
         scanMode: 'balanced',
         identityPublicKey: identity.publicKey,
+        relayConsent: consent,
       });
       setSessionActive(true);
       appendLog('Nearby started. libsodium crypto_box identity published in handshake.');
@@ -336,6 +362,21 @@ export function BleProvider({ children }: { children: ReactNode }) {
     [appendLog, refresh],
   );
 
+  const setRelayConsent = useCallback(
+    async (enabled: boolean) => {
+      setRelayConsentState(enabled);
+      engineRef.current.setRelayConsent(enabled);
+      const me = userRef.current;
+      if (me) await saveRelayConsent(me.id, enabled);
+      appendLog(
+        enabled
+          ? 'Relay consent on. This phone may forward encrypted envelopes.'
+          : 'Relay consent off.',
+      );
+    },
+    [appendLog],
+  );
+
   const value = useMemo<BleContextValue>(
     () => ({
       engine: engineRef.current,
@@ -351,6 +392,8 @@ export function BleProvider({ children }: { children: ReactNode }) {
       connectPeer,
       disconnectPeer,
       sendTestPayload,
+      relayConsent,
+      setRelayConsent,
     }),
     [
       status,
@@ -365,6 +408,8 @@ export function BleProvider({ children }: { children: ReactNode }) {
       connectPeer,
       disconnectPeer,
       sendTestPayload,
+      relayConsent,
+      setRelayConsent,
     ],
   );
 

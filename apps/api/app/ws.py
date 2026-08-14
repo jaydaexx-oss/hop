@@ -3,7 +3,7 @@ from __future__ import annotations
 from fastapi import WebSocket
 
 from app.models.tables import Message
-from app.payload import decode_text
+from app.payload import is_crypto_box_payload
 from app.schemas import MessageOut
 
 
@@ -41,19 +41,20 @@ hub = ConnectionHub()
 
 
 def message_event(message: Message) -> dict:
+    boxed = is_crypto_box_payload(message.encrypted_payload)
     body = MessageOut(
         message_id=message.id,
         sender_id=message.sender_id,
         recipient_id=message.recipient_id,
         conversation_id=message.conversation_id,
         encrypted_payload=message.encrypted_payload,
-        text=decode_text(message.encrypted_payload),
+        text=None,
         created_at=message.created_at,
         expires_at=message.expires_at,
         ttl=message.ttl,
         hop_count=message.hop_count,
         transport=message.transport,
         status=message.status,
-        e2ee=False,
+        e2ee=boxed,
     )
     return {"type": "message", "message": body.model_dump(mode="json")}

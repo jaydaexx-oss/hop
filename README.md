@@ -20,7 +20,7 @@ Chat send chooses internet or BLE automatically. Nearby BLE and internet chat bo
 | Controlled peer-relay | Protocol simulator (A→B→C→D); **physical mesh not complete** |
 | BLE / relay / mesh routing | Simulator only — do not claim real-world mesh |
 | Internet E2EE | libsodium `crypto_box`; server stores ciphertext only. Identity keys are client-published, not CA-attested |
-| Docker / Redis | Compose files only; Docker not installed |
+| Docker / production deploy | Compose prod stack + `DEPLOYMENT.md` (Hostinger VPS guide) |
 
 ## Layout
 
@@ -28,7 +28,9 @@ Chat send chooses internet or BLE automatically. Nearby BLE and internet chat bo
 apps/mobile     Expo / React Native / TypeScript
 apps/api        FastAPI / Python
 packages/protocol   Shared message + transport types
-infra           docker-compose (Postgres, Redis, API)
+infra           docker-compose (dev + prod), Nginx, backups
+DEPLOYMENT.md   Hostinger VPS production guide
+docs/API.md     HTTP/WebSocket API reference
 .github/workflows   CI
 docs
 ```
@@ -72,6 +74,12 @@ npx expo start --dev-client
 Nearby BLE requires a **development build** on a physical iPhone and Android phone. Expo Go, simulators, and web are not valid BLE tests. Exact steps: `docs/BLE_TESTING.md`.
 
 Android emulator: `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000`.
+
+## Production deployment
+
+See **[DEPLOYMENT.md](./DEPLOYMENT.md)** for Hostinger VPS setup (Docker, Nginx, HTTPS, Postgres, Redis, backups, monitoring). **Do not deploy until you have reviewed `infra/.env` and DNS.**
+
+API reference: **[docs/API.md](./docs/API.md)**.
 
 ## Next recommended step
 

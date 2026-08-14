@@ -1,8 +1,9 @@
 from __future__ import annotations
 
-from fastapi import APIRouter
+from fastapi import APIRouter, Response
 
 from app.config import get_settings
+from app.metrics import READY
 
 router = APIRouter(tags=["health"])
 
@@ -31,8 +32,21 @@ def _redis_ok() -> bool:
 
 
 @router.get("/ready")
-def ready() -> dict[str, str]:
+def ready(response: Response) -> dict[str, str]:
     database = "ok" if _database_ok() else "error"
     cache = "ok" if _redis_ok() else "error"
-    status = "ready" if database == "ok" else "not_ready"
-    return {"status": status, "database": database, "redis": cache}
+    status = "ready" if database == "ok" and cache == "ok" else "not_ready"
+    READY.set(1 if status == "ready" else 0)
+    if status != "ready":
+        response.status_code = 503
+    return {
+        "status": status,
+        "database": database,
+        "redis": cache,
+        "version": get_settings().app_version,
+    }
+
+
+@router.get("/live")
+def live() -> dict[str, str]:
+    return {"status": "alive", "service": "hop-api"}

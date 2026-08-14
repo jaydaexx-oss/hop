@@ -30,7 +30,7 @@ Updated after controlled peer-relay (protocol simulator). Physical multi-device 
 | Rate limits (in-process) | Implemented | Unit + API 429 test |
 | Blocked users | Enforced on conversation create | API tests |
 | Real-world BLE mesh / multi-hop | **Not complete** | Simulator only; phones untested |
-| Docker / live Postgres / Redis | Configured | Docker not installed; Redis not running |
+| Docker / live Postgres / Redis | Production compose + docs | See `DEPLOYMENT.md` |
 
 ## Tested vs untested
 

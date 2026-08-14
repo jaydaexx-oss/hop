@@ -6,6 +6,8 @@ from collections import defaultdict
 
 from fastapi import HTTPException, Request
 
+from app.config import get_settings
+
 AUTH_LIMIT = int(os.environ.get("RATE_LIMIT_AUTH", "30"))
 AUTH_WINDOW_S = float(os.environ.get("RATE_LIMIT_AUTH_WINDOW", "60"))
 MESSAGE_LIMIT = int(os.environ.get("RATE_LIMIT_MESSAGE", "60"))
@@ -35,7 +37,14 @@ limiter = SlidingWindowLimiter()
 
 
 def client_ip(request: Request) -> str:
-    # Do not trust X-Forwarded-For unless a reverse proxy is explicitly configured.
+    settings = get_settings()
+    if settings.trust_proxy_headers:
+        forwarded = request.headers.get("X-Forwarded-For")
+        if forwarded:
+            return forwarded.split(",")[0].strip()
+        real_ip = request.headers.get("X-Real-IP")
+        if real_ip:
+            return real_ip.strip()
     if request.client is None:
         return "unknown"
     return request.client.host

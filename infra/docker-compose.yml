@@ -1,9 +1,11 @@
+# Local development stack. For production see docker-compose.prod.yml and DEPLOYMENT.md.
+
 services:
   postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-hop}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       POSTGRES_DB: ${POSTGRES_DB:-hop}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
@@ -17,8 +19,12 @@ services:
 
   redis:
     image: redis:7-alpine
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    volumes:
+      - ./redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
+      - hop_redis:/data
     ports:
-      - "6379:6379"
+      - "${REDIS_PORT:-6379}:6379"
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 5s
@@ -31,25 +37,28 @@ services:
     ports:
       - "${API_PORT:-8000}:8000"
     environment:
-      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hop}:${POSTGRES_PASSWORD:-changeme}@postgres:5432/${POSTGRES_DB:-hop}
+      APP_ENV: ${APP_ENV:-development}
+      DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-hop}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-hop}
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:8081,http://127.0.0.1:8081}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
+      TRUST_PROXY_HEADERS: ${TRUST_PROXY_HEADERS:-false}
+      DOCS_ENABLED: ${DOCS_ENABLED:-true}
+      METRICS_ENABLED: ${METRICS_ENABLED:-true}
+      UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
+      FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
     depends_on:
       postgres:
         condition: service_healthy
       redis:
         condition: service_healthy
     healthcheck:
-      test:
-        [
-          "CMD",
-          "python",
-          "-c",
-          "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health')",
-        ]
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8000/health"]
       interval: 10s
       timeout: 5s
       retries: 10
 
 volumes:
   hop_pgdata:
+  hop_redis:

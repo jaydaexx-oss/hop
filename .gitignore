@@ -2,6 +2,14 @@
 .env
 .env.*
 !.env.example
+infra/.env
+infra/backups/*
+!infra/backups/.gitkeep
+infra/certbot/conf/*
+!infra/certbot/conf/.gitkeep
+infra/certbot/www/*
+!infra/certbot/www/.gitkeep
+!infra/.env.example
 
 # Python
 .venv/

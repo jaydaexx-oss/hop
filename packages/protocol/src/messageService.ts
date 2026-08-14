@@ -19,6 +19,8 @@ export interface SendTextInput {
 
 export interface MessageCrypto {
   encrypt(plain: ApplicationPlaintext): Promise<string>;
+  /** Self-encrypted copy for displaying sent messages without storing plaintext. */
+  sealLocal?(plain: ApplicationPlaintext): Promise<string>;
   decrypt(
     payload: string,
     expectedSenderPk?: string,
@@ -60,6 +62,7 @@ export class MessageService {
     if (!isCryptoBoxPayload(encrypted_payload)) {
       throw new Error("encrypt() must return a libsodium crypto_box payload");
     }
+    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
     let record: StoredMessage = {
       message_id,
       conversation_id: input.conversation_id,
@@ -67,6 +70,7 @@ export class MessageService {
       recipient_id: input.recipient_id,
       text: input.text,
       encrypted_payload,
+      local_seal,
       status: MessageStatus.CREATED,
       transport: "local",
       created_at,
@@ -76,13 +80,18 @@ export class MessageService {
     };
     record = this.withStatus(record, MessageStatus.ENCRYPTED);
     record = this.withStatus(record, MessageStatus.QUEUED);
-    await this.store.saveMessage(record);
+    await this.persistMessage(record);
     await this.store.enqueue(record.message_id, 0, now.getTime());
-    return this.flushOne(record, now, true);
+    return this.flushOne({ ...record, text: input.text }, now, true);
   }
 
   async listMessages(conversationId: string): Promise<StoredMessage[]> {
-    return this.store.listMessages(conversationId);
+    const rows = await this.store.listMessages(conversationId);
+    const out: StoredMessage[] = [];
+    for (const row of rows) {
+      out.push(await this.materializePlaintext(row));
+    }
+    return out;
   }
 
   async getNetworkStatus(): Promise<NetworkStatus> {
@@ -143,25 +152,25 @@ export class MessageService {
       const merged = this.advanceToward(
         {
           ...existing,
-          text: opened.text ?? existing.text,
+          text: null,
           encrypted_payload: opened.encrypted_payload || existing.encrypted_payload,
           transport: message.transport || existing.transport,
         },
         message.status,
       );
-      await this.store.saveMessage(merged);
+      await this.persistMessage(merged);
       return false;
     }
     const fresh = await this.store.rememberProcessed(message.message_id, now);
     if (!fresh) return false;
-    await this.store.saveMessage(opened);
+    await this.persistMessage({ ...opened, text: null });
     return true;
   }
 
   private async flushOne(message: StoredMessage, now: Date, ignoreBackoff: boolean): Promise<StoredMessage> {
     if (isExpired(message, now)) {
       const expired = this.withStatus(message, MessageStatus.EXPIRED);
-      await this.store.saveMessage(expired);
+      await this.persistMessage(expired);
       await this.store.removeOutbound(message.message_id);
       return expired;
     }
@@ -176,7 +185,7 @@ export class MessageService {
     if (result.ok) {
       let sent = this.advanceToward(message, MessageStatus.SENT);
       sent = { ...sent, transport: result.transport };
-      await this.store.saveMessage(sent);
+      await this.persistMessage(sent);
       await this.store.removeOutbound(sent.message_id);
       await this.store.rememberProcessed(sent.message_id, now);
       return sent;
@@ -186,12 +195,12 @@ export class MessageService {
     const wait = nextBackoffMs(attempts, this.retry);
     if (wait === null) {
       const failed = this.withStatus(message, MessageStatus.FAILED);
-      await this.store.saveMessage(failed);
+      await this.persistMessage(failed);
       await this.store.removeOutbound(message.message_id);
       return failed;
     }
     const queuedAgain = { ...this.withStatus(message, MessageStatus.QUEUED), transport: "local" };
-    await this.store.saveMessage(queuedAgain);
+    await this.persistMessage(queuedAgain);
     await this.store.enqueue(message.message_id, attempts, now.getTime() + wait);
     return queuedAgain;
   }
@@ -226,6 +235,45 @@ export class MessageService {
       };
       await this.acceptInbound(stored);
     }
+  }
+
+  private async materializePlaintext(message: StoredMessage): Promise<StoredMessage> {
+    if (message.text !== null) {
+      return { ...message, text: null };
+    }
+    if (!this.crypto) {
+      return message;
+    }
+    if (message.local_seal && isCryptoBoxPayload(message.local_seal)) {
+      try {
+        const plain = await this.crypto.decrypt(message.local_seal, undefined, message.message_id, {
+          expectedSenderId: message.sender_id,
+        });
+        return { ...message, text: plain.text };
+      } catch {
+        /* fall through to network payload */
+      }
+    }
+    if (!isCryptoBoxPayload(message.encrypted_payload)) {
+      return message;
+    }
+    try {
+      const plain = await this.crypto.decrypt(message.encrypted_payload, undefined, message.message_id, {
+        expectedSenderId: message.sender_id,
+        expectedRecipientId: message.recipient_id,
+      });
+      return { ...message, text: plain.text };
+    } catch {
+      return message;
+    }
+  }
+
+  private async persistMessage(message: StoredMessage): Promise<void> {
+    const stored =
+      isCryptoBoxPayload(message.encrypted_payload) && message.encrypted_payload
+        ? { ...message, text: null, local_seal: message.local_seal ?? null }
+        : message;
+    await this.store.saveMessage(stored);
   }
 
   private async openInbound(message: StoredMessage): Promise<StoredMessage> {

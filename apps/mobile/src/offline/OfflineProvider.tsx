@@ -76,6 +76,7 @@ function createAppCrypto(identity: IdentityKeyPair, store: HopSqliteStore): Mess
       if (!pk) throw new Error('Peer has not published an identity public key.');
       return encryptApplicationMessage(plain, pk, identity);
     },
+    sealLocal: (plain) => encryptApplicationMessage(plain, identity.publicKey, identity),
     decrypt: (payload, expectedSenderPk, expectedMessageId, options) =>
       decryptApplicationMessage(payload, identity, expectedSenderPk, expectedMessageId, options),
   };

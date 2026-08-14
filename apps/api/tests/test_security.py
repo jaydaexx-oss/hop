@@ -6,7 +6,7 @@ from sqlmodel import Session, select
 
 from app.db import get_engine
 from app.models.tables import Message, User, utcnow
-from app.rate_limit import SlidingWindowLimiter, limiter
+from app.rate_limit import SlidingWindowLimiter, reset_limiters
 
 
 BOXED = json.dumps(
@@ -176,7 +176,7 @@ def test_auth_rate_limit_returns_429(client: TestClient, monkeypatch) -> None:
     import app.rate_limit as rl
 
     monkeypatch.setattr(rl, "AUTH_LIMIT", 3)
-    limiter.reset()
+    reset_limiters()
     try:
         for i in range(3):
             response = client.post("/auth/register", json={"username": f"rate{i}x", "password": "secret123"})
@@ -184,4 +184,42 @@ def test_auth_rate_limit_returns_429(client: TestClient, monkeypatch) -> None:
         denied = client.post("/auth/register", json={"username": "ratezz", "password": "secret123"})
         assert denied.status_code == 429
     finally:
-        limiter.reset()
+        reset_limiters()
+
+
+def test_new_passwords_use_argon2id(client: TestClient) -> None:
+    from sqlmodel import Session, select
+
+    from app.db import get_engine
+    from app.models.tables import User
+    from app.security import hash_password, verify_password
+
+    assert hash_password("secret123").startswith("argon2id$")
+    _auth(client, "argonuser")
+    with Session(get_engine()) as session:
+        user = session.exec(select(User).where(User.username == "argonuser")).one()
+        assert user.password_hash.startswith("argon2id$")
+        assert verify_password("secret123", user.password_hash)
+
+
+def test_identity_public_key_cannot_change(client: TestClient) -> None:
+    token, _ = _auth(client, "immutable")
+    headers = {"Authorization": f"Bearer {token}"}
+    pk_a = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    pk_b = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+    first = client.put("/users/me/identity", json={"public_key": pk_a}, headers=headers)
+    assert first.status_code == 200
+    second = client.put("/users/me/identity", json={"public_key": pk_b}, headers=headers)
+    assert second.status_code == 409
+
+
+def test_get_user_by_id_returns_identity_key(client: TestClient) -> None:
+    token_a, id_a = _auth(client, "lookupa")
+    token_b, _ = _auth(client, "lookupb")
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    pk = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
+    client.put("/users/me/identity", json={"public_key": pk}, headers=headers_b)
+    found = client.get(f"/users/id/{id_a}", headers=headers_b)
+    assert found.status_code == 200
+    assert found.json()["id"] == id_a
+    assert found.json()["username"] == "lookupa"

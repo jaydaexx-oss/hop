@@ -71,6 +71,7 @@ export const api = {
     request<AuthResponse>('/auth/login', { method: 'POST', body: { username, password } }),
   logout: (token: string) => request<{ status: string }>('/auth/logout', { method: 'POST', token }),
   me: (token: string) => request<User>('/users/me', { token }),
+  userById: (token: string, userId: string) => request<User>(`/users/id/${userId}`, { token }),
   putIdentity: (token: string, publicKey: string) =>
     request<User>('/users/me/identity', { method: 'PUT', token, body: { public_key: publicKey } }),
   blockUser: (token: string, username: string) =>

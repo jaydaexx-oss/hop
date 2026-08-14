@@ -25,6 +25,7 @@ import {
 } from '@hop/protocol';
 
 import { useAuth } from '@/src/auth/AuthProvider';
+import { api } from '@/src/api/hop';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { HopBleEngine } from '@/src/ble/HopBleEngine';
 import { loadOrCreateIdentity } from '@/src/crypto/identity';
@@ -60,7 +61,7 @@ function shortTime(): string {
 }
 
 export function BleProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { store, service, manager } = useOffline();
   const engineRef = useRef(new HopBleEngine());
   const [status, setStatus] = useState<BleLinkStatus>(engineRef.current.status());
@@ -77,6 +78,8 @@ export function BleProvider({ children }: { children: ReactNode }) {
   serviceRef.current = service;
   const userRef = useRef(user);
   userRef.current = user;
+  const tokenRef = useRef(token);
+  tokenRef.current = token;
   const identityRef = useRef<IdentityKeyPair | null>(null);
 
   useEffect(() => {
@@ -230,6 +233,12 @@ export function BleProvider({ children }: { children: ReactNode }) {
         scanMode: 'balanced',
         identityPublicKey: identity.publicKey,
         relayConsent: consent,
+        resolveServerPublicKey: tokenRef.current
+          ? async (userId) => {
+              const peer = await api.userById(tokenRef.current!, userId);
+              return peer.identity_public_key || null;
+            }
+          : undefined,
       });
       setSessionActive(true);
       appendLog('Nearby started. libsodium crypto_box identity published in handshake.');
@@ -342,7 +351,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
             conversation_id: envelope.conversation_id,
             sender_id: envelope.sender_id,
             recipient_id: envelope.recipient_id,
-            text,
+            text: null,
             encrypted_payload: envelope.encrypted_payload,
             status: 'SENT',
             transport: 'bluetooth',

@@ -6,6 +6,7 @@ CREATE TABLE IF NOT EXISTS messages (
   recipient_id TEXT NOT NULL,
   text TEXT,
   encrypted_payload TEXT NOT NULL,
+  local_seal TEXT,
   status TEXT NOT NULL,
   transport TEXT NOT NULL,
   created_at TEXT NOT NULL,
@@ -52,6 +53,7 @@ export interface StoredMessage {
   recipient_id: string;
   text: string | null;
   encrypted_payload: string;
+  local_seal?: string | null;
   status: string;
   transport: string;
   created_at: string;
@@ -86,17 +88,23 @@ export class HopSqliteStore {
     } catch {
       /* column already exists on new databases */
     }
+    try {
+      await this.db.execute("ALTER TABLE messages ADD COLUMN local_seal TEXT");
+    } catch {
+      /* column already exists on new databases */
+    }
   }
 
   async saveMessage(message: StoredMessage): Promise<void> {
     await this.db.execute(
       `INSERT INTO messages (
-        message_id, conversation_id, sender_id, recipient_id, text, encrypted_payload,
+        message_id, conversation_id, sender_id, recipient_id, text, encrypted_payload, local_seal,
         status, transport, created_at, expires_at, ttl, hop_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(message_id) DO UPDATE SET
         text=excluded.text,
         encrypted_payload=excluded.encrypted_payload,
+        local_seal=excluded.local_seal,
         status=excluded.status,
         transport=excluded.transport`,
       [
@@ -106,6 +114,7 @@ export class HopSqliteStore {
         message.recipient_id,
         message.text,
         message.encrypted_payload,
+        message.local_seal ?? null,
         message.status,
         message.transport,
         message.created_at,

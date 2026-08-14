@@ -39,11 +39,28 @@ def put_identity(
     if device is None:
         device = Device(user_id=user.id, platform="mobile", identity_public_key=public_key)
         session.add(device)
+    elif device.identity_public_key and device.identity_public_key != public_key:
+        raise HTTPException(
+            status_code=409,
+            detail="Identity public key is already published and cannot be changed",
+        )
     else:
         device.identity_public_key = public_key
         session.add(device)
     session.commit()
     return _user_out(session, user)
+
+
+@router.get("/id/{user_id}", response_model=UserOut)
+def get_user_by_id(
+    user_id: str,
+    session: Session = Depends(get_session),
+    _user: User = Depends(get_current_user),
+) -> UserOut:
+    found = session.get(User, user_id)
+    if found is None or found.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="User not found")
+    return _user_out(session, found)
 
 
 @router.post("/me/blocks")

@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   encryptApplicationMessage,
   generateIdentityKeyPair,
+  decryptApplicationMessage,
   type IdentityKeyPair,
   type MessageCrypto,
 } from "../src/index.js";
@@ -33,8 +34,11 @@ function testCrypto(sender: IdentityKeyPair, recipientPk: string): MessageCrypto
     encrypt(plain) {
       return encryptApplicationMessage(plain, recipientPk, sender);
     },
-    decrypt() {
-      throw new Error("offline sync tests do not decrypt inbound internet rows");
+    sealLocal(plain) {
+      return encryptApplicationMessage(plain, sender.publicKey, sender);
+    },
+    decrypt(payload, expectedSenderPk, expectedMessageId, options) {
+      return decryptApplicationMessage(payload, sender, expectedSenderPk, expectedMessageId, options);
     },
   };
 }
@@ -261,6 +265,20 @@ describe("offline persistence and sync", () => {
     expect(bleSent).toEqual([sent.message_id]);
     expect(await session.store.queuedCount()).toBe(0);
     expect(await session.service.getNetworkStatus()).toBe("Nearby");
+    session.driver.close();
+  });
+
+  it("does not persist decrypted plaintext for crypto_box messages", async () => {
+    const file = tempDb();
+    const world = mockWorld();
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const session = await openService(file, world.http, testCrypto(alice, blake.publicKey));
+    const sent = await session.service.sendText({ ...sendInput, text: "secret at rest" });
+    const raw = await session.store.getMessage(sent.message_id);
+    expect(raw?.text).toBeNull();
+    expect(raw?.local_seal).toBeTruthy();
+    expect(raw?.local_seal).not.toContain("secret at rest");
     session.driver.close();
   });
 });

@@ -30,6 +30,8 @@ export interface BleSessionOptions {
   identityPublicKey: string;
   /** Opt-in: forward others' encrypted envelopes. Default off. */
   relayConsent?: boolean;
+  /** Resolve a peer's server-published identity key for BLE handshake attestation. */
+  resolveServerPublicKey?: (userId: string) => Promise<string | null | undefined>;
 }
 
 export interface BleLink {

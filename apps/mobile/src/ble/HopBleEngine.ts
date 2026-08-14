@@ -73,6 +73,7 @@ export class HopBleEngine implements BleLink {
   private readonly connectionListeners = new Set<(deviceId: string, connected: boolean) => void>();
   private readonly processed = new ProcessedIdSet();
   readonly tofu = new PublicKeyTofu();
+  private readonly serverKeyCache = new Map<string, string>();
   private readonly reassemblers = new Map<string, BleReassembler>();
   private readonly pendingAcks = new Map<string, () => void>();
   private subscriptions: unknown[] = [];
@@ -369,6 +370,9 @@ export class HopBleEngine implements BleLink {
         if (handshake.user_id && handshake.pk && !this.tofu.bind(handshake.user_id, handshake.pk)) {
           throw new Error('Peer identity key does not match the key already bound to this user.');
         }
+        if (handshake.user_id && handshake.pk) {
+          await this.verifyServerIdentity(handshake.user_id, handshake.pk);
+        }
         return {
           deviceId,
           displayName: handshake.username,
@@ -389,6 +393,23 @@ export class HopBleEngine implements BleLink {
       rssi: existing?.rssi,
       lastSeenAt: Date.now(),
     };
+  }
+
+  private async verifyServerIdentity(userId: string, handshakePk: string): Promise<void> {
+    const resolver = this.session?.resolveServerPublicKey;
+    if (!resolver) return;
+    let serverPk = this.serverKeyCache.get(userId);
+    if (!serverPk) {
+      const fetched = await resolver(userId);
+      if (!fetched) {
+        throw new Error('Peer has not published an identity key on the server.');
+      }
+      serverPk = fetched;
+      this.serverKeyCache.set(userId, serverPk);
+    }
+    if (serverPk !== handshakePk) {
+      throw new Error('BLE handshake public key does not match the server-published identity key.');
+    }
   }
 
   private bindNativeEvents(native: NativeBle): void {

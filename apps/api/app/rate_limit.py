@@ -33,7 +33,29 @@ class SlidingWindowLimiter:
         self._hits.clear()
 
 
-limiter = SlidingWindowLimiter()
+_memory_limiter = SlidingWindowLimiter()
+
+
+def _redis_allow(key: str, limit: int, window_s: int) -> bool | None:
+    try:
+        import redis
+
+        client = redis.from_url(get_settings().redis_url, socket_connect_timeout=0.5)
+        bucket = int(time.time()) // max(window_s, 1)
+        redis_key = f"hop:rl:{key}:{bucket}"
+        count = client.incr(redis_key)
+        if count == 1:
+            client.expire(redis_key, window_s + 1)
+        return count <= limit
+    except Exception:
+        return None
+
+
+def _allow(key: str, limit: int, window_s: float) -> bool:
+    redis_result = _redis_allow(key, limit, int(window_s))
+    if redis_result is not None:
+        return redis_result
+    return _memory_limiter.allow(key, limit, window_s)
 
 
 def client_ip(request: Request) -> str:
@@ -52,11 +74,15 @@ def client_ip(request: Request) -> str:
 
 def limit_auth(request: Request) -> None:
     ip = client_ip(request)
-    if not limiter.allow(f"auth:{ip}", AUTH_LIMIT, AUTH_WINDOW_S):
+    if not _allow(f"auth:{ip}", AUTH_LIMIT, AUTH_WINDOW_S):
         raise HTTPException(status_code=429, detail="Too many authentication attempts")
 
 
 def limit_messages(request: Request) -> None:
     ip = client_ip(request)
-    if not limiter.allow(f"msg:{ip}", MESSAGE_LIMIT, MESSAGE_WINDOW_S):
+    if not _allow(f"msg:{ip}", MESSAGE_LIMIT, MESSAGE_WINDOW_S):
         raise HTTPException(status_code=429, detail="Too many messages")
+
+
+def reset_limiters() -> None:
+    _memory_limiter.reset()

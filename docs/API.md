@@ -57,7 +57,8 @@ Rate limited (`429`) by client IP.
 | Method | Path | Description |
 |---|---|---|
 | GET | `/users/me` | Current profile |
-| PUT | `/users/me/identity` | Publish libsodium public key `{public_key}` |
+| PUT | `/users/me/identity` | Publish libsodium public key `{public_key}` (immutable after first publish) |
+| GET | `/users/id/{user_id}` | Lookup user by UUID (requires auth; includes `identity_public_key`) |
 | POST | `/users/me/blocks` | Block user `{username}` |
 | GET | `/users/{username}` | Lookup user (requires auth) |
 

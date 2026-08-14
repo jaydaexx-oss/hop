@@ -8,6 +8,8 @@ from datetime import datetime, timedelta, timezone
 
 from typing import Optional
 
+from argon2 import PasswordHasher
+from argon2.exceptions import VerifyMismatchError
 from fastapi import Depends, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from sqlmodel import Session, select
@@ -20,6 +22,8 @@ USERNAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_]{2,19}$")
 bearer = HTTPBearer(auto_error=False)
 PBKDF_ROUNDS = 120_000
 SESSION_DAYS = 30
+ARGON2_PREFIX = "argon2id$"
+_password_hasher = PasswordHasher(time_cost=2, memory_cost=65536, parallelism=1)
 
 
 def normalize_username(username: str) -> str:
@@ -37,12 +41,16 @@ def validate_username(username: str) -> str:
 
 
 def hash_password(password: str) -> str:
-    salt = secrets.token_hex(16)
-    digest = hashlib.pbkdf2_hmac("sha256", password.encode(), salt.encode(), PBKDF_ROUNDS).hex()
-    return f"pbkdf2${PBKDF_ROUNDS}${salt}${digest}"
+    return f"{ARGON2_PREFIX}{_password_hasher.hash(password)}"
 
 
 def verify_password(password: str, stored: str) -> bool:
+    if stored.startswith(ARGON2_PREFIX):
+        try:
+            _password_hasher.verify(stored[len(ARGON2_PREFIX) :], password)
+            return True
+        except VerifyMismatchError:
+            return False
     try:
         algo, rounds, salt, digest = stored.split("$")
         if algo != "pbkdf2":

@@ -53,6 +53,7 @@ export interface MyProfile {
   username: string;
   color: string;
   discoverable: boolean;
+  avatarUri?: string;
 }
 
 interface HopContextType {
@@ -74,7 +75,7 @@ interface HopContextType {
   getGroupConversation: (groupId: string) => GroupConversation | undefined;
   markRead: (userId: string) => void;
   markGroupRead: (groupId: string) => void;
-  completeOnboarding: (username: string, color: string) => Promise<void>;
+  completeOnboarding: (username: string, color: string, avatarUri?: string) => Promise<void>;
 }
 
 // ─── Simulated nearby user pool ───────────────────────────────────────────────
@@ -178,8 +179,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     await AsyncStorage.setItem('@hop/profile', JSON.stringify(p));
   };
 
-  const completeOnboarding = async (username: string, color: string) => {
-    await setProfile({ id: createMessageId(), username, color, discoverable: true });
+  const completeOnboarding = async (username: string, color: string, avatarUri?: string) => {
+    await setProfile({ id: createMessageId(), username, color, discoverable: true, avatarUri });
     setIsOnboarding(false);
   };
 

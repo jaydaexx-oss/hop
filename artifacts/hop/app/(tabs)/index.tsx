@@ -21,6 +21,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, Redirect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
+import { Avatar } from '@/components/Avatar';
 
 const { width } = Dimensions.get('window');
 const RADAR_SIZE = Math.min(width * 0.88, 336);
@@ -276,11 +277,12 @@ export default function RadarScreen() {
           {/* Center — my avatar */}
           <View style={[styles.center, { backgroundColor: colors.primary }]}>
             {profile && (
-              <View style={[styles.centerInner, { backgroundColor: profile.color }]}>
-                <Text style={styles.centerInitial}>
-                  {profile.username[0].toUpperCase()}
-                </Text>
-              </View>
+              <Avatar
+                uri={profile.avatarUri}
+                color={profile.color}
+                username={profile.username}
+                size={38}
+              />
             )}
           </View>
 

@@ -140,6 +140,20 @@ export const AVATAR_COLORS = [
 
 const sentIds = new ProcessedIdSet(10_000);
 
+// ─── Sort helpers ─────────────────────────────────────────────────────────────
+
+function lastTs(msgs: { timestamp: number }[]): number {
+  return msgs.length > 0 ? msgs[msgs.length - 1].timestamp : 0;
+}
+
+function sortedConvs(list: Conversation[]): Conversation[] {
+  return list.slice().sort((a, b) => lastTs(b.messages) - lastTs(a.messages));
+}
+
+function sortedGroups(list: GroupConversation[]): GroupConversation[] {
+  return list.slice().sort((a, b) => lastTs(b.messages) - lastTs(a.messages));
+}
+
 // ─── Exported toast updater (used by showStorageError inside HopProvider) ────
 //
 // Exported so tests can import the REAL function and assert deduplication
@@ -459,7 +473,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           messages: [initMsg],
           unread: 1,
         };
-        const updated = [newConv, ...convs];
+        const updated = sortedConvs([newConv, ...convs]);
         saveConvs(updated, showStorageError);
         return updated;
       });
@@ -493,9 +507,10 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
 
     setConversations(prev => {
       const existing = prev.find(c => c.userId === userId);
-      const updated = existing
+      const raw = existing
         ? prev.map(c => c.userId === userId ? { ...c, messages: [...c.messages, msg], unread: 0 } : c)
         : [{ userId, user: { ...user, signal: nearbyUsers.find(u => u.id === userId)?.signal ?? 80 }, messages: [msg], unread: 0 }, ...prev];
+      const updated = sortedConvs(raw);
       saveConvs(updated, showStorageError);
       return updated;
     });
@@ -503,9 +518,9 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     setTimeout(() => {
       const reply: Message = { id: replyId, senderId: userId, content: replyContent, timestamp: Date.now(), status: MessageStatus.DELIVERED };
       setConversations(curr => {
-        const u = curr.map(c => c.userId === userId ? { ...c, messages: [...c.messages, reply], unread: 1 } : c);
-        saveConvs(u, showStorageError);
-        return u;
+        const updated = sortedConvs(curr.map(c => c.userId === userId ? { ...c, messages: [...c.messages, reply], unread: 1 } : c));
+        saveConvs(updated, showStorageError);
+        return updated;
       });
       const sender = USER_POOL.find(u => u.id === userId);
       setMutedIds(currentMuted => {
@@ -534,7 +549,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     setGroupConversations(prev => {
       const group = prev.find(g => g.id === groupId);
       if (!group) return prev;
-      const updated = prev.map(g => g.id === groupId ? { ...g, messages: [...g.messages, msg], unread: 0 } : g);
+      const updated = sortedGroups(prev.map(g => g.id === groupId ? { ...g, messages: [...g.messages, msg], unread: 0 } : g));
       saveGroups(updated, showStorageError);
       return updated;
     });
@@ -546,7 +561,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         const bot = group.members[Math.floor(Math.random() * group.members.length)];
         const replyText = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
         const reply: Message = { id: replyId, senderId: bot.id, senderName: bot.username, senderColor: bot.color, content: replyText, timestamp: Date.now(), status: MessageStatus.DELIVERED };
-        const updated = curr.map(g => g.id === groupId ? { ...g, messages: [...g.messages, reply], unread: 1 } : g);
+        const updated = sortedGroups(curr.map(g => g.id === groupId ? { ...g, messages: [...g.messages, reply], unread: 1 } : g));
         saveGroups(updated, showStorageError);
         setMutedIds(currentMuted => {
           if (!currentMuted.has(groupId)) {
@@ -629,7 +644,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const undoDeleteConversation = (conv: Conversation) => {
     setConversations(prev => {
       if (prev.find(c => c.userId === conv.userId)) return prev;
-      const updated = [conv, ...prev];
+      const updated = sortedConvs([conv, ...prev]);
       saveConvs(updated, showStorageError);
       return updated;
     });
@@ -638,7 +653,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const undoDeleteGroup = (group: GroupConversation) => {
     setGroupConversations(prev => {
       if (prev.find(g => g.id === group.id)) return prev;
-      const updated = [group, ...prev];
+      const updated = sortedGroups([group, ...prev]);
       saveGroups(updated, showStorageError);
       return updated;
     });

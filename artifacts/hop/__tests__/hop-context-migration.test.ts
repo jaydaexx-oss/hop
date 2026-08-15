@@ -38,10 +38,13 @@ const FAKE_PROFILE = JSON.stringify({
 
 const LEGACY_BLOCKED_KEY  = '@hop/blocked';
 const LEGACY_REQUESTS_KEY = '@hop/requests';
+const LEGACY_MUTED_KEY    = '@hop/muted';
 const SCOPED_BLOCKED_KEY  = `@hop/blocked/${PROFILE_ID}`;
 const SCOPED_REQUESTS_KEY = `@hop/requests/${PROFILE_ID}`;
+const SCOPED_MUTED_KEY    = `@hop/muted/${PROFILE_ID}`;
 
 const SAMPLE_BLOCKED  = JSON.stringify(['u2', 'u3']);
+const SAMPLE_MUTED    = JSON.stringify(['u5']);
 const SAMPLE_REQUESTS = JSON.stringify([
   {
     id: 'req1',
@@ -243,5 +246,63 @@ describe('Block-list and request-history migration on app update', () => {
     );
     expect(mockRemoveItem).not.toHaveBeenCalledWith(LEGACY_BLOCKED_KEY);
     expect(mockRemoveItem).not.toHaveBeenCalledWith(LEGACY_REQUESTS_KEY);
+  });
+
+  // ── Scenario 6: setItem fails mid-migration — no silent data loss ─────────────
+  //
+  // If the write to the scoped key throws (e.g. storage quota exceeded), the
+  // migration must NOT remove the legacy key.  Leaving the legacy key intact
+  // means the next app launch will retry the migration safely — the user's data
+  // is never silently destroyed.
+  //
+  // The context must also surface an error toast so the user knows something
+  // went wrong rather than silently swallowing the failure.
+
+  it('does not remove legacy keys when the scoped-key write fails (no silent data loss)', async () => {
+    const store: Record<string, string | null> = {
+      '@hop/profile':        FAKE_PROFILE,
+      [LEGACY_BLOCKED_KEY]:  SAMPLE_BLOCKED,
+      [LEGACY_REQUESTS_KEY]: SAMPLE_REQUESTS,
+      [LEGACY_MUTED_KEY]:    SAMPLE_MUTED,
+      // scoped keys absent — migration should attempt to run
+    };
+
+    mockGetItem.mockImplementation((key: string) =>
+      Promise.resolve(store[key] ?? null)
+    );
+
+    // setItem rejects for any scoped migration target; succeeds for everything else.
+    mockSetItem.mockImplementation((key: string, value: string) => {
+      if (
+        key === SCOPED_BLOCKED_KEY ||
+        key === SCOPED_REQUESTS_KEY ||
+        key === SCOPED_MUTED_KEY
+      ) {
+        return Promise.reject(new Error('Storage quota exceeded'));
+      }
+      store[key] = value;
+      return Promise.resolve(undefined);
+    });
+
+    mockRemoveItem.mockImplementation((key: string) => {
+      store[key] = null;
+      return Promise.resolve(undefined);
+    });
+
+    const { result } = await renderHook(() => useHop(), { wrapper });
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+
+    // Legacy keys must be preserved — removing them would silently destroy the
+    // user's data since the scoped write never landed.
+    expect(mockRemoveItem).not.toHaveBeenCalledWith(LEGACY_BLOCKED_KEY);
+    expect(mockRemoveItem).not.toHaveBeenCalledWith(LEGACY_REQUESTS_KEY);
+    expect(mockRemoveItem).not.toHaveBeenCalledWith(LEGACY_MUTED_KEY);
+
+    // An error toast must be shown so the failure is not invisible to the user.
+    await waitFor(() => expect(result.current.pendingToast).not.toBeNull());
+    expect(result.current.pendingToast).toMatchObject({
+      kind: 'error',
+      content: expect.stringContaining("Couldn't save"),
+    });
   });
 });

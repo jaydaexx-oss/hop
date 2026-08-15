@@ -1,6 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
+import { saveConvs, saveGroups } from './storage';
 import { createMessageId, MessageStatus } from '@/protocol/message';
 import { ProcessedIdSet } from '@/protocol/duplicates';
 
@@ -296,17 +297,6 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     scheduleNext();
     return () => { if (requestRef.current) clearTimeout(requestRef.current); };
   }, [loaded]);
-
-  // ── Persistence helpers ───────────────────────────────────────────────────
-
-  const saveConvs = async (convs: Conversation[]) => {
-    try { await AsyncStorage.setItem('@hop/conversations', JSON.stringify(convs)); }
-    catch (e) { console.warn('[HOP] Failed to persist conversations:', e); }
-  };
-  const saveGroups = async (groups: GroupConversation[]) => {
-    try { await AsyncStorage.setItem('@hop/groups', JSON.stringify(groups)); }
-    catch (e) { console.warn('[HOP] Failed to persist groups:', e); }
-  };
 
   // ── Toast ─────────────────────────────────────────────────────────────────
 

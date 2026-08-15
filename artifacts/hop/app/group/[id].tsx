@@ -51,7 +51,7 @@ export default function GroupChatScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { profile, getGroupConversation, sendGroupMessage, markGroupRead, groupConversations } = useHop();
+  const { profile, getGroupConversation, sendGroupMessage, markGroupRead, groupConversations, isMuted, toggleMute } = useHop();
   const [input, setInput] = useState('');
 
   const group = id ? getGroupConversation(id) : undefined;
@@ -133,6 +133,17 @@ export default function GroupChatScreen() {
             {group.members.length} members · nearby
           </Text>
         </View>
+        <Pressable
+          onPress={() => id && toggleMute(id)}
+          hitSlop={12}
+          style={styles.muteBtn}
+        >
+          <Ionicons
+            name={id && isMuted(id) ? 'notifications-off' : 'notifications'}
+            size={22}
+            color={id && isMuted(id) ? colors.mutedForeground : colors.foreground}
+          />
+        </Pressable>
       </View>
 
       <KeyboardAvoidingView behavior="padding" style={styles.flex} keyboardVerticalOffset={0}>
@@ -197,6 +208,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   back: { padding: 2 },
+  muteBtn: { padding: 4 },
   clusterAvatar: {
     position: 'absolute',
     justifyContent: 'center',

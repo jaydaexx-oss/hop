@@ -21,7 +21,7 @@ export default function ChatScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { profile, getConversation, sendMessage, markRead, conversations, nearbyUsers } = useHop();
+  const { profile, getConversation, sendMessage, markRead, conversations, nearbyUsers, isMuted, toggleMute } = useHop();
   const [input, setInput] = useState('');
 
   const conv = id ? getConversation(id) : undefined;
@@ -115,6 +115,17 @@ export default function ChatScreen() {
             <Text style={[styles.headerSubText, { color: colors.mutedForeground }]}>nearby</Text>
           </View>
         </View>
+        <Pressable
+          onPress={() => id && toggleMute(id)}
+          hitSlop={12}
+          style={styles.muteBtn}
+        >
+          <Ionicons
+            name={id && isMuted(id) ? 'notifications-off' : 'notifications'}
+            size={22}
+            color={id && isMuted(id) ? colors.mutedForeground : colors.foreground}
+          />
+        </Pressable>
       </View>
 
       <KeyboardAvoidingView behavior="padding" style={styles.flex} keyboardVerticalOffset={0}>
@@ -206,6 +217,7 @@ const styles = StyleSheet.create({
     gap: 12,
   },
   back: { padding: 2 },
+  muteBtn: { padding: 4 },
   headerAvatar: {
     width: 36,
     height: 36,

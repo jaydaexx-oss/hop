@@ -80,6 +80,9 @@ interface HopContextType {
   totalUnread: number;
   pendingToast: ToastNotification | null;
   dismissToast: () => void;
+  mutedIds: Set<string>;
+  toggleMute: (id: string) => Promise<void>;
+  isMuted: (id: string) => boolean;
   setProfile: (profile: MyProfile) => Promise<void>;
   sendMessage: (userId: string, content: string) => void;
   sendGroupMessage: (groupId: string, content: string) => void;
@@ -132,16 +135,18 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [pendingToast, setPendingToast] = useState<ToastNotification | null>(null);
+  const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     (async () => {
       try {
-        const [profStr, convStr, groupStr, bcastStr] = await Promise.all([
+        const [profStr, convStr, groupStr, bcastStr, mutedStr] = await Promise.all([
           AsyncStorage.getItem('@hop/profile'),
           AsyncStorage.getItem('@hop/conversations'),
           AsyncStorage.getItem('@hop/groups'),
           AsyncStorage.getItem('@hop/broadcasts'),
+          AsyncStorage.getItem('@hop/muted'),
         ]);
 
         if (profStr) {
@@ -191,6 +196,9 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           }));
           setGroupConversations(hydrated);
         }
+        if (mutedStr) {
+          setMutedIds(new Set(JSON.parse(mutedStr) as string[]));
+        }
         if (bcastStr) {
           setBroadcasts(JSON.parse(bcastStr));
         } else {
@@ -231,6 +239,21 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     AsyncStorage.setItem('@hop/groups', JSON.stringify(groups));
 
   const dismissToast = () => setPendingToast(null);
+
+  const toggleMute = async (id: string) => {
+    setMutedIds(prev => {
+      const next = new Set(prev);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      AsyncStorage.setItem('@hop/muted', JSON.stringify([...next]));
+      return next;
+    });
+  };
+
+  const isMuted = (id: string) => mutedIds.has(id);
 
   const setProfile = async (p: MyProfile) => {
     setProfileState(p);
@@ -282,13 +305,18 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       });
       // Fire toast so the global overlay can decide whether to show it
       const sender = USER_POOL.find(u => u.id === userId);
-      setPendingToast({
-        kind: 'dm',
-        targetId: userId,
-        senderName: sender?.username ?? 'Someone',
-        senderColor: sender?.color ?? '#888',
-        senderAvatarUri: sender?.avatarUri,
-        content: replyContent,
+      setMutedIds(currentMuted => {
+        if (!currentMuted.has(userId)) {
+          setPendingToast({
+            kind: 'dm',
+            targetId: userId,
+            senderName: sender?.username ?? 'Someone',
+            senderColor: sender?.color ?? '#888',
+            senderAvatarUri: sender?.avatarUri,
+            content: replyContent,
+          });
+        }
+        return currentMuted;
       });
     }, replyDelay);
   };
@@ -348,14 +376,19 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           g.id === groupId ? { ...g, messages: [...g.messages, reply], unread: 1 } : g
         );
         saveGroups(updated);
-        // Fire toast for the group reply
-        setPendingToast({
-          kind: 'group',
-          targetId: groupId,
-          senderName: bot.username,
-          senderColor: bot.color,
-          senderAvatarUri: bot.avatarUri,
-          content: replyText,
+        // Fire toast for the group reply (skip if conversation is muted)
+        setMutedIds(currentMuted => {
+          if (!currentMuted.has(groupId)) {
+            setPendingToast({
+              kind: 'group',
+              targetId: groupId,
+              senderName: bot.username,
+              senderColor: bot.color,
+              senderAvatarUri: bot.avatarUri,
+              content: replyText,
+            });
+          }
+          return currentMuted;
         });
         return updated;
       });
@@ -441,6 +474,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       conversations, groupConversations, broadcasts,
       isScanning, totalUnread,
       pendingToast, dismissToast,
+      mutedIds, toggleMute, isMuted,
       setProfile, sendMessage, sendGroupMessage, sendBroadcast,
       createGroup, getConversation, getGroupConversation,
       markRead, markGroupRead, completeOnboarding, clearHistory,

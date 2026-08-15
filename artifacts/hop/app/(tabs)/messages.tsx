@@ -45,12 +45,14 @@ function DeleteAction({ onDelete }: { onDelete: () => void }) {
 // ── DM row ────────────────────────────────────────────────────────────────────
 function ConvItem({
   conv,
+  muted,
   onPress,
   onLongPress,
   onDelete,
   colors,
 }: {
   conv: Conversation;
+  muted: boolean;
   onPress: () => void;
   onLongPress: () => void;
   onDelete: () => void;
@@ -84,7 +86,10 @@ function ConvItem({
             <Text style={[styles.name, { color: colors.foreground }, hasUnread && { fontFamily: 'Inter_700Bold' }]}>
               {conv.user.username}
             </Text>
-            {last && <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(last.timestamp)}</Text>}
+            <View style={styles.topRight}>
+              {muted && <Ionicons name="notifications-off-outline" size={13} color={colors.mutedForeground} style={styles.muteIcon} />}
+              {last && <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(last.timestamp)}</Text>}
+            </View>
           </View>
           <View style={styles.bottom}>
             <Text
@@ -108,12 +113,14 @@ function ConvItem({
 // ── Group row ─────────────────────────────────────────────────────────────────
 function GroupItem({
   group,
+  muted,
   onPress,
   onLongPress,
   onDelete,
   colors,
 }: {
   group: GroupConversation;
+  muted: boolean;
   onPress: () => void;
   onLongPress: () => void;
   onDelete: () => void;
@@ -174,7 +181,10 @@ function GroupItem({
             <Text style={[styles.name, { color: colors.foreground }, hasUnread && { fontFamily: 'Inter_700Bold' }]} numberOfLines={1}>
               {group.name}
             </Text>
-            {last && <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(last.timestamp)}</Text>}
+            <View style={styles.topRight}>
+              {muted && <Ionicons name="notifications-off-outline" size={13} color={colors.mutedForeground} style={styles.muteIcon} />}
+              {last && <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(last.timestamp)}</Text>}
+            </View>
           </View>
           <View style={styles.bottom}>
             <Text
@@ -199,7 +209,7 @@ function GroupItem({
 export default function MessagesScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup } = useHop();
+  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup, isMuted } = useHop();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 100 : insets.bottom + 60;
@@ -314,6 +324,7 @@ export default function MessagesScreen() {
             section.kind === 'group' ? (
               <GroupItem
                 group={item as GroupConversation}
+                muted={isMuted((item as GroupConversation).id)}
                 onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push(`/group/${(item as GroupConversation).id}`); }}
                 onLongPress={() => {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -325,6 +336,7 @@ export default function MessagesScreen() {
             ) : (
               <ConvItem
                 conv={item as Conversation}
+                muted={isMuted((item as Conversation).userId)}
                 onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push(`/chat/${(item as Conversation).userId}`); }}
                 onLongPress={() => openDMSheet(item as Conversation)}
                 onDelete={() => confirmDeleteConv(item as Conversation)}
@@ -422,6 +434,8 @@ const styles = StyleSheet.create({
   body: { flex: 1 },
   top: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 3 },
   name: { fontSize: 15, fontFamily: 'Inter_600SemiBold', flex: 1, marginRight: 8 },
+  topRight: { flexDirection: 'row', alignItems: 'center', gap: 4 },
+  muteIcon: { opacity: 0.6 },
   time: { fontSize: 12, fontFamily: 'Inter_400Regular' },
   bottom: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   preview: { fontSize: 13, flex: 1 },

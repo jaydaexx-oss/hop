@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -27,6 +27,10 @@ export default function ProfileScreen() {
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(profile?.username ?? '');
   const [showQR, setShowQR] = useState(false);
+  const [saving, setSaving] = useState(false);
+  // Ref-based guard so that a second tap arriving before React re-renders
+  // (before setSaving(true) is committed) is still rejected synchronously.
+  const savingRef = useRef(false);
 
   // When the profile changes (including rollback after a failed save) and we
   // are not in edit mode, keep nameInput in sync so the field never shows stale data.
@@ -63,8 +67,16 @@ export default function ProfileScreen() {
   };
 
   const handleColorSelect = async (color: string) => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
     Haptics.selectionAsync();
-    await setProfile({ ...profile, color });
+    try {
+      await setProfile({ ...profile, color });
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   const handleDiscoverableToggle = async (val: boolean) => {
@@ -73,14 +85,22 @@ export default function ProfileScreen() {
   };
 
   const handleSaveName = async () => {
+    if (savingRef.current) return;
     const trimmed = nameInput.trim();
     if (trimmed.length < 2) { Alert.alert('Too short', 'Handle must be at least 2 characters'); return; }
-    const saved = await setProfile({ ...profile, username: trimmed });
-    setEditing(false);
-    // Only celebrate with haptics when the write actually succeeded. On failure
-    // the context has already rolled back profile.username, and the useEffect
-    // above will reset nameInput once editing becomes false.
-    if (saved) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    savingRef.current = true;
+    setSaving(true);
+    try {
+      const saved = await setProfile({ ...profile, username: trimmed });
+      setEditing(false);
+      // Only celebrate with haptics when the write actually succeeded. On failure
+      // the context has already rolled back profile.username, and the useEffect
+      // above will reset nameInput once editing becomes false.
+      if (saved) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    } finally {
+      savingRef.current = false;
+      setSaving(false);
+    }
   };
 
   return (
@@ -130,12 +150,17 @@ export default function ProfileScreen() {
               onSubmitEditing={handleSaveName}
               autoCapitalize="none"
             />
-            <Pressable onPress={handleSaveName} style={[styles.checkBtn, { backgroundColor: colors.primary }]}>
+            <Pressable
+              testID="save-name-btn"
+              onPress={handleSaveName}
+              disabled={saving}
+              style={[styles.checkBtn, { backgroundColor: colors.primary, opacity: saving ? 0.5 : 1 }]}
+            >
               <Ionicons name="checkmark" size={18} color={colors.primaryForeground} />
             </Pressable>
           </View>
         ) : (
-          <Pressable onPress={() => { setEditing(true); setNameInput(profile.username); }} style={styles.nameRow}>
+          <Pressable testID="edit-name-row" onPress={() => { setEditing(true); setNameInput(profile.username); }} style={styles.nameRow}>
             <Text style={[styles.username, { color: colors.foreground }]}>{profile.username}</Text>
             <Ionicons name="pencil-outline" size={14} color={colors.mutedForeground} style={{ marginLeft: 8, marginTop: 3 }} />
           </Pressable>
@@ -157,9 +182,10 @@ export default function ProfileScreen() {
               key={c}
               testID={`color-dot-${c}`}
               onPress={() => handleColorSelect(c)}
+              disabled={saving}
               style={[
                 styles.dot,
-                { backgroundColor: c },
+                { backgroundColor: c, opacity: saving && profile.color !== c ? 0.5 : 1 },
                 profile.color === c && { borderWidth: 3, borderColor: colors.primary, transform: [{ scale: 1.14 }] },
               ]}
             />

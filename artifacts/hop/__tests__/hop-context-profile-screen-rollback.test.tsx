@@ -333,6 +333,31 @@ describe('color picker integration (handleColorSelect path)', () => {
     expect(dotBorderWidth(getByTestId('color-dot-#4ECDC4'))).toBe(2);
   });
 
+  it('double-tap on the save button only triggers one AsyncStorage.setItem call', async () => {
+    const { getByTestId, getByDisplayValue } = await renderProfileScreen();
+
+    // Enter edit mode by pressing the username text.
+    await act(async () => {
+      fireEvent.press(getByTestId('edit-name-row'));
+    });
+
+    // Type a new name.
+    await act(async () => {
+      fireEvent.changeText(getByDisplayValue('originalname'), 'newname');
+    });
+
+    // Tap the checkmark twice in rapid succession — both taps happen before
+    // the first async write resolves.
+    await act(async () => {
+      fireEvent.press(getByTestId('save-name-btn'));
+      fireEvent.press(getByTestId('save-name-btn'));
+    });
+
+    // Only one setItem call should have been made despite two press events.
+    const profileWrites = mockSetItem.mock.calls.filter(([key]) => key === '@hop/profile');
+    expect(profileWrites).toHaveLength(1);
+  });
+
   it('new color dot becomes selected after a successful write', async () => {
     const { getByTestId } = await renderProfileScreen();
 

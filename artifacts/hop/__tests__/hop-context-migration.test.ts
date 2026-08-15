@@ -305,4 +305,66 @@ describe('Block-list and request-history migration on app update', () => {
       content: expect.stringContaining("Couldn't save"),
     });
   });
+
+  // ── Scenario 7: Only the muted scoped-key write fails — per-key independence ──
+  //
+  // The three migrations run as independent promise chains inside Promise.all.
+  // If the muted setItem throws but blocked and requests succeed, then:
+  //   • @hop/blocked and @hop/requests MUST be removed (their chains completed)
+  //   • @hop/muted MUST be preserved (its chain never reached removeItem)
+  //   • An error toast must surface to signal the partial failure
+  //   • The successfully migrated blocked/requests data must appear in state
+  //
+  // This verifies that a kill mid-update only forces a retry for the key that
+  // actually failed — not for the keys that were already cleanly migrated.
+
+  it('only preserves the muted legacy key when the muted scoped-key write fails, and cleans up blocked/requests', async () => {
+    const store: Record<string, string | null> = {
+      '@hop/profile':        FAKE_PROFILE,
+      [LEGACY_BLOCKED_KEY]:  SAMPLE_BLOCKED,
+      [LEGACY_REQUESTS_KEY]: SAMPLE_REQUESTS,
+      [LEGACY_MUTED_KEY]:    SAMPLE_MUTED,
+      // scoped keys absent — all three migrations should attempt to run
+    };
+
+    mockGetItem.mockImplementation((key: string) =>
+      Promise.resolve(store[key] ?? null)
+    );
+
+    // Only the muted scoped write fails; blocked and requests writes succeed.
+    mockSetItem.mockImplementation((key: string, value: string) => {
+      if (key === SCOPED_MUTED_KEY) {
+        return Promise.reject(new Error('Storage quota exceeded'));
+      }
+      store[key] = value;
+      return Promise.resolve(undefined);
+    });
+
+    mockRemoveItem.mockImplementation((key: string) => {
+      store[key] = null;
+      return Promise.resolve(undefined);
+    });
+
+    const { result } = await renderHook(() => useHop(), { wrapper });
+    await waitFor(() => expect(result.current.loaded).toBe(true));
+
+    // blocked and requests chains completed fully — legacy keys must be gone.
+    expect(mockRemoveItem).toHaveBeenCalledWith(LEGACY_BLOCKED_KEY);
+    expect(mockRemoveItem).toHaveBeenCalledWith(LEGACY_REQUESTS_KEY);
+
+    // muted chain never reached removeItem — legacy key must still exist.
+    expect(mockRemoveItem).not.toHaveBeenCalledWith(LEGACY_MUTED_KEY);
+
+    // Successfully migrated data must surface in context state.
+    expect(result.current.blockedIds).toEqual(['u2', 'u3']);
+    expect(result.current.messageRequests).toHaveLength(1);
+    expect(result.current.messageRequests[0].id).toBe('req1');
+
+    // An error toast must be shown so the partial failure is not invisible.
+    await waitFor(() => expect(result.current.pendingToast).not.toBeNull());
+    expect(result.current.pendingToast).toMatchObject({
+      kind: 'error',
+      content: expect.stringContaining("Couldn't save"),
+    });
+  });
 });

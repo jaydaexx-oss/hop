@@ -379,6 +379,96 @@ describe('HopContext — rejoin group flow', () => {
     expect(result.current.groupConversations).toHaveLength(before);
     expect(result.current.leftGroups).toHaveLength(0);
   });
+
+  it('sendGroupMessage on a rejoined group triggers a bot reply', async () => {
+    // Mount with real timers so renderHook / waitFor work.
+    const { result } = await mountAndLoad();
+
+    // Create a group, leave it, then rejoin.
+    await act(async () => {
+      result.current.createGroup('comeback group', ['u1', 'u2']);
+    });
+    const gid = result.current.groupConversations[0].id;
+
+    await act(async () => {
+      await result.current.leaveGroup(gid);
+    });
+    expect(result.current.groupConversations).toHaveLength(0);
+
+    await act(async () => {
+      result.current.rejoinGroup(gid);
+    });
+    expect(result.current.groupConversations.find(g => g.id === gid)).toBeDefined();
+
+    // Switch to fake timers (keep setImmediate real for React scheduler).
+    jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+
+    // Send a message to the rejoined group.
+    await act(async () => {
+      result.current.sendGroupMessage(gid, 'anyone there?');
+    });
+
+    // Verify the outgoing message landed.
+    const afterSend = result.current.groupConversations.find(g => g.id === gid)!;
+    expect(afterSend).toBeDefined();
+    expect(afterSend.messages.some(m => m.content === 'anyone there?')).toBe(true);
+    expect(afterSend.unread).toBe(0); // outgoing message clears unread
+
+    // Advance fake timers past the maximum bot-reply delay (1500 + 3000 = 4500 ms).
+    await act(async () => { jest.advanceTimersByTime(5_000); });
+    await act(async () => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+    });
+
+    // The bot reply must have been appended to the rejoined group.
+    const afterReply = result.current.groupConversations.find(g => g.id === gid)!;
+    expect(afterReply).toBeDefined();
+    // Bot reply increments unread by 1.
+    expect(afterReply.unread).toBe(1);
+    // Total messages: 1 outgoing + 1 bot reply.
+    expect(afterReply.messages.length).toBe(2);
+    // The bot reply comes from one of the group members (u1 or u2), not the profile.
+    const botReply = afterReply.messages[afterReply.messages.length - 1];
+    expect(['u1', 'u2']).toContain(botReply.senderId);
+
+    jest.useRealTimers();
+  });
+
+  it('rejoined group starts with zero unread even if it had unread messages before leaving', async () => {
+    const { result } = await mountAndLoad();
+
+    await act(async () => {
+      result.current.createGroup('stale-badge group', ['u1']);
+    });
+    const gid = result.current.groupConversations[0].id;
+
+    // Switch to fake timers to trigger a bot reply (which sets unread = 1).
+    jest.useFakeTimers({ doNotFake: ['setImmediate'] });
+    await act(async () => {
+      result.current.sendGroupMessage(gid, 'hello');
+    });
+    await act(async () => { jest.advanceTimersByTime(5_000); });
+    await act(async () => {
+      await new Promise<void>(resolve => setImmediate(resolve));
+    });
+    jest.useRealTimers();
+
+    // The bot reply should have set unread > 0.
+    expect(result.current.groupConversations.find(g => g.id === gid)?.unread).toBeGreaterThan(0);
+
+    // Leave then rejoin.
+    await act(async () => {
+      await result.current.leaveGroup(gid);
+    });
+    await act(async () => {
+      result.current.rejoinGroup(gid);
+    });
+
+    // Unread must be zeroed after rejoin — no stale badge.
+    const rejoined = result.current.groupConversations.find(g => g.id === gid)!;
+    expect(rejoined).toBeDefined();
+    expect(rejoined.unread).toBe(0);
+  });
 });
 
 // ─── 3. Deduplication via provider after clearHistory + dismiss ───────────────

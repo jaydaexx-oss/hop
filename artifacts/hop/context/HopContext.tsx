@@ -193,6 +193,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const groupConversationsRef = useRef<GroupConversation[]>([]);
 
   // ── Storage key helpers ───────────────────────────────────────────────────
 
@@ -201,10 +202,11 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const requestsKey  = (profileId: string) => `@hop/requests/${profileId}`;
   const leftGroupKey = (profileId: string) => `@hop/leftGroups/${profileId}`;
 
-  // Keep a ref so async callbacks always have the latest profile without
-  // needing to be recreated every time profile changes.
+  // Keep refs so async callbacks always have the latest values without
+  // needing to be recreated every time the state changes.
   const profileRef = useRef<MyProfile | null>(null);
   useEffect(() => { profileRef.current = profile; }, [profile]);
+  useEffect(() => { groupConversationsRef.current = groupConversations; }, [groupConversations]);
 
   // ── Persistence load ──────────────────────────────────────────────────────
 
@@ -662,24 +664,32 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   };
 
   const leaveGroup = async (groupId: string) => {
+    // Read the leaving group from the ref so we don't need a stale closure.
+    const leaving = groupConversationsRef.current.find(g => g.id === groupId);
+
+    // Remove the group from active conversations. Because totalUnread is derived
+    // from groupConversations, this zeroes the group's unread contribution in the
+    // same render — no intermediate render can show a stale badge.
     setGroupConversations(prev => {
-      const leaving = prev.find(g => g.id === groupId);
       const updated = prev.filter(g => g.id !== groupId);
       saveGroups(updated, showStorageError);
-      if (leaving) {
-        setLeftGroups(left => {
-          // Avoid duplicate entries for the same group id.
-          // Strip messages so no chat history can leak back via rejoin.
-          const deduped = left.filter(l => l.group.id !== groupId);
-          const stripped: GroupConversation = { ...leaving, messages: [], unread: 0 };
-          const next = [{ group: stripped, leftAt: Date.now() }, ...deduped];
-          const pid = profileRef.current?.id;
-          if (pid) AsyncStorage.setItem(leftGroupKey(pid), JSON.stringify(next)).catch(() => {});
-          return next;
-        });
-      }
       return updated;
     });
+
+    // Update leftGroups as a separate top-level call so React can batch both
+    // state updates into a single render (avoids the nested-setter anti-pattern).
+    if (leaving) {
+      setLeftGroups(left => {
+        // Avoid duplicate entries for the same group id.
+        // Strip messages so no chat history can leak back via rejoin.
+        const deduped = left.filter(l => l.group.id !== groupId);
+        const stripped: GroupConversation = { ...leaving, messages: [], unread: 0 };
+        const next = [{ group: stripped, leftAt: Date.now() }, ...deduped];
+        const pid = profileRef.current?.id;
+        if (pid) AsyncStorage.setItem(leftGroupKey(pid), JSON.stringify(next)).catch(() => {});
+        return next;
+      });
+    }
   };
 
   const rejoinGroup = (groupId: string) => {

@@ -241,6 +241,146 @@ describe('HopContext — clearHistory before toast dismissal', () => {
   });
 });
 
+// ─── 2b. clearHistory also wipes leftGroups ───────────────────────────────────
+
+describe('HopContext — clearHistory also clears leftGroups', () => {
+  it('leftGroups becomes empty after clearHistory when a group was left', async () => {
+    const { result } = await mountAndLoad();
+
+    // Create a group then leave it so it lands in leftGroups.
+    await act(async () => {
+      result.current.createGroup('old group', ['u1']);
+    });
+    expect(result.current.groupConversations).toHaveLength(1);
+    const gid = result.current.groupConversations[0].id;
+
+    await act(async () => {
+      await result.current.leaveGroup(gid);
+    });
+    expect(result.current.leftGroups).toHaveLength(1);
+
+    await act(async () => {
+      await result.current.clearHistory();
+    });
+
+    expect(result.current.leftGroups).toHaveLength(0);
+  });
+
+  it('clearHistory removes the @hop/leftGroups/<profileId> key from AsyncStorage', async () => {
+    const { result } = await mountAndLoad();
+
+    await act(async () => {
+      result.current.createGroup('past group', ['u1']);
+    });
+    const gid = result.current.groupConversations[0].id;
+
+    await act(async () => {
+      await result.current.leaveGroup(gid);
+    });
+
+    mockRemoveItem.mockClear();
+
+    await act(async () => {
+      await result.current.clearHistory();
+    });
+
+    const removedKeys = mockRemoveItem.mock.calls.map(([key]) => key);
+    expect(removedKeys).toContain('@hop/leftGroups/test-me');
+  });
+
+  it('leftGroups messages cannot be recovered after clearHistory', async () => {
+    const { result } = await mountAndLoad();
+
+    // Create and send a message to a group, then leave it.
+    await act(async () => {
+      result.current.createGroup('msg group', ['u1']);
+    });
+    const gid = result.current.groupConversations[0].id;
+    await act(async () => {
+      result.current.sendGroupMessage(gid, 'secret message');
+    });
+    // The active group has a message.
+    expect(result.current.groupConversations.find(g => g.id === gid)?.messages.length).toBeGreaterThan(0);
+
+    // Leave — LeftGroup snapshot strips messages.
+    await act(async () => {
+      await result.current.leaveGroup(gid);
+    });
+    expect(result.current.leftGroups[0].group.messages).toHaveLength(0);
+
+    // clearHistory wipes leftGroups entirely.
+    await act(async () => {
+      await result.current.clearHistory();
+    });
+    expect(result.current.leftGroups).toHaveLength(0);
+  });
+});
+
+// ─── 2c. Rejoin flow ──────────────────────────────────────────────────────────
+
+describe('HopContext — rejoin group flow', () => {
+  it('rejoinGroup moves a group from leftGroups back to groupConversations', async () => {
+    const { result } = await mountAndLoad();
+
+    await act(async () => {
+      result.current.createGroup('test group', ['u1', 'u2']);
+    });
+    const gid = result.current.groupConversations[0].id;
+
+    await act(async () => {
+      await result.current.leaveGroup(gid);
+    });
+    expect(result.current.groupConversations).toHaveLength(0);
+    expect(result.current.leftGroups).toHaveLength(1);
+
+    await act(async () => {
+      result.current.rejoinGroup(gid);
+    });
+
+    expect(result.current.leftGroups).toHaveLength(0);
+    expect(result.current.groupConversations.find(g => g.id === gid)).toBeDefined();
+  });
+
+  it('rejoined group has zero unread and no messages (clean slate)', async () => {
+    const { result } = await mountAndLoad();
+
+    await act(async () => {
+      result.current.createGroup('clean group', ['u1']);
+    });
+    const gid = result.current.groupConversations[0].id;
+    await act(async () => {
+      result.current.sendGroupMessage(gid, 'hello');
+    });
+
+    await act(async () => {
+      await result.current.leaveGroup(gid);
+    });
+    await act(async () => {
+      result.current.rejoinGroup(gid);
+    });
+
+    const rejoined = result.current.groupConversations.find(g => g.id === gid);
+    expect(rejoined?.unread).toBe(0);
+    expect(rejoined?.messages).toHaveLength(0);
+  });
+
+  it('rejoinGroup is a no-op when the groupId is not in leftGroups', async () => {
+    const { result } = await mountAndLoad();
+
+    await act(async () => {
+      result.current.createGroup('active group', ['u1']);
+    });
+    const before = result.current.groupConversations.length;
+
+    await act(async () => {
+      result.current.rejoinGroup('nonexistent-id');
+    });
+
+    expect(result.current.groupConversations).toHaveLength(before);
+    expect(result.current.leftGroups).toHaveLength(0);
+  });
+});
+
 // ─── 3. Deduplication via provider after clearHistory + dismiss ───────────────
 
 describe('HopContext — deduplication still works after clearHistory', () => {

@@ -210,7 +210,7 @@ function GroupItem({
 export default function MessagesScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup, leaveGroup, undoDeleteConversation, undoDeleteGroup, isMuted, toggleMute } = useHop();
+  const { conversations, groupConversations, messageRequests, leftGroups, blockUser, reportUser, deleteConversation, deleteGroup, leaveGroup, undoDeleteConversation, undoDeleteGroup, isMuted, toggleMute } = useHop();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 100 : insets.bottom + 60;
@@ -326,6 +326,25 @@ export default function MessagesScreen() {
           </View>
           <View style={[styles.requestsBadge, { backgroundColor: colors.primary }]}>
             <Text style={[styles.requestsBadgeText, { color: colors.primaryForeground }]}>{messageRequests.length}</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+        </Pressable>
+      )}
+
+      {/* Past groups banner */}
+      {leftGroups.length > 0 && (
+        <Pressable
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/past-groups'); }}
+          style={[styles.requestsBanner, { backgroundColor: colors.card, borderColor: colors.border }]}
+        >
+          <View style={[styles.requestsIcon, { backgroundColor: colors.primary + '22' }]}>
+            <Ionicons name="people-outline" size={18} color={colors.primary} />
+          </View>
+          <View style={styles.requestsText}>
+            <Text style={[styles.requestsTitle, { color: colors.foreground }]}>Past Groups</Text>
+            <Text style={[styles.requestsSub, { color: colors.mutedForeground }]}>
+              {leftGroups.length === 1 ? '1 group you can rejoin' : `${leftGroups.length} groups you can rejoin`}
+            </Text>
           </View>
           <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
         </Pressable>

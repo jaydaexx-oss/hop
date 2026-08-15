@@ -58,6 +58,11 @@ export interface MessageRequest {
   timestamp: number;
 }
 
+export interface LeftGroup {
+  group: GroupConversation;
+  leftAt: number;
+}
+
 export interface MyProfile {
   id: string;
   username: string;
@@ -80,6 +85,7 @@ interface HopContextType {
   broadcasts: Broadcast[];
   messageRequests: MessageRequest[];
   blockedIds: string[];
+  leftGroups: LeftGroup[];
   isScanning: boolean;
   totalUnread: number;
   pendingToast: ToastNotification | null;
@@ -105,6 +111,7 @@ interface HopContextType {
   deleteConversation: (userId: string) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
   leaveGroup: (groupId: string) => Promise<void>;
+  rejoinGroup: (groupId: string) => void;
   undoDeleteConversation: (conv: Conversation) => void;
   undoDeleteGroup: (group: GroupConversation) => void;
   openDirectMessage: (user: HopUser) => string;
@@ -180,6 +187,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [messageRequests, setMessageRequests] = useState<MessageRequest[]>([]);
   const [blockedIds, setBlockedIds] = useState<string[]>([]);
+  const [leftGroups, setLeftGroups] = useState<LeftGroup[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const [toastQueue, setToastQueue] = useState<ToastNotification[]>([]);
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
@@ -188,9 +196,10 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
 
   // ── Storage key helpers ───────────────────────────────────────────────────
 
-  const muteKey     = (profileId: string) => `@hop/muted/${profileId}`;
-  const blockedKey  = (profileId: string) => `@hop/blocked/${profileId}`;
-  const requestsKey = (profileId: string) => `@hop/requests/${profileId}`;
+  const muteKey      = (profileId: string) => `@hop/muted/${profileId}`;
+  const blockedKey   = (profileId: string) => `@hop/blocked/${profileId}`;
+  const requestsKey  = (profileId: string) => `@hop/requests/${profileId}`;
+  const leftGroupKey = (profileId: string) => `@hop/leftGroups/${profileId}`;
 
   // Keep a ref so async callbacks always have the latest profile without
   // needing to be recreated every time profile changes.
@@ -254,13 +263,14 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           }
         }
 
-        const [convStr, groupStr, bcastStr, mutedStr, reqStr, blockedStr] = await Promise.all([
+        const [convStr, groupStr, bcastStr, mutedStr, reqStr, blockedStr, leftGroupStr] = await Promise.all([
           AsyncStorage.getItem('@hop/conversations'),
           AsyncStorage.getItem('@hop/groups'),
           AsyncStorage.getItem('@hop/broadcasts'),
-          profileId ? AsyncStorage.getItem(muteKey(profileId))     : Promise.resolve(null),
-          profileId ? AsyncStorage.getItem(requestsKey(profileId)) : Promise.resolve(null),
-          profileId ? AsyncStorage.getItem(blockedKey(profileId))  : Promise.resolve(null),
+          profileId ? AsyncStorage.getItem(muteKey(profileId))      : Promise.resolve(null),
+          profileId ? AsyncStorage.getItem(requestsKey(profileId))  : Promise.resolve(null),
+          profileId ? AsyncStorage.getItem(blockedKey(profileId))   : Promise.resolve(null),
+          profileId ? AsyncStorage.getItem(leftGroupKey(profileId)) : Promise.resolve(null),
         ]);
         if (convStr) {
           const parsed: Conversation[] = JSON.parse(convStr);
@@ -296,6 +306,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         if (mutedStr) setMutedIds(new Set(JSON.parse(mutedStr) as string[]));
         if (reqStr) setMessageRequests(JSON.parse(reqStr));
         if (blockedStr) setBlockedIds(JSON.parse(blockedStr));
+        if (leftGroupStr) setLeftGroups(JSON.parse(leftGroupStr));
         if (bcastStr) {
           setBroadcasts(JSON.parse(bcastStr));
         } else {
@@ -607,8 +618,16 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   };
 
   const clearHistory = async () => {
-    setConversations([]); setGroupConversations([]);
-    await Promise.all([AsyncStorage.removeItem('@hop/conversations'), AsyncStorage.removeItem('@hop/groups')]);
+    setConversations([]);
+    setGroupConversations([]);
+    setLeftGroups([]);
+    const pid = profileRef.current?.id;
+    const removes: Promise<void>[] = [
+      AsyncStorage.removeItem('@hop/conversations'),
+      AsyncStorage.removeItem('@hop/groups'),
+    ];
+    if (pid) removes.push(AsyncStorage.removeItem(leftGroupKey(pid)));
+    await Promise.all(removes);
   };
 
   // ── Open / create DM from QR scan ────────────────────────────────────────
@@ -644,9 +663,41 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
 
   const leaveGroup = async (groupId: string) => {
     setGroupConversations(prev => {
+      const leaving = prev.find(g => g.id === groupId);
       const updated = prev.filter(g => g.id !== groupId);
       saveGroups(updated, showStorageError);
+      if (leaving) {
+        setLeftGroups(left => {
+          // Avoid duplicate entries for the same group id.
+          // Strip messages so no chat history can leak back via rejoin.
+          const deduped = left.filter(l => l.group.id !== groupId);
+          const stripped: GroupConversation = { ...leaving, messages: [], unread: 0 };
+          const next = [{ group: stripped, leftAt: Date.now() }, ...deduped];
+          const pid = profileRef.current?.id;
+          if (pid) AsyncStorage.setItem(leftGroupKey(pid), JSON.stringify(next)).catch(() => {});
+          return next;
+        });
+      }
       return updated;
+    });
+  };
+
+  const rejoinGroup = (groupId: string) => {
+    setLeftGroups(prev => {
+      const entry = prev.find(l => l.group.id === groupId);
+      if (!entry) return prev;
+      const next = prev.filter(l => l.group.id !== groupId);
+      const pid = profileRef.current?.id;
+      if (pid) AsyncStorage.setItem(leftGroupKey(pid), JSON.stringify(next)).catch(() => {});
+      // Re-add with cleared unread so the user sees a fresh slate
+      setGroupConversations(groups => {
+        if (groups.find(g => g.id === groupId)) return groups;
+        const rejoined: GroupConversation = { ...entry.group, unread: 0 };
+        const updated = sortedGroups([rejoined, ...groups]);
+        saveGroups(updated, showStorageError);
+        return updated;
+      });
+      return next;
     });
   };
 
@@ -676,7 +727,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     <HopContext.Provider value={{
       profile, isOnboarding, loaded, nearbyUsers,
       conversations, groupConversations, broadcasts,
-      messageRequests, blockedIds,
+      messageRequests, blockedIds, leftGroups,
       isScanning, totalUnread,
       pendingToast, dismissToast,
       mutedIds, toggleMute, isMuted,
@@ -684,7 +735,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       createGroup, getConversation, getGroupConversation,
       markRead, markGroupRead, completeOnboarding, clearHistory,
       blockUser, reportUser, acceptRequest, declineRequest,
-      deleteConversation, deleteGroup, leaveGroup, undoDeleteConversation, undoDeleteGroup, openDirectMessage,
+      deleteConversation, deleteGroup, leaveGroup, rejoinGroup, undoDeleteConversation, undoDeleteGroup, openDirectMessage,
     }}>
       {children}
     </HopContext.Provider>

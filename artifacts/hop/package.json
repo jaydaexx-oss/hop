@@ -65,6 +65,8 @@
     "zod-validation-error": "^3.4.0"
   },
   "dependencies": {
+    "expo-audio": "~1.1.1",
+    "expo-av": "~16.0.8",
     "expo-camera": "^57.0.3",
     "react-native-qrcode-svg": "^6.3.21"
   }

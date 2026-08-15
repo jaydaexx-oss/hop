@@ -155,6 +155,7 @@ export default function ProfileScreen() {
           {AVATAR_COLORS.map(c => (
             <Pressable
               key={c}
+              testID={`color-dot-${c}`}
               onPress={() => handleColorSelect(c)}
               style={[
                 styles.dot,

@@ -24,6 +24,10 @@ export interface Message {
   content: string;
   timestamp: number;
   status: MessageStatus;
+  /** Voice message fields (undefined for text messages) */
+  messageType?: 'text' | 'voice';
+  voiceUri?: string;
+  voiceDurationMs?: number;
 }
 
 export interface Conversation {
@@ -96,6 +100,8 @@ interface HopContextType {
   setProfile: (profile: MyProfile) => Promise<boolean>;
   sendMessage: (userId: string, content: string) => void;
   sendGroupMessage: (groupId: string, content: string) => void;
+  sendVoiceMessage: (userId: string, uri: string, durationMs: number) => void;
+  sendGroupVoiceMessage: (groupId: string, uri: string, durationMs: number) => void;
   sendBroadcast: (content: string) => void;
   createGroup: (name: string, memberIds: string[]) => GroupConversation | null;
   getConversation: (userId: string) => Conversation | undefined;
@@ -644,6 +650,101 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     }, replyDelay);
   };
 
+  // ── Voice sends ───────────────────────────────────────────────────────────
+
+  const sendVoiceMessage = (userId: string, uri: string, durationMs: number) => {
+    if (!profile) return;
+    const user = USER_POOL.find(u => u.id === userId) ?? nearbyUsers.find(u => u.id === userId);
+    if (!user) return;
+
+    const msgId = createMessageId();
+    if (!sentIds.remember(msgId)) return;
+
+    const msg: Message = {
+      id: msgId, senderId: profile.id, content: '🎙️ Voice message',
+      timestamp: Date.now(), status: MessageStatus.SENT,
+      messageType: 'voice', voiceUri: uri, voiceDurationMs: durationMs,
+    };
+
+    setConversations(prev => {
+      const existing = prev.find(c => c.userId === userId);
+      const raw = existing
+        ? prev.map(c => c.userId === userId ? { ...c, messages: [...c.messages, msg], unread: 0 } : c)
+        : [{ userId, user: { ...user, signal: nearbyUsers.find(u => u.id === userId)?.signal ?? 80 }, messages: [msg], unread: 0 }, ...prev];
+      const updated = sortedConvs(raw);
+      saveConvs(updated, showStorageError);
+      return updated;
+    });
+
+    // Bot text reply after a short delay
+    const replyDelay = 1200 + Math.random() * 2000;
+    const replyContent = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
+    const replyId = createMessageId();
+    setTimeout(() => {
+      const reply: Message = { id: replyId, senderId: userId, content: replyContent, timestamp: Date.now(), status: MessageStatus.DELIVERED };
+      setConversations(curr => {
+        const updated = sortedConvs(curr.map(c => c.userId === userId ? { ...c, messages: [...c.messages, reply], unread: 1 } : c));
+        saveConvs(updated, showStorageError);
+        return updated;
+      });
+      const sender = USER_POOL.find(u => u.id === userId);
+      setMutedIds(currentMuted => {
+        if (!currentMuted.has(userId)) {
+          setToastQueue(prev => {
+            const filtered = prev.filter(t => t.kind === 'error' || t.targetId !== userId);
+            return [...filtered, { kind: 'dm', targetId: userId, senderName: sender?.username ?? 'Someone', senderColor: sender?.color ?? '#888', senderAvatarUri: sender?.avatarUri, content: replyContent }];
+          });
+        }
+        return currentMuted;
+      });
+    }, replyDelay);
+  };
+
+  const sendGroupVoiceMessage = (groupId: string, uri: string, durationMs: number) => {
+    if (!profile) return;
+    const msgId = createMessageId();
+    if (!sentIds.remember(msgId)) return;
+
+    const msg: Message = {
+      id: msgId, senderId: profile.id, senderName: profile.username, senderColor: profile.color,
+      content: '🎙️ Voice message', timestamp: Date.now(), status: MessageStatus.SENT,
+      messageType: 'voice', voiceUri: uri, voiceDurationMs: durationMs,
+    };
+
+    setGroupConversations(prev => {
+      const group = prev.find(g => g.id === groupId);
+      if (!group) return prev;
+      const updated = sortedGroups(prev.map(g => g.id === groupId ? { ...g, messages: [...g.messages, msg], unread: 0 } : g));
+      saveGroups(updated, showStorageError);
+      return updated;
+    });
+
+    // Bot text reply
+    const replyDelay = 1500 + Math.random() * 3000;
+    const replyId = createMessageId();
+    setTimeout(() => {
+      setGroupConversations(curr => {
+        const group = curr.find(g => g.id === groupId);
+        if (!group) return curr;
+        const bot = group.members[Math.floor(Math.random() * group.members.length)];
+        const replyText = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
+        const reply: Message = { id: replyId, senderId: bot.id, senderName: bot.username, senderColor: bot.color, content: replyText, timestamp: Date.now(), status: MessageStatus.DELIVERED };
+        const updated = sortedGroups(curr.map(g => g.id === groupId ? { ...g, messages: [...g.messages, reply], unread: 1 } : g));
+        saveGroups(updated, showStorageError);
+        setMutedIds(currentMuted => {
+          if (!currentMuted.has(groupId)) {
+            setToastQueue(prev => {
+              const filtered = prev.filter(t => t.kind === 'error' || t.targetId !== groupId);
+              return [...filtered, { kind: 'group', targetId: groupId, senderName: bot.username, senderColor: bot.color, senderAvatarUri: bot.avatarUri, content: replyText }];
+            });
+          }
+          return currentMuted;
+        });
+        return updated;
+      });
+    }, replyDelay);
+  };
+
   // ── Create group ──────────────────────────────────────────────────────────
 
   const createGroup = (name: string, memberIds: string[]): GroupConversation | null => {
@@ -794,7 +895,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       isScanning, totalUnread,
       pendingToast, dismissToast,
       mutedIds, toggleMute, isMuted,
-      setProfile, sendMessage, sendGroupMessage, sendBroadcast,
+      setProfile, sendMessage, sendGroupMessage, sendVoiceMessage, sendGroupVoiceMessage, sendBroadcast,
       createGroup, getConversation, getGroupConversation,
       markRead, markGroupRead, completeOnboarding, clearHistory,
       blockUser, reportUser, acceptRequest, declineRequest,

@@ -2,7 +2,7 @@
  * Tests confirming that the ProfileScreen form state resets to pre-edit values
  * when a setProfile write fails.
  *
- * Two layers are tested here:
+ * Three layers are tested here:
  *
  *   A. Context layer (uses HopProvider + useHop, mirrors hop-context-set-profile
  *      tests) — verifies that setProfile returns false on failure (so the screen
@@ -12,14 +12,68 @@
  *      the useEffect added to profile.tsx correctly resets nameInput whenever
  *      !editing and profile.username changes, including after a context rollback.
  *
+ *   C. Color picker integration — mounts the real ProfileScreen component inside
+ *      HopProvider, presses a color dot, rejects the AsyncStorage write, and
+ *      confirms the original dot's selected styling snaps back.
+ *
+ * afterEach(cleanup) unmounts every HopProvider between tests so that the
+ * setInterval timers created by HopContext do not leak across test boundaries.
+ *
  * Runs under jest.context.config.js (jest-expo preset).
  */
 
-import React, { useEffect, useRef, useState } from 'react';
-import { renderHook, act, waitFor } from '@testing-library/react-native';
+// ─── Module-level mocks for ProfileScreen's native/router dependencies ─────────
+// These are hoisted by babel-jest and apply only within this file.
+
+jest.mock('expo-haptics', () => ({
+  selectionAsync: jest.fn().mockResolvedValue(undefined),
+  impactAsync: jest.fn().mockResolvedValue(undefined),
+  notificationAsync: jest.fn().mockResolvedValue(undefined),
+  ImpactFeedbackStyle: { Light: 'light', Medium: 'medium', Heavy: 'heavy' },
+  NotificationFeedbackType: { Success: 'success', Warning: 'warning', Error: 'error' },
+}));
+
+jest.mock('expo-router', () => ({
+  router: { push: jest.fn() },
+  useRouter: () => ({ push: jest.fn() }),
+}));
+
+jest.mock('react-native-safe-area-context', () => ({
+  useSafeAreaInsets: () => ({ top: 0, bottom: 0, left: 0, right: 0 }),
+}));
+
+jest.mock('expo-image-picker', () => ({
+  requestMediaLibraryPermissionsAsync: jest.fn().mockResolvedValue({ granted: false }),
+  launchImageLibraryAsync: jest.fn().mockResolvedValue({ canceled: true }),
+  MediaTypeOptions: { Images: 'Images' },
+}));
+
+jest.mock('@/hooks/useColors', () => ({
+  useColors: () => ({
+    background: '#000011',
+    foreground: '#FFFFFF',
+    card: '#001133',
+    primary: '#0088BB',
+    primaryForeground: '#FFFFFF',
+    mutedForeground: '#5A6B90',
+    border: '#223366',
+    destructive: '#DC2626',
+  }),
+}));
+
+jest.mock('@/components/QRCodeModal', () => ({
+  QRCodeModal: () => null,
+}));
+
+// ─── Imports ──────────────────────────────────────────────────────────────────
+
+import React, { useEffect, useState } from 'react';
+import { StyleSheet } from 'react-native';
+import { renderHook, render, fireEvent, act, waitFor, cleanup } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { HopProvider, useHop } from '../context/HopContext';
 import type { MyProfile } from '../context/HopContext';
+import ProfileScreen from '../app/(tabs)/profile';
 
 // ─── AsyncStorage mock handles ─────────────────────────────────────────────────
 
@@ -35,14 +89,15 @@ const STORED_PROFILE: MyProfile = {
   discoverable: true,
 };
 
-// ─── Wrapper ──────────────────────────────────────────────────────────────────
+// ─── Wrapper component ────────────────────────────────────────────────────────
 
 function wrapper({ children }: { children: React.ReactNode }) {
   return React.createElement(HopProvider, null, children);
 }
 
-// ─── Setup helper (mirrors mountWithExistingProfile in set-profile tests) ──────
+// ─── Setup helpers ─────────────────────────────────────────────────────────────
 
+/** Mounts HopProvider with STORED_PROFILE pre-loaded and waits for it to settle. */
 async function mountWithProfile() {
   mockGetItem.mockImplementation((key: string) => {
     if (key === '@hop/profile') return Promise.resolve(JSON.stringify(STORED_PROFILE));
@@ -55,9 +110,36 @@ async function mountWithProfile() {
   return hook;
 }
 
+/**
+ * Renders ProfileScreen inside HopProvider with STORED_PROFILE pre-loaded,
+ * then waits for the profile to hydrate so the color picker dots are visible.
+ */
+async function renderProfileScreen() {
+  mockGetItem.mockImplementation((key: string) => {
+    if (key === '@hop/profile') return Promise.resolve(JSON.stringify(STORED_PROFILE));
+    return Promise.resolve(null);
+  });
+  // eslint-disable-next-line @typescript-eslint/await-thenable
+  const ui = await render(
+    React.createElement(HopProvider, null, React.createElement(ProfileScreen)),
+  );
+  // Wait for the profile to load — ProfileScreen returns null until profile is set.
+  await waitFor(() => ui.getByTestId('color-dot-#FF6B6B'));
+  return ui;
+}
+
+// ─── Lifecycle ────────────────────────────────────────────────────────────────
+
 beforeEach(() => {
   jest.clearAllMocks();
   mockSetItem.mockResolvedValue(undefined);
+});
+
+// Unmount all rendered components (including HopProvider instances) after each
+// test so that the setInterval timers created by HopContext do not fire into
+// the next test's renderer and corrupt result.current.
+afterEach(() => {
+  cleanup();
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -148,13 +230,9 @@ function useNameInputSync(profileUsername: string) {
 }
 
 describe('profile screen nameInput sync (useEffect from profile.tsx)', () => {
-  // Each test gets its own independent renderHook — no shared state.
-  // We avoid trailing `await act(async () => {})` to prevent async leakage
-  // between tests; `rerender` with `act` wrapping is sufficient.
-
   it('nameInput resets to original when profile rolls back while not editing', async () => {
     // eslint-disable-next-line @typescript-eslint/await-thenable
-    const { result, rerender } = await renderHook(
+    const { result } = await renderHook(
       ({ username }: { username: string }) => useNameInputSync(username),
       { initialProps: { username: 'originalname' } },
     );
@@ -183,7 +261,7 @@ describe('profile screen nameInput sync (useEffect from profile.tsx)', () => {
     expect(result.current.nameInput).toBe('midtype');
 
     // Profile changes externally while user is mid-edit.
-    act(() => { rerender({ username: 'changed-externally' }); });
+    await act(async () => { rerender({ username: 'changed-externally' }); });
 
     // The useEffect guard (!editing) must prevent overwriting the user's typing.
     expect(result.current.nameInput).toBe('midtype');
@@ -202,5 +280,92 @@ describe('profile screen nameInput sync (useEffect from profile.tsx)', () => {
     if (!editing) setNameInput(newUsername);
 
     expect(nameInput).toBe('rolledback');
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// C. Color picker integration — handleColorSelect path
+//
+// handleColorSelect in profile.tsx:
+//   const handleColorSelect = async (color: string) => {
+//     Haptics.selectionAsync();
+//     await setProfile({ ...profile, color });
+//   };
+//
+// Each color dot Pressable carries testID={`color-dot-${c}`} (added in
+// profile.tsx). The dot is selected when profile.color === c, which is
+// expressed as an additional { borderWidth: 3 } object in its style array.
+//
+// After pressing a new color dot and having the AsyncStorage write rejected,
+// the context rolls back profile.color to the original value and the screen
+// re-renders: the original dot recovers borderWidth: 3 and the tapped dot
+// loses it.
+// ══════════════════════════════════════════════════════════════════════════════
+
+/** Returns the flattened borderWidth from a color dot's style prop array. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function dotBorderWidth(element: any): number {
+  const flat = StyleSheet.flatten(element.props.style as Parameters<typeof StyleSheet.flatten>[0]);
+  return (flat as { borderWidth?: number }).borderWidth ?? 0;
+}
+
+describe('color picker integration (handleColorSelect path)', () => {
+  it('original dot recovers selected style after a failed color-tap write', async () => {
+    const { getByTestId } = await renderProfileScreen();
+
+    // Before tapping, the original color dot is selected (borderWidth 3).
+    expect(dotBorderWidth(getByTestId('color-dot-#FF6B6B'))).toBe(3);
+    expect(dotBorderWidth(getByTestId('color-dot-#4ECDC4'))).toBe(2);
+
+    // Fail the next AsyncStorage write.
+    mockSetItem.mockRejectedValueOnce(new Error('storage full'));
+
+    // Press a different color dot — triggers handleColorSelect.
+    await act(async () => {
+      fireEvent.press(getByTestId('color-dot-#4ECDC4'));
+    });
+
+    // After rollback the original dot is selected again.
+    await waitFor(() => {
+      expect(dotBorderWidth(getByTestId('color-dot-#FF6B6B'))).toBe(3);
+    });
+    // And the tapped dot is no longer selected.
+    expect(dotBorderWidth(getByTestId('color-dot-#4ECDC4'))).toBe(2);
+  });
+
+  it('new color dot becomes selected after a successful write', async () => {
+    const { getByTestId } = await renderProfileScreen();
+
+    // Press a new color — storage write succeeds.
+    await act(async () => {
+      fireEvent.press(getByTestId('color-dot-#4ECDC4'));
+    });
+
+    await waitFor(() => {
+      expect(dotBorderWidth(getByTestId('color-dot-#4ECDC4'))).toBe(3);
+    });
+    expect(dotBorderWidth(getByTestId('color-dot-#FF6B6B'))).toBe(2);
+  });
+
+  it('original dot stays selected across multiple failed taps', async () => {
+    const { getByTestId } = await renderProfileScreen();
+
+    // First failed tap.
+    mockSetItem.mockRejectedValueOnce(new Error('err'));
+    await act(async () => { fireEvent.press(getByTestId('color-dot-#4ECDC4')); });
+    await waitFor(() => {
+      expect(dotBorderWidth(getByTestId('color-dot-#FF6B6B'))).toBe(3);
+    });
+
+    // Second failed tap on a different color.
+    mockSetItem.mockRejectedValueOnce(new Error('err'));
+    await act(async () => { fireEvent.press(getByTestId('color-dot-#45B7D1')); });
+    await waitFor(() => {
+      expect(dotBorderWidth(getByTestId('color-dot-#FF6B6B'))).toBe(3);
+    });
+
+    // Neither tapped dot should be selected.
+    expect(dotBorderWidth(getByTestId('color-dot-#4ECDC4'))).toBe(2);
+    expect(dotBorderWidth(getByTestId('color-dot-#45B7D1'))).toBe(2);
   });
 });

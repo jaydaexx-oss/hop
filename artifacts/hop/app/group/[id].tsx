@@ -15,6 +15,8 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { PTTButton } from '@/components/PTTButton';
+import { VoiceMessageBubble } from '@/components/VoiceMessageBubble';
 
 // Overlapping member avatar cluster shown in the header
 function MemberCluster({ members, size = 32 }: { members: { color: string; username: string }[]; size?: number }) {
@@ -29,12 +31,8 @@ function MemberCluster({ members, size = 32 }: { members: { color: string; usern
           style={[
             styles.clusterAvatar,
             {
-              width: size,
-              height: size,
-              borderRadius: size / 2,
-              backgroundColor: m.color,
-              left: i * overlap,
-              zIndex: shown.length - i,
+              width: size, height: size, borderRadius: size / 2,
+              backgroundColor: m.color, left: i * overlap, zIndex: shown.length - i,
             },
           ]}
         >
@@ -51,8 +49,12 @@ export default function GroupChatScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
   const { id } = useLocalSearchParams<{ id: string }>();
-  const { profile, getGroupConversation, sendGroupMessage, markGroupRead, groupConversations, isMuted, toggleMute } = useHop();
+  const {
+    profile, getGroupConversation, sendGroupMessage, sendGroupVoiceMessage,
+    markGroupRead, groupConversations, isMuted, toggleMute,
+  } = useHop();
   const [input, setInput] = useState('');
+  const [inputMode, setInputMode] = useState<'text' | 'ptt'>('text');
 
   const group = id ? getGroupConversation(id) : undefined;
   const messages = group?.messages ?? [];
@@ -68,6 +70,16 @@ export default function GroupChatScreen() {
     sendGroupMessage(id, trimmed);
     setInput('');
   }, [input, id, sendGroupMessage]);
+
+  const handleVoiceSend = useCallback((uri: string, durationMs: number) => {
+    if (!id) return;
+    sendGroupVoiceMessage(id, uri, durationMs);
+  }, [id, sendGroupVoiceMessage]);
+
+  const toggleInputMode = useCallback(() => {
+    setInputMode(m => m === 'text' ? 'ptt' : 'text');
+    setInput('');
+  }, []);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
@@ -90,23 +102,36 @@ export default function GroupChatScreen() {
                 {item.senderName}
               </Text>
             )}
-            <View
-              style={[
-                styles.bubble,
-                isMe
-                  ? { backgroundColor: colors.primary }
-                  : { backgroundColor: colors.card, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
-              ]}
-            >
-              <Text style={[styles.bubbleText, { color: isMe ? colors.primaryForeground : colors.foreground }]}>
-                {item.content}
-              </Text>
-            </View>
+            {item.messageType === 'voice' ? (
+              <VoiceMessageBubble
+                uri={item.voiceUri}
+                durationMs={item.voiceDurationMs}
+                isMe={isMe}
+                primaryColor={colors.primary}
+                primaryForegroundColor={colors.primaryForeground}
+                foregroundColor={colors.foreground}
+                cardColor={colors.card}
+                borderColor={colors.border}
+              />
+            ) : (
+              <View
+                style={[
+                  styles.bubble,
+                  isMe
+                    ? { backgroundColor: colors.primary }
+                    : { backgroundColor: colors.card, borderWidth: StyleSheet.hairlineWidth, borderColor: colors.border },
+                ]}
+              >
+                <Text style={[styles.bubbleText, { color: isMe ? colors.primaryForeground : colors.foreground }]}>
+                  {item.content}
+                </Text>
+              </View>
+            )}
           </View>
         </View>
       );
     },
-    [profile?.id, colors]
+    [profile?.id, colors],
   );
 
   if (!group) {
@@ -133,11 +158,7 @@ export default function GroupChatScreen() {
             {group.members.length} members · nearby
           </Text>
         </View>
-        <Pressable
-          onPress={() => id && toggleMute(id)}
-          hitSlop={12}
-          style={styles.muteBtn}
-        >
+        <Pressable onPress={() => id && toggleMute(id)} hitSlop={12} style={styles.muteBtn}>
           <Ionicons
             name={id && isMuted(id) ? 'notifications-off' : 'notifications'}
             size={22}
@@ -170,26 +191,45 @@ export default function GroupChatScreen() {
           }
         />
 
+        {/* Input bar */}
         <View style={[styles.inputBar, { backgroundColor: colors.background, borderTopColor: colors.border, paddingBottom: bottomPad + 10 }]}>
-          <TextInput
-            style={[styles.textInput, { color: colors.foreground, backgroundColor: colors.card, borderColor: colors.border }]}
-            placeholder="Message group..."
-            placeholderTextColor={colors.mutedForeground}
-            value={input}
-            onChangeText={setInput}
-            multiline
-            maxLength={500}
-            returnKeyType="send"
-            blurOnSubmit={false}
-            onSubmitEditing={handleSend}
-          />
-          <Pressable
-            onPress={handleSend}
-            disabled={!input.trim()}
-            style={[styles.sendBtn, { backgroundColor: input.trim() ? colors.primary : colors.secondary }]}
-          >
-            <Ionicons name="arrow-up" size={18} color={input.trim() ? colors.primaryForeground : colors.mutedForeground} />
-          </Pressable>
+          {inputMode === 'ptt' ? (
+            <View style={styles.pttRow}>
+              <PTTButton colors={colors} onSend={handleVoiceSend} />
+              <Pressable
+                onPress={toggleInputMode}
+                hitSlop={8}
+                style={[styles.iconBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+              >
+                <Ionicons name="chatbubble-outline" size={18} color={colors.mutedForeground} />
+              </Pressable>
+            </View>
+          ) : (
+            <View style={styles.textRow}>
+              <TextInput
+                style={[styles.textInput, { color: colors.foreground, backgroundColor: colors.card, borderColor: colors.border }]}
+                placeholder="Message group..."
+                placeholderTextColor={colors.mutedForeground}
+                value={input}
+                onChangeText={setInput}
+                multiline
+                maxLength={500}
+                returnKeyType="send"
+                blurOnSubmit={false}
+                onSubmitEditing={handleSend}
+              />
+              <Pressable onPress={toggleInputMode} hitSlop={8} style={[styles.iconBtn, { backgroundColor: colors.card, borderColor: colors.border }]}>
+                <Ionicons name="mic-outline" size={20} color={colors.primary} />
+              </Pressable>
+              <Pressable
+                onPress={handleSend}
+                disabled={!input.trim()}
+                style={[styles.sendBtn, { backgroundColor: input.trim() ? colors.primary : colors.secondary }]}
+              >
+                <Ionicons name="arrow-up" size={18} color={input.trim() ? colors.primaryForeground : colors.mutedForeground} />
+              </Pressable>
+            </View>
+          )}
         </View>
       </KeyboardAvoidingView>
     </View>
@@ -198,59 +238,50 @@ export default function GroupChatScreen() {
 
 const styles = StyleSheet.create({
   container: { flex: 1 },
-  flex: { flex: 1 },
+  flex:      { flex: 1 },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    paddingHorizontal: 14,
-    paddingBottom: 12,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-    gap: 12,
+    flexDirection: 'row', alignItems: 'center',
+    paddingHorizontal: 14, paddingBottom: 12,
+    borderBottomWidth: StyleSheet.hairlineWidth, gap: 12,
   },
-  back: { padding: 2 },
+  back:    { padding: 2 },
   muteBtn: { padding: 4 },
-  clusterAvatar: {
-    position: 'absolute',
-    justifyContent: 'center',
-    alignItems: 'center',
-    borderWidth: 2,
-    borderColor: 'transparent',
-  },
-  clusterText: { color: '#fff', fontFamily: 'Inter_700Bold' },
+  clusterAvatar: { position: 'absolute', justifyContent: 'center', alignItems: 'center', borderWidth: 2, borderColor: 'transparent' },
+  clusterText:   { color: '#fff', fontFamily: 'Inter_700Bold' },
   headerInfo: { flex: 1 },
   headerName: { fontSize: 16, fontFamily: 'Inter_700Bold' },
-  headerSub: { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
-  msgList: { paddingHorizontal: 16, paddingVertical: 12 },
-  msgRow: { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 12, gap: 8 },
+  headerSub:  { fontSize: 11, fontFamily: 'Inter_400Regular', marginTop: 2 },
+  msgList:  { paddingHorizontal: 16, paddingVertical: 12 },
+  msgRow:   { flexDirection: 'row', alignItems: 'flex-end', marginBottom: 12, gap: 8 },
   rowRight: { justifyContent: 'flex-end' },
-  rowLeft: { justifyContent: 'flex-start' },
-  msgAvatar: { width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
-  msgAvatarText: { color: '#fff', fontSize: 10, fontFamily: 'Inter_700Bold' },
-  bubbleCol: { maxWidth: '74%' },
-  senderName: { fontSize: 11, fontFamily: 'Inter_600SemiBold', marginBottom: 3, marginLeft: 4 },
-  bubble: { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
-  bubbleText: { fontSize: 15, fontFamily: 'Inter_400Regular', lineHeight: 22 },
+  rowLeft:  { justifyContent: 'flex-start' },
+  msgAvatar:    { width: 26, height: 26, borderRadius: 13, justifyContent: 'center', alignItems: 'center', flexShrink: 0 },
+  msgAvatarText:{ color: '#fff', fontSize: 10, fontFamily: 'Inter_700Bold' },
+  bubbleCol:    { maxWidth: '74%' },
+  senderName:   { fontSize: 11, fontFamily: 'Inter_600SemiBold', marginBottom: 3, marginLeft: 4 },
+  bubble:       { paddingHorizontal: 14, paddingVertical: 10, borderRadius: 18 },
+  bubbleText:   { fontSize: 15, fontFamily: 'Inter_400Regular', lineHeight: 22 },
   inputBar: {
-    flexDirection: 'row',
-    alignItems: 'flex-end',
+    borderTopWidth: StyleSheet.hairlineWidth,
     paddingHorizontal: 14,
     paddingTop: 10,
-    borderTopWidth: StyleSheet.hairlineWidth,
+  },
+  pttRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
     gap: 10,
+    paddingVertical: 4,
   },
+  textRow: { flexDirection: 'row', alignItems: 'flex-end', gap: 8 },
   textInput: {
-    flex: 1,
-    minHeight: 40,
-    maxHeight: 120,
-    borderRadius: 20,
-    paddingHorizontal: 16,
-    paddingVertical: 10,
-    fontSize: 15,
-    borderWidth: StyleSheet.hairlineWidth,
-    fontFamily: 'Inter_400Regular',
+    flex: 1, minHeight: 40, maxHeight: 120,
+    borderRadius: 20, paddingHorizontal: 16, paddingVertical: 10,
+    fontSize: 15, borderWidth: StyleSheet.hairlineWidth, fontFamily: 'Inter_400Regular',
   },
+  iconBtn: { width: 40, height: 40, borderRadius: 20, borderWidth: StyleSheet.hairlineWidth, justifyContent: 'center', alignItems: 'center' },
   sendBtn: { width: 40, height: 40, borderRadius: 20, justifyContent: 'center', alignItems: 'center' },
   emptyWrap: { alignItems: 'center', paddingTop: 60, gap: 10 },
   emptyName: { fontSize: 20, fontFamily: 'Inter_700Bold', marginTop: 10 },
-  emptySub: { fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingHorizontal: 24 },
+  emptySub:  { fontSize: 13, fontFamily: 'Inter_400Regular', textAlign: 'center', paddingHorizontal: 24 },
 });

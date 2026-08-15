@@ -5,7 +5,7 @@
  * Tap to navigate directly to the chat. Auto-dismisses after 3 s.
  */
 import React, { useEffect, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, Text } from 'react-native';
+import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, usePathname } from 'expo-router';
 import { useHop } from '@/context/HopContext';
@@ -27,6 +27,7 @@ export function NotificationToast() {
   // Determine whether the user is already inside the target chat
   const isInsideTarget = (() => {
     if (!pendingToast) return false;
+    if (pendingToast.kind === 'error') return false;
     if (pendingToast.kind === 'dm') {
       return pathname === `/chat/${pendingToast.targetId}`;
     }
@@ -93,6 +94,7 @@ export function NotificationToast() {
   const handlePress = () => {
     if (!pendingToast) return;
     slideOut();
+    if (pendingToast.kind === 'error') return; // just dismiss — no navigation
     const path =
       pendingToast.kind === 'dm'
         ? `/chat/${pendingToast.targetId}`
@@ -120,18 +122,31 @@ export function NotificationToast() {
     >
       <Pressable
         onPress={handlePress}
-        style={({ pressed }) => [styles.card, pressed && styles.cardPressed]}
+        style={({ pressed }) => [
+          styles.card,
+          pendingToast.kind === 'error' && styles.cardError,
+          pressed && styles.cardPressed,
+        ]}
         android_ripple={{ color: 'rgba(255,255,255,0.12)' }}
       >
-        <Avatar
-          uri={pendingToast.senderAvatarUri}
-          color={pendingToast.senderColor}
-          username={pendingToast.senderName}
-          size={42}
-        />
+        {pendingToast.kind === 'error' ? (
+          <View style={styles.errorIconWrap}>
+            <Text style={styles.errorIconText}>⚠️</Text>
+          </View>
+        ) : (
+          <Avatar
+            uri={pendingToast.senderAvatarUri}
+            color={pendingToast.senderColor}
+            username={pendingToast.senderName}
+            size={42}
+          />
+        )}
         <Animated.View style={styles.textBlock}>
-          <Text style={styles.senderName} numberOfLines={1}>
-            {pendingToast.senderName}
+          <Text
+            style={[styles.senderName, pendingToast.kind === 'error' && styles.senderNameError]}
+            numberOfLines={1}
+          >
+            {pendingToast.kind === 'error' ? 'Storage Error' : pendingToast.senderName}
           </Text>
           <Text style={styles.preview} numberOfLines={1}>
             {pendingToast.content}
@@ -165,8 +180,24 @@ const styles = StyleSheet.create({
     // Elevation (Android)
     elevation: 8,
   },
+  cardError: {
+    borderWidth: 1,
+    borderColor: 'rgba(255, 160, 60, 0.45)',
+    backgroundColor: 'rgba(40, 28, 20, 0.97)',
+  },
   cardPressed: {
     opacity: 0.85,
+  },
+  errorIconWrap: {
+    width: 42,
+    height: 42,
+    borderRadius: 21,
+    backgroundColor: 'rgba(255, 160, 60, 0.18)',
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  errorIconText: {
+    fontSize: 22,
   },
   textBlock: {
     flex: 1,
@@ -176,6 +207,9 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontFamily: 'Inter_600SemiBold',
     fontSize: 14,
+  },
+  senderNameError: {
+    color: '#FFA03C',
   },
   preview: {
     color: 'rgba(255,255,255,0.65)',

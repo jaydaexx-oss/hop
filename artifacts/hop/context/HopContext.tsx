@@ -1,7 +1,7 @@
 import React, { createContext, useCallback, useContext, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { Alert } from 'react-native';
-import { saveConvs, saveGroups } from './storage';
+import { saveConvs, saveGroups, saveBroadcasts } from './storage';
 import { createMessageId, MessageStatus } from '@/protocol/message';
 import { ProcessedIdSet } from '@/protocol/duplicates';
 
@@ -66,14 +66,9 @@ export interface MyProfile {
   avatarUri?: string;
 }
 
-export interface ToastNotification {
-  kind: 'dm' | 'group';
-  targetId: string;
-  senderName: string;
-  senderColor: string;
-  senderAvatarUri?: string;
-  content: string;
-}
+export type ToastNotification =
+  | { kind: 'dm' | 'group'; targetId: string; senderName: string; senderColor: string; senderAvatarUri?: string; content: string }
+  | { kind: 'error'; content: string };
 
 interface HopContextType {
   profile: MyProfile | null;
@@ -304,6 +299,14 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const pendingToast = toastQueue[0] ?? null;
   const dismissToast = () => setToastQueue(prev => prev.slice(1));
 
+  const showStorageError = useCallback(() => {
+    setToastQueue(prev => {
+      // Avoid stacking duplicate error toasts
+      if (prev.some(t => t.kind === 'error')) return prev;
+      return [...prev, { kind: 'error', content: "Couldn't save messages — storage may be full." }];
+    });
+  }, []);
+
   // ── Mute ──────────────────────────────────────────────────────────────────
 
   const toggleMute = async (id: string) => {
@@ -344,7 +347,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     setNearbyUsers(prev => prev.filter(u => u.id !== userId));
     setConversations(prev => {
       const next = prev.filter(c => c.userId !== userId);
-      saveConvs(next);
+      saveConvs(next, showStorageError);
       return next;
     });
     setMessageRequests(prev => {
@@ -392,7 +395,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           unread: 1,
         };
         const updated = [newConv, ...convs];
-        saveConvs(updated);
+        saveConvs(updated, showStorageError);
         return updated;
       });
       return next;
@@ -427,7 +430,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       const updated = existing
         ? prev.map(c => c.userId === userId ? { ...c, messages: [...c.messages, msg], unread: 0 } : c)
         : [{ userId, user: { ...user, signal: nearbyUsers.find(u => u.id === userId)?.signal ?? 80 }, messages: [msg], unread: 0 }, ...prev];
-      saveConvs(updated);
+      saveConvs(updated, showStorageError);
       return updated;
     });
 
@@ -435,14 +438,14 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       const reply: Message = { id: replyId, senderId: userId, content: replyContent, timestamp: Date.now(), status: MessageStatus.DELIVERED };
       setConversations(curr => {
         const u = curr.map(c => c.userId === userId ? { ...c, messages: [...c.messages, reply], unread: 1 } : c);
-        saveConvs(u);
+        saveConvs(u, showStorageError);
         return u;
       });
       const sender = USER_POOL.find(u => u.id === userId);
       setMutedIds(currentMuted => {
         if (!currentMuted.has(userId)) {
           setToastQueue(prev => {
-              const filtered = prev.filter(t => t.targetId !== userId);
+              const filtered = prev.filter(t => t.kind === 'error' || t.targetId !== userId);
               return [...filtered, { kind: 'dm', targetId: userId, senderName: sender?.username ?? 'Someone', senderColor: sender?.color ?? '#888', senderAvatarUri: sender?.avatarUri, content: replyContent }];
             });
         }
@@ -466,7 +469,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       const group = prev.find(g => g.id === groupId);
       if (!group) return prev;
       const updated = prev.map(g => g.id === groupId ? { ...g, messages: [...g.messages, msg], unread: 0 } : g);
-      saveGroups(updated);
+      saveGroups(updated, showStorageError);
       return updated;
     });
 
@@ -478,11 +481,11 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         const replyText = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
         const reply: Message = { id: replyId, senderId: bot.id, senderName: bot.username, senderColor: bot.color, content: replyText, timestamp: Date.now(), status: MessageStatus.DELIVERED };
         const updated = curr.map(g => g.id === groupId ? { ...g, messages: [...g.messages, reply], unread: 1 } : g);
-        saveGroups(updated);
+        saveGroups(updated, showStorageError);
         setMutedIds(currentMuted => {
           if (!currentMuted.has(groupId)) {
             setToastQueue(prev => {
-              const filtered = prev.filter(t => t.targetId !== groupId);
+              const filtered = prev.filter(t => t.kind === 'error' || t.targetId !== groupId);
               return [...filtered, { kind: 'group', targetId: groupId, senderName: bot.username, senderColor: bot.color, senderAvatarUri: bot.avatarUri, content: replyText }];
             });
           }
@@ -502,14 +505,14 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       .filter((u): u is HopUser => u !== undefined);
     if (members.length === 0) return null;
     const group: GroupConversation = { id: `g_${createMessageId()}`, name: name.trim() || members.map(m => m.username).join(', '), members, messages: [], unread: 0, createdAt: Date.now() };
-    setGroupConversations(prev => { const updated = [group, ...prev]; saveGroups(updated); return updated; });
+    setGroupConversations(prev => { const updated = [group, ...prev]; saveGroups(updated, showStorageError); return updated; });
     return group;
   };
 
   // ── Read / lookup ─────────────────────────────────────────────────────────
 
-  const markRead = (userId: string) => setConversations(prev => { const u = prev.map(c => c.userId === userId ? { ...c, unread: 0 } : c); saveConvs(u); return u; });
-  const markGroupRead = (groupId: string) => setGroupConversations(prev => { const u = prev.map(g => g.id === groupId ? { ...g, unread: 0 } : g); saveGroups(u); return u; });
+  const markRead = (userId: string) => setConversations(prev => { const u = prev.map(c => c.userId === userId ? { ...c, unread: 0 } : c); saveConvs(u, showStorageError); return u; });
+  const markGroupRead = (groupId: string) => setGroupConversations(prev => { const u = prev.map(g => g.id === groupId ? { ...g, unread: 0 } : g); saveGroups(u, showStorageError); return u; });
   const getConversation = (userId: string) => conversations.find(c => c.userId === userId);
   const getGroupConversation = (groupId: string) => groupConversations.find(g => g.id === groupId);
 
@@ -518,7 +521,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const sendBroadcast = (content: string) => {
     if (!profile) return;
     const b: Broadcast = { id: createMessageId(), senderId: profile.id, senderName: profile.username, senderColor: profile.color, content, timestamp: Date.now() };
-    setBroadcasts(prev => { const u = [b, ...prev]; AsyncStorage.setItem('@hop/broadcasts', JSON.stringify(u)); return u; });
+    setBroadcasts(prev => { const u = [b, ...prev]; saveBroadcasts(u, showStorageError); return u; });
   };
 
   const clearHistory = async () => {
@@ -544,7 +547,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const deleteConversation = async (userId: string) => {
     setConversations(prev => {
       const updated = prev.filter(c => c.userId !== userId);
-      saveConvs(updated);
+      saveConvs(updated, showStorageError);
       return updated;
     });
   };
@@ -552,7 +555,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const deleteGroup = async (groupId: string) => {
     setGroupConversations(prev => {
       const updated = prev.filter(g => g.id !== groupId);
-      saveGroups(updated);
+      saveGroups(updated, showStorageError);
       return updated;
     });
   };

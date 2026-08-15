@@ -1,39 +1,23 @@
-/**
- * HopContext — central state for the HOP app.
- *
- * Integrates the fixed protocol layer from jaydaexx-oss/hop:
- *   • HopMessage / MessageStatus for typed message lifecycle
- *   • ProcessedIdSet for deduplication (prevents double-delivery)
- *   • TransportManager with corrected backoff (bug 1 fix)
- *   • createMessageId() — CSPRNG UUID (replaces Math.random genId — bug 5 fix)
- *
- * Additional bugs fixed vs. original scaffold:
- *   Bug 6 (dedup): ProcessedIdSet now guards sendMessage.
- *   Bug 7 (setTimeout in updater): bot reply timeout is scheduled OUTSIDE the
- *     setConversations updater so React Strict Mode double-invocation cannot
- *     fire it twice.
- */
-
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-import { createMessageId, MessageStatus, type HopMessage } from '@/protocol/message';
+import { createMessageId, MessageStatus } from '@/protocol/message';
 import { ProcessedIdSet } from '@/protocol/duplicates';
 
-// ─── Domain types ────────────────────────────────────────────────────────────
+// ─── Domain types ─────────────────────────────────────────────────────────────
 
 export interface HopUser {
   id: string;
   username: string;
   color: string;
-  signal: number;  // 0-100
-  angle: number;   // radians, fixed position on radar
+  signal: number;
+  angle: number;
 }
 
-/** UI-level message — wraps HopMessage with display content. */
 export interface Message {
-  /** Matches HopMessage.message_id — CSPRNG UUID. */
   id: string;
   senderId: string;
+  senderName?: string;
+  senderColor?: string;
   content: string;
   timestamp: number;
   status: MessageStatus;
@@ -44,6 +28,15 @@ export interface Conversation {
   user: HopUser;
   messages: Message[];
   unread: number;
+}
+
+export interface GroupConversation {
+  id: string;
+  name: string;
+  members: HopUser[];
+  messages: Message[];
+  unread: number;
+  createdAt: number;
 }
 
 export interface Broadcast {
@@ -68,18 +61,23 @@ interface HopContextType {
   loaded: boolean;
   nearbyUsers: HopUser[];
   conversations: Conversation[];
+  groupConversations: GroupConversation[];
   broadcasts: Broadcast[];
   isScanning: boolean;
   totalUnread: number;
   setProfile: (profile: MyProfile) => Promise<void>;
   sendMessage: (userId: string, content: string) => void;
+  sendGroupMessage: (groupId: string, content: string) => void;
   sendBroadcast: (content: string) => void;
+  createGroup: (name: string, memberIds: string[]) => GroupConversation | null;
   getConversation: (userId: string) => Conversation | undefined;
+  getGroupConversation: (groupId: string) => GroupConversation | undefined;
   markRead: (userId: string) => void;
+  markGroupRead: (groupId: string) => void;
   completeOnboarding: (username: string, color: string) => Promise<void>;
 }
 
-// ─── Simulated nearby user pool ──────────────────────────────────────────────
+// ─── Simulated nearby user pool ───────────────────────────────────────────────
 
 const USER_POOL: HopUser[] = [
   { id: 'u1', username: 'wavejockey',  color: '#FF6B6B', signal: 0, angle: 0.4 },
@@ -102,14 +100,11 @@ export const AVATAR_COLORS = [
   '#F0A500', '#FF8C94', '#6C5CE7', '#00CEC9', '#FD79A8',
 ];
 
-// ─── Dedup guard (bug 6 fix) ──────────────────────────────────────────────────
-// Shared instance — prevents the same message_id being inserted twice even if
-// sendMessage is called rapidly or React re-renders the sender mid-flight.
 const sentIds = new ProcessedIdSet(10_000);
 
 const HopContext = createContext<HopContextType | null>(null);
 
-// ─── Provider ────────────────────────────────────────────────────────────────
+// ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function HopProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfileState] = useState<MyProfile | null>(null);
@@ -117,17 +112,18 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const [loaded, setLoaded] = useState(false);
   const [nearbyUsers, setNearbyUsers] = useState<HopUser[]>([]);
   const [conversations, setConversations] = useState<Conversation[]>([]);
+  const [groupConversations, setGroupConversations] = useState<GroupConversation[]>([]);
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [isScanning, setIsScanning] = useState(false);
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // Load persisted state
   useEffect(() => {
     (async () => {
       try {
-        const [profStr, convStr, bcastStr] = await Promise.all([
+        const [profStr, convStr, groupStr, bcastStr] = await Promise.all([
           AsyncStorage.getItem('@hop/profile'),
           AsyncStorage.getItem('@hop/conversations'),
+          AsyncStorage.getItem('@hop/groups'),
           AsyncStorage.getItem('@hop/broadcasts'),
         ]);
 
@@ -136,29 +132,14 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         } else {
           setIsOnboarding(true);
         }
-
         if (convStr) setConversations(JSON.parse(convStr));
-
+        if (groupStr) setGroupConversations(JSON.parse(groupStr));
         if (bcastStr) {
           setBroadcasts(JSON.parse(bcastStr));
         } else {
           const seed: Broadcast[] = [
-            {
-              id: createMessageId(),
-              senderId: 'u1',
-              senderName: 'wavejockey',
-              senderColor: '#FF6B6B',
-              content: 'anyone at the coffee shop on 5th?',
-              timestamp: Date.now() - 300_000,
-            },
-            {
-              id: createMessageId(),
-              senderId: 'u3',
-              senderName: 'staticdrift',
-              senderColor: '#45B7D1',
-              content: 'looking for people to jam with nearby',
-              timestamp: Date.now() - 120_000,
-            },
+            { id: createMessageId(), senderId: 'u1', senderName: 'wavejockey', senderColor: '#FF6B6B', content: 'anyone at the coffee shop on 5th?', timestamp: Date.now() - 300_000 },
+            { id: createMessageId(), senderId: 'u3', senderName: 'staticdrift', senderColor: '#45B7D1', content: 'looking for people to jam with nearby', timestamp: Date.now() - 120_000 },
           ];
           setBroadcasts(seed);
           await AsyncStorage.setItem('@hop/broadcasts', JSON.stringify(seed));
@@ -171,7 +152,6 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
-  // BT simulation — random pool of 2-5 users every 5 s
   useEffect(() => {
     if (!loaded) return;
     setIsScanning(true);
@@ -188,11 +168,10 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     };
   }, [loaded]);
 
-  // ── Persistence helpers ───────────────────────────────────────────────────
-
-  const saveConvs = async (convs: Conversation[]) => {
-    await AsyncStorage.setItem('@hop/conversations', JSON.stringify(convs));
-  };
+  const saveConvs = async (convs: Conversation[]) =>
+    AsyncStorage.setItem('@hop/conversations', JSON.stringify(convs));
+  const saveGroups = async (groups: GroupConversation[]) =>
+    AsyncStorage.setItem('@hop/groups', JSON.stringify(groups));
 
   const setProfile = async (p: MyProfile) => {
     setProfileState(p);
@@ -200,24 +179,18 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   };
 
   const completeOnboarding = async (username: string, color: string) => {
-    // Bug 5 fix: use CSPRNG createMessageId() for the profile id
     await setProfile({ id: createMessageId(), username, color, discoverable: true });
     setIsOnboarding(false);
   };
 
-  // ── sendMessage ───────────────────────────────────────────────────────────
+  // ── DM send ──────────────────────────────────────────────────────────────
 
   const sendMessage = (userId: string, content: string) => {
     if (!profile) return;
-    const poolUser = USER_POOL.find(u => u.id === userId);
-    const nearUser = nearbyUsers.find(u => u.id === userId);
-    const user = poolUser ?? nearUser;
+    const user = USER_POOL.find(u => u.id === userId) ?? nearbyUsers.find(u => u.id === userId);
     if (!user) return;
 
-    // Bug 5 fix: CSPRNG id via protocol layer
     const msgId = createMessageId();
-
-    // Bug 6 fix: dedup guard — reject if we've already sent this id
     if (!sentIds.remember(msgId)) return;
 
     const msg: Message = {
@@ -225,84 +198,144 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       senderId: profile.id,
       content,
       timestamp: Date.now(),
-      // Progress through the state machine: CREATED → SENT (simulated, no real transport)
       status: MessageStatus.SENT,
     };
 
-    // Bug 7 fix: capture the reply delay BEFORE entering the state updater so
-    // React Strict Mode's double-invocation of the updater cannot schedule two
-    // timeouts. The timeout is set once, here in the outer function body.
     const replyDelay = 1000 + Math.random() * 2500;
     const replyContent = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
     const replyId = createMessageId();
 
     setConversations(prev => {
       const existing = prev.find(c => c.userId === userId);
-      const updated: Conversation[] = existing
-        ? prev.map(c =>
-            c.userId === userId
-              ? { ...c, messages: [...c.messages, msg], unread: 0 }
-              : c,
-          )
-        : [
-            {
-              userId,
-              user: { ...user, signal: nearUser?.signal ?? 80 },
-              messages: [msg],
-              unread: 0,
-            },
-            ...prev,
-          ];
+      const updated = existing
+        ? prev.map(c => c.userId === userId ? { ...c, messages: [...c.messages, msg], unread: 0 } : c)
+        : [{ userId, user: { ...user, signal: nearbyUsers.find(u => u.id === userId)?.signal ?? 80 }, messages: [msg], unread: 0 }, ...prev];
       saveConvs(updated);
       return updated;
     });
 
-    // Bug 7 fix: setTimeout is OUTSIDE setConversations — scheduled once only.
     setTimeout(() => {
-      const reply: Message = {
-        id: replyId,
-        senderId: userId,
-        content: replyContent,
-        timestamp: Date.now(),
-        status: MessageStatus.DELIVERED,
-      };
+      const reply: Message = { id: replyId, senderId: userId, content: replyContent, timestamp: Date.now(), status: MessageStatus.DELIVERED };
       setConversations(curr => {
-        const u = curr.map(c =>
-          c.userId === userId
-            ? { ...c, messages: [...c.messages, reply], unread: 1 }
-            : c,
-        );
+        const u = curr.map(c => c.userId === userId ? { ...c, messages: [...c.messages, reply], unread: 1 } : c);
         saveConvs(u);
         return u;
       });
     }, replyDelay);
   };
 
-  // ── markRead / getConversation ────────────────────────────────────────────
+  // ── Group send ────────────────────────────────────────────────────────────
 
-  const markRead = (userId: string) => {
-    setConversations(prev => {
-      const u = prev.map(c => (c.userId === userId ? { ...c, unread: 0 } : c));
-      saveConvs(u);
-      return u;
-    });
-  };
-
-  const getConversation = (userId: string) =>
-    conversations.find(c => c.userId === userId);
-
-  // ── sendBroadcast ─────────────────────────────────────────────────────────
-
-  const sendBroadcast = (content: string) => {
+  const sendGroupMessage = (groupId: string, content: string) => {
     if (!profile) return;
-    const b: Broadcast = {
-      id: createMessageId(),
+    const msgId = createMessageId();
+    if (!sentIds.remember(msgId)) return;
+
+    const msg: Message = {
+      id: msgId,
       senderId: profile.id,
       senderName: profile.username,
       senderColor: profile.color,
       content,
       timestamp: Date.now(),
+      status: MessageStatus.SENT,
     };
+
+    let groupMembers: HopUser[] = [];
+
+    setGroupConversations(prev => {
+      const group = prev.find(g => g.id === groupId);
+      if (!group) return prev;
+      groupMembers = group.members;
+      const updated = prev.map(g =>
+        g.id === groupId ? { ...g, messages: [...g.messages, msg], unread: 0 } : g
+      );
+      saveGroups(updated);
+      return updated;
+    });
+
+    // Simulate a random member replying
+    const replyDelay = 1500 + Math.random() * 3000;
+    const replyId = createMessageId();
+
+    setTimeout(() => {
+      setGroupConversations(curr => {
+        const group = curr.find(g => g.id === groupId);
+        if (!group) return curr;
+        const bots = group.members;
+        if (bots.length === 0) return curr;
+        const bot = bots[Math.floor(Math.random() * bots.length)];
+        const reply: Message = {
+          id: replyId,
+          senderId: bot.id,
+          senderName: bot.username,
+          senderColor: bot.color,
+          content: BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)],
+          timestamp: Date.now(),
+          status: MessageStatus.DELIVERED,
+        };
+        const updated = curr.map(g =>
+          g.id === groupId ? { ...g, messages: [...g.messages, reply], unread: 1 } : g
+        );
+        saveGroups(updated);
+        return updated;
+      });
+    }, replyDelay);
+  };
+
+  // ── Create group ──────────────────────────────────────────────────────────
+
+  const createGroup = (name: string, memberIds: string[]): GroupConversation | null => {
+    if (!profile) return null;
+    const members = memberIds
+      .map(id => USER_POOL.find(u => u.id === id) ?? nearbyUsers.find(u => u.id === id))
+      .filter((u): u is HopUser => u !== undefined);
+    if (members.length === 0) return null;
+
+    const group: GroupConversation = {
+      id: `g_${createMessageId()}`,
+      name: name.trim() || members.map(m => m.username).join(', '),
+      members,
+      messages: [],
+      unread: 0,
+      createdAt: Date.now(),
+    };
+
+    setGroupConversations(prev => {
+      const updated = [group, ...prev];
+      saveGroups(updated);
+      return updated;
+    });
+
+    return group;
+  };
+
+  // ── Read / lookup ─────────────────────────────────────────────────────────
+
+  const markRead = (userId: string) => {
+    setConversations(prev => {
+      const u = prev.map(c => c.userId === userId ? { ...c, unread: 0 } : c);
+      saveConvs(u);
+      return u;
+    });
+  };
+
+  const markGroupRead = (groupId: string) => {
+    setGroupConversations(prev => {
+      const u = prev.map(g => g.id === groupId ? { ...g, unread: 0 } : g);
+      saveGroups(u);
+      return u;
+    });
+  };
+
+  const getConversation = (userId: string) => conversations.find(c => c.userId === userId);
+  const getGroupConversation = (groupId: string) => groupConversations.find(g => g.id === groupId);
+
+  // ── Broadcast ─────────────────────────────────────────────────────────────
+
+  const sendBroadcast = (content: string) => {
+    if (!profile) return;
+    const b: Broadcast = { id: createMessageId(), senderId: profile.id, senderName: profile.username, senderColor: profile.color, content, timestamp: Date.now() };
     setBroadcasts(prev => {
       const u = [b, ...prev];
       AsyncStorage.setItem('@hop/broadcasts', JSON.stringify(u));
@@ -310,27 +343,19 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
-  const totalUnread = conversations.reduce((sum, c) => sum + c.unread, 0);
+  const totalUnread =
+    conversations.reduce((s, c) => s + c.unread, 0) +
+    groupConversations.reduce((s, g) => s + g.unread, 0);
 
   return (
-    <HopContext.Provider
-      value={{
-        profile,
-        isOnboarding,
-        loaded,
-        nearbyUsers,
-        conversations,
-        broadcasts,
-        isScanning,
-        totalUnread,
-        setProfile,
-        sendMessage,
-        sendBroadcast,
-        getConversation,
-        markRead,
-        completeOnboarding,
-      }}
-    >
+    <HopContext.Provider value={{
+      profile, isOnboarding, loaded, nearbyUsers,
+      conversations, groupConversations, broadcasts,
+      isScanning, totalUnread,
+      setProfile, sendMessage, sendGroupMessage, sendBroadcast,
+      createGroup, getConversation, getGroupConversation,
+      markRead, markGroupRead, completeOnboarding,
+    }}>
       {children}
     </HopContext.Provider>
   );

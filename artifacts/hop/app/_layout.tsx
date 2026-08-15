@@ -25,6 +25,8 @@ function RootLayoutNav() {
       <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
       <Stack.Screen name="onboarding" options={{ headerShown: false }} />
       <Stack.Screen name="chat/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="group/[id]" options={{ headerShown: false }} />
+      <Stack.Screen name="new-group" options={{ headerShown: false }} />
     </Stack>
   );
 }

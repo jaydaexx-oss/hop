@@ -93,7 +93,7 @@ interface HopContextType {
   mutedIds: Set<string>;
   toggleMute: (id: string) => Promise<void>;
   isMuted: (id: string) => boolean;
-  setProfile: (profile: MyProfile) => Promise<void>;
+  setProfile: (profile: MyProfile) => Promise<boolean>;
   sendMessage: (userId: string, content: string) => void;
   sendGroupMessage: (groupId: string, content: string) => void;
   sendBroadcast: (content: string) => void;
@@ -443,15 +443,17 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
 
   // ── Profile ───────────────────────────────────────────────────────────────
 
-  const setProfile = async (p: MyProfile) => {
+  const setProfile = async (p: MyProfile): Promise<boolean> => {
     setProfileState(p);
     try {
       await AsyncStorage.setItem('@hop/profile', JSON.stringify(p));
+      return true;
     } catch {
       // Roll back the optimistic in-memory update so the displayed profile
       // stays consistent with what was actually persisted.
       setProfileState(profile);
       setToastQueue(profileErrorToastUpdater);
+      return false;
     }
   };
 

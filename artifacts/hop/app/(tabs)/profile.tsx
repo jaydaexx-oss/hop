@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -27,6 +27,12 @@ export default function ProfileScreen() {
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(profile?.username ?? '');
   const [showQR, setShowQR] = useState(false);
+
+  // When the profile changes (including rollback after a failed save) and we
+  // are not in edit mode, keep nameInput in sync so the field never shows stale data.
+  useEffect(() => {
+    if (!editing) setNameInput(profile?.username ?? '');
+  }, [profile?.username, editing]);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 100 : insets.bottom + 60;
@@ -69,9 +75,12 @@ export default function ProfileScreen() {
   const handleSaveName = async () => {
     const trimmed = nameInput.trim();
     if (trimmed.length < 2) { Alert.alert('Too short', 'Handle must be at least 2 characters'); return; }
-    await setProfile({ ...profile, username: trimmed });
+    const saved = await setProfile({ ...profile, username: trimmed });
     setEditing(false);
-    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    // Only celebrate with haptics when the write actually succeeded. On failure
+    // the context has already rolled back profile.username, and the useEffect
+    // above will reset nameInput once editing becomes false.
+    if (saved) Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
   };
 
   return (

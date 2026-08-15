@@ -377,6 +377,11 @@ export default function MessagesScreen() {
                   style={[styles.sectionHeader, styles.sectionHeaderRow, { backgroundColor: colors.background }]}
                 >
                   <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>{section.title}</Text>
+                  {!mutedOpen && (
+                    <View style={[styles.badge, { backgroundColor: colors.primary, marginLeft: 6 }]}>
+                      <Text style={[styles.badgeText, { color: colors.primaryForeground }]}>{mutedItems.length}</Text>
+                    </View>
+                  )}
                   <Ionicons
                     name={mutedOpen ? 'chevron-up' : 'chevron-down'}
                     size={13}

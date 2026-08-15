@@ -450,7 +450,10 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       const sender = USER_POOL.find(u => u.id === userId);
       setMutedIds(currentMuted => {
         if (!currentMuted.has(userId)) {
-          setToastQueue(prev => [...prev, { kind: 'dm', targetId: userId, senderName: sender?.username ?? 'Someone', senderColor: sender?.color ?? '#888', senderAvatarUri: sender?.avatarUri, content: replyContent }]);
+          setToastQueue(prev => {
+              const filtered = prev.filter(t => t.targetId !== userId);
+              return [...filtered, { kind: 'dm', targetId: userId, senderName: sender?.username ?? 'Someone', senderColor: sender?.color ?? '#888', senderAvatarUri: sender?.avatarUri, content: replyContent }];
+            });
         }
         return currentMuted;
       });
@@ -487,7 +490,10 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         saveGroups(updated);
         setMutedIds(currentMuted => {
           if (!currentMuted.has(groupId)) {
-            setToastQueue(prev => [...prev, { kind: 'group', targetId: groupId, senderName: bot.username, senderColor: bot.color, senderAvatarUri: bot.avatarUri, content: replyText }]);
+            setToastQueue(prev => {
+              const filtered = prev.filter(t => t.targetId !== groupId);
+              return [...filtered, { kind: 'group', targetId: groupId, senderName: bot.username, senderColor: bot.color, senderAvatarUri: bot.avatarUri, content: replyText }];
+            });
           }
           return currentMuted;
         });

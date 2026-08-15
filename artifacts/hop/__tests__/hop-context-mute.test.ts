@@ -7,12 +7,16 @@
  *  1. The in-memory mutedIds set is rolled back to the pre-toggle state.
  *  2. An error toast is shown — the failure is never silent.
  *  3. No toast is pushed and no rollback occurs on the happy path.
+ *  4. Any UI component deriving a badge count from mutedIds.size (tab-bar
+ *     badge, section header count, etc.) snaps back to the correct value
+ *     after the rollback, covering both mute (0→1→0) and unmute (1→0→1).
  *
  * Runs under jest-expo (see jest.context.config.js).
  */
 
 import React from 'react';
-import { renderHook, act, waitFor } from '@testing-library/react-native';
+import { Text } from 'react-native';
+import { renderHook, render, act, waitFor, screen } from '@testing-library/react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { HopProvider, useHop, storageErrorToastUpdater } from '../context/HopContext';
 import type { MyProfile, ToastNotification } from '../context/HopContext';
@@ -311,5 +315,105 @@ describe('storageErrorToastUpdater (reused by toggleMute)', () => {
     const result = storageErrorToastUpdater(existing);
     expect(result).toBe(existing);
     expect(result).toHaveLength(1);
+  });
+});
+
+// ─── 5. Muted-count badge stays in sync after rollback ────────────────────────
+//
+// Mounts a component (via HopProvider) that reads mutedIds.size from context
+// and renders it as text.  After a failed toggle the badge count must snap
+// back to the pre-toggle value — covering both the mute (0 → 1 → 0) and
+// unmute (1 → 0 → 1) directions.
+//
+// Each test uses a self-contained component tree: a single HopProvider wraps
+// both the badge display and a toggle trigger so the badge and the action
+// share the same context instance.  mockGetItem is set explicitly in every
+// test to avoid stale implementations leaking from prior tests
+// (jest.clearAllMocks does not reset implementations).
+
+/**
+ * Self-contained test component.
+ * Renders the muted-count badge and a button that calls toggleMute(id).
+ */
+function MutedCountFixture({ id }: { id: string }) {
+  const { mutedIds, toggleMute, pendingToast, loaded } = useHop();
+  return React.createElement(
+    React.Fragment,
+    null,
+    React.createElement(Text, { testID: 'loaded' }, loaded ? 'yes' : 'no'),
+    React.createElement(Text, { testID: 'muted-count' }, String(mutedIds.size)),
+    React.createElement(Text, { testID: 'toast-kind' }, pendingToast?.kind ?? 'none'),
+    React.createElement(
+      // Use Text as a pressable stand-in; we call toggleMute imperatively.
+      Text,
+      { testID: 'toggle-btn', onPress: () => { void toggleMute(id); } },
+      'toggle'
+    ),
+  );
+}
+
+describe('HopContext — muted-count badge stays in sync after failed toggleMute', () => {
+  it('returns the badge count to 0 after a failed mute (0 → 1 → 0 on rollback)', async () => {
+    // Explicit mockGetItem so stale implementations from prior tests don't leak.
+    mockGetItem.mockImplementation((key: string) => {
+      if (key === '@hop/profile') return Promise.resolve(JSON.stringify(STORED_PROFILE));
+      return Promise.resolve(null); // no pre-existing muted ids
+    });
+
+    render(
+      React.createElement(HopProvider, null,
+        React.createElement(MutedCountFixture, { id: 'u1' })
+      )
+    );
+
+    // Wait for the provider to finish loading; badge starts at 0.
+    await waitFor(() => expect(screen.getByTestId('loaded').props.children).toBe('yes'));
+    expect(screen.getByTestId('muted-count').props.children).toBe('0');
+
+    // Make the next storage write fail.
+    mockSetItem.mockRejectedValue(new Error('storage full'));
+
+    // Trigger the mute — optimistic update pushes count to 1, rollback returns to 0.
+    await act(async () => {
+      screen.getByTestId('toggle-btn').props.onPress();
+      // Flush the async toggle to completion.
+      await new Promise<void>(resolve => setImmediate(resolve));
+    });
+
+    // Badge must have snapped back to 0 and an error toast must be queued.
+    expect(screen.getByTestId('muted-count').props.children).toBe('0');
+    expect(screen.getByTestId('toast-kind').props.children).toBe('error');
+  });
+
+  it('returns the badge count to 1 after a failed unmute (1 → 0 → 1 on rollback)', async () => {
+    // Pre-load with one id already muted.
+    mockGetItem.mockImplementation((key: string) => {
+      if (key === '@hop/profile') return Promise.resolve(JSON.stringify(STORED_PROFILE));
+      if (key === MUTED_KEY) return Promise.resolve(JSON.stringify(['u9']));
+      return Promise.resolve(null);
+    });
+
+    render(
+      React.createElement(HopProvider, null,
+        React.createElement(MutedCountFixture, { id: 'u9' })
+      )
+    );
+
+    // Wait for the provider to finish loading; badge starts at 1.
+    await waitFor(() => expect(screen.getByTestId('loaded').props.children).toBe('yes'));
+    await waitFor(() => expect(screen.getByTestId('muted-count').props.children).toBe('1'));
+
+    // Make the unmute write fail.
+    mockSetItem.mockRejectedValue(new Error('quota exceeded'));
+
+    // Trigger the unmute — optimistic update drops count to 0, rollback returns to 1.
+    await act(async () => {
+      screen.getByTestId('toggle-btn').props.onPress();
+      await new Promise<void>(resolve => setImmediate(resolve));
+    });
+
+    // Badge must have snapped back to 1 and an error toast must be queued.
+    expect(screen.getByTestId('muted-count').props.children).toBe('1');
+    expect(screen.getByTestId('toast-kind').props.children).toBe('error');
   });
 });

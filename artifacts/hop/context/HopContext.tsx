@@ -445,7 +445,14 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
 
   const setProfile = async (p: MyProfile) => {
     setProfileState(p);
-    await AsyncStorage.setItem('@hop/profile', JSON.stringify(p));
+    try {
+      await AsyncStorage.setItem('@hop/profile', JSON.stringify(p));
+    } catch {
+      // Roll back the optimistic in-memory update so the displayed profile
+      // stays consistent with what was actually persisted.
+      setProfileState(profile);
+      setToastQueue(profileErrorToastUpdater);
+    }
   };
 
   const completeOnboarding = async (username: string, color: string, avatarUri?: string) => {

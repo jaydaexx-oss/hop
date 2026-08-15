@@ -109,6 +109,7 @@ interface HopContextType {
   declineRequest: (requestId: string) => void;
   deleteConversation: (userId: string) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
+  openDirectMessage: (user: HopUser) => string;
 }
 
 // ─── Simulated nearby user pool ───────────────────────────────────────────────
@@ -525,6 +526,19 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     await Promise.all([AsyncStorage.removeItem('@hop/conversations'), AsyncStorage.removeItem('@hop/groups')]);
   };
 
+  // ── Open / create DM from QR scan ────────────────────────────────────────
+
+  const openDirectMessage = useCallback((user: HopUser): string => {
+    setConversations(prev => {
+      if (prev.find(c => c.userId === user.id)) return prev;
+      const newConv: Conversation = { userId: user.id, user, messages: [], unread: 0 };
+      const updated = [newConv, ...prev];
+      saveConvs(updated);
+      return updated;
+    });
+    return user.id;
+  }, []);
+
   // ── Delete conversation / group ───────────────────────────────────────────
 
   const deleteConversation = async (userId: string) => {
@@ -559,7 +573,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       createGroup, getConversation, getGroupConversation,
       markRead, markGroupRead, completeOnboarding, clearHistory,
       blockUser, reportUser, acceptRequest, declineRequest,
-      deleteConversation, deleteGroup,
+      deleteConversation, deleteGroup, openDirectMessage,
     }}>
       {children}
     </HopContext.Provider>

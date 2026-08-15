@@ -178,15 +178,24 @@ export default function RadarScreen() {
       {/* Header */}
       <View style={styles.header}>
         <Text style={[styles.appName, { color: colors.primary }]}>HOP</Text>
-        <View style={styles.scanBadge}>
-          <Ionicons
-            name="bluetooth"
-            size={11}
-            color={isScanning ? colors.primary : colors.mutedForeground}
-          />
-          <Text style={[styles.scanText, { color: colors.mutedForeground }]}>
-            {isScanning ? `${nearbyUsers.length} nearby` : 'offline'}
-          </Text>
+        <View style={styles.headerRight}>
+          <View style={styles.scanBadge}>
+            <Ionicons
+              name="bluetooth"
+              size={11}
+              color={isScanning ? colors.primary : colors.mutedForeground}
+            />
+            <Text style={[styles.scanText, { color: colors.mutedForeground }]}>
+              {isScanning ? `${nearbyUsers.length} nearby` : 'offline'}
+            </Text>
+          </View>
+          <Pressable
+            onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/scan'); }}
+            style={[styles.scanQrBtn, { backgroundColor: colors.card, borderColor: colors.border }]}
+            hitSlop={8}
+          >
+            <Ionicons name="qr-code-outline" size={20} color={colors.primary} />
+          </Pressable>
         </View>
       </View>
 
@@ -349,8 +358,14 @@ const styles = StyleSheet.create({
     paddingBottom: 4,
   },
   appName: { fontSize: 22, fontFamily: 'Inter_700Bold', letterSpacing: 4 },
+  headerRight: { flexDirection: 'row', alignItems: 'center', gap: 10 },
   scanBadge: { flexDirection: 'row', alignItems: 'center', gap: 5 },
   scanText: { fontSize: 12, fontFamily: 'Inter_400Regular' },
+  scanQrBtn: {
+    width: 36, height: 36, borderRadius: 10,
+    justifyContent: 'center', alignItems: 'center',
+    borderWidth: StyleSheet.hairlineWidth,
+  },
   radarWrapper: { flex: 1, justifyContent: 'center', alignItems: 'center' },
   radar: { borderWidth: 1, overflow: 'hidden', position: 'relative' },
   crossH: {

@@ -14,9 +14,11 @@ import * as ImagePicker from 'expo-image-picker';
 import { useColors } from '@/hooks/useColors';
 import { AVATAR_COLORS, useHop } from '@/context/HopContext';
 import { Avatar } from '@/components/Avatar';
+import { QRCodeModal } from '@/components/QRCodeModal';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { router } from 'expo-router';
 
 export default function ProfileScreen() {
   const colors = useColors();
@@ -24,6 +26,7 @@ export default function ProfileScreen() {
   const { profile, setProfile, clearHistory } = useHop();
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(profile?.username ?? '');
+  const [showQR, setShowQR] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 100 : insets.bottom + 60;
@@ -152,6 +155,38 @@ export default function ProfileScreen() {
             />
           ))}
         </View>
+      </View>
+
+      {/* QR Code modal */}
+      {profile && (
+        <QRCodeModal profile={profile} visible={showQR} onClose={() => setShowQR(false)} />
+      )}
+
+      {/* HOP Code section */}
+      <View style={[styles.section, { backgroundColor: colors.card }]}>
+        <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>HOP CODE</Text>
+
+        <Pressable
+          style={[styles.row, { borderBottomColor: colors.border }]}
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setShowQR(true); }}
+        >
+          <View style={styles.rowLeft}>
+            <Ionicons name="qr-code-outline" size={20} color={colors.foreground} />
+            <Text style={[styles.rowLabel, { color: colors.foreground }]}>My QR Code</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+        </Pressable>
+
+        <Pressable
+          style={styles.row}
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/scan'); }}
+        >
+          <View style={styles.rowLeft}>
+            <Ionicons name="scan-outline" size={20} color={colors.foreground} />
+            <Text style={[styles.rowLabel, { color: colors.foreground }]}>Scan someone's code</Text>
+          </View>
+          <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+        </Pressable>
       </View>
 
       {/* Settings */}

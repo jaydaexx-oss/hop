@@ -210,7 +210,7 @@ function GroupItem({
 export default function MessagesScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup, undoDeleteConversation, undoDeleteGroup, isMuted, toggleMute } = useHop();
+  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup, leaveGroup, undoDeleteConversation, undoDeleteGroup, isMuted, toggleMute } = useHop();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 100 : insets.bottom + 60;
@@ -460,6 +460,29 @@ export default function MessagesScreen() {
               label: isMuted(sheetTarget.group.id) ? 'Unmute' : 'Mute',
               icon: isMuted(sheetTarget.group.id) ? 'notifications-outline' : 'notifications-off-outline',
               onPress: () => { const id = sheetTarget.group.id; setSheetTarget(null); toggleMute(id); },
+            },
+            {
+              label: 'Leave Group',
+              icon: 'exit-outline',
+              destructive: true,
+              onPress: () => {
+                const group = sheetTarget.group;
+                setSheetTarget(null);
+                setTimeout(() => {
+                  Alert.alert(
+                    `Leave "${group.name}"?`,
+                    'You won\'t receive messages from this group anymore.',
+                    [
+                      {
+                        text: 'Leave',
+                        style: 'destructive',
+                        onPress: () => leaveGroup(group.id),
+                      },
+                      { text: 'Cancel', style: 'cancel' },
+                    ]
+                  );
+                }, 150);
+              },
             },
           ]}
         />

@@ -23,11 +23,13 @@ const queryClient = new QueryClient();
 function RootLayoutNav() {
   return (
     <Stack screenOptions={{ headerShown: false }}>
-      <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-      <Stack.Screen name="onboarding" options={{ headerShown: false }} />
-      <Stack.Screen name="chat/[id]" options={{ headerShown: false }} />
-      <Stack.Screen name="group/[id]" options={{ headerShown: false }} />
-      <Stack.Screen name="new-group" options={{ headerShown: false }} />
+      <Stack.Screen name="(tabs)" />
+      <Stack.Screen name="onboarding" />
+      <Stack.Screen name="chat/[id]" />
+      <Stack.Screen name="group/[id]" />
+      <Stack.Screen name="new-group" />
+      <Stack.Screen name="message-requests" />
+      <Stack.Screen name="user-profile/[id]" />
     </Stack>
   );
 }
@@ -41,9 +43,7 @@ export default function RootLayout() {
   });
 
   useEffect(() => {
-    if (fontsLoaded || fontError) {
-      SplashScreen.hideAsync();
-    }
+    if (fontsLoaded || fontError) SplashScreen.hideAsync();
   }, [fontsLoaded, fontError]);
 
   if (!fontsLoaded && !fontError) return null;

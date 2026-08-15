@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect, useRef } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Animated,
   Dimensions,
@@ -22,6 +22,7 @@ import { router, Redirect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { Ionicons } from '@expo/vector-icons';
 import { Avatar } from '@/components/Avatar';
+import { ActionSheet } from '@/components/ActionSheet';
 
 const { width } = Dimensions.get('window');
 const RADAR_SIZE = Math.min(width * 0.88, 336);
@@ -137,7 +138,7 @@ function RadarNode({
 export default function RadarScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { nearbyUsers, isScanning, profile, isOnboarding, loaded } = useHop();
+  const { nearbyUsers, isScanning, profile, isOnboarding, loaded, blockUser } = useHop();
   const scanRotation = useRef(new Animated.Value(0)).current;
 
   useEffect(() => {
@@ -155,13 +156,13 @@ export default function RadarScreen() {
     outputRange: ['0deg', '360deg'],
   });
 
-  const handleNodePress = useCallback(
-    (user: HopUser) => {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      router.push(`/chat/${user.id}`);
-    },
-    []
-  );
+  const [sheetUser, setSheetUser] = useState<HopUser | null>(null);
+
+  const handleNodePress = useCallback((user: HopUser) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setSheetUser(user);
+  }, []);
+
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
 
@@ -300,9 +301,39 @@ export default function RadarScreen() {
         ]}
       >
         <Text style={[styles.footerText, { color: colors.mutedForeground }]}>
-          tap a dot to message
+          tap a dot to chat or view profile
         </Text>
       </View>
+
+      {/* Nearby user action sheet */}
+      {sheetUser && (
+        <ActionSheet
+          visible={!!sheetUser}
+          onDismiss={() => setSheetUser(null)}
+          user={{ username: sheetUser.username, color: sheetUser.color, avatarUri: sheetUser.avatarUri, subtitle: `${sheetUser.signal}% signal · nearby` }}
+          actions={[
+            {
+              label: 'Message',
+              icon: 'chatbubble-outline',
+              onPress: () => { setSheetUser(null); router.push(`/chat/${sheetUser.id}`); },
+            },
+            {
+              label: 'View Profile',
+              icon: 'person-outline',
+              onPress: () => { setSheetUser(null); router.push(`/user-profile/${sheetUser.id}`); },
+            },
+            {
+              label: 'Block',
+              icon: 'ban-outline',
+              destructive: true,
+              onPress: () => {
+                blockUser(sheetUser.id);
+                setSheetUser(null);
+              },
+            },
+          ]}
+        />
+      )}
     </View>
   );
 }

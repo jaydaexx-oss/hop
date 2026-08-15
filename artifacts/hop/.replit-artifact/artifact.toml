@@ -1,0 +1,24 @@
+kind = "mobile"
+previewPath = "/"
+title = "HOP"
+description = "HOP is a Bluetooth proximity messaging app that lets you discover and message people nearby without internet. Features a radar-style interface showing nearby users as pulsing nodes, direct encrypted messages, and public broadcast channels — all over Bluetooth."
+version = "1.0.0"
+id = "artifacts/hop"
+router = "expo-domain"
+
+[[services]]
+name = "expo"
+ensurePreviewReachable = "/status"
+paths = [ "/" ]
+localPort = 22094
+
+[services.development]
+run = "pnpm --filter @workspace/hop run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/hop", "run", "build" ]
+run = [ "pnpm", "--filter", "@workspace/hop", "run", "serve" ]
+
+[services.env]
+PORT = "22094"
+BASE_PATH = "/"

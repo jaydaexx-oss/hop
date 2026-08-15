@@ -9,7 +9,6 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import * as ImagePicker from 'expo-image-picker';
 import { useColors } from '@/hooks/useColors';
 import { AVATAR_COLORS, useHop } from '@/context/HopContext';
 import { Avatar } from '@/components/Avatar';
@@ -26,27 +25,11 @@ export default function OnboardingScreen() {
   const { completeOnboarding } = useHop();
   const [username, setUsername] = useState('');
   const [selectedColor, setSelectedColor] = useState(AVATAR_COLORS[0]);
-  const [avatarUri, setAvatarUri] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
-
-  const pickPhoto = async () => {
-    const perm = await ImagePicker.requestMediaLibraryPermissionsAsync();
-    if (!perm.granted) return;
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 0.8,
-    });
-    if (!result.canceled) {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-      setAvatarUri(result.assets[0].uri);
-    }
-  };
 
   const handleStart = async () => {
     const trimmed = username.trim();
@@ -56,7 +39,7 @@ export default function OnboardingScreen() {
     setError('');
     setLoading(true);
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    await completeOnboarding(trimmed.toLowerCase(), selectedColor, avatarUri ?? undefined);
+    await completeOnboarding(trimmed.toLowerCase(), selectedColor);
     setLoading(false);
     router.replace('/(tabs)');
   };
@@ -97,40 +80,9 @@ export default function OnboardingScreen() {
         />
         {!!error && <Text style={[styles.error, { color: colors.destructive }]}>{error}</Text>}
 
-        {/* Photo + color row */}
+        {/* Color picker */}
         <Text style={[styles.label, { color: colors.foreground, marginTop: 28 }]}>
-          Profile picture
-        </Text>
-
-        {/* Tappable avatar preview */}
-        <Pressable onPress={pickPhoto} style={styles.avatarPicker}>
-          <Avatar
-            uri={avatarUri}
-            color={selectedColor}
-            username={username.trim() || '?'}
-            size={72}
-            borderColor={colors.primary}
-            borderWidth={2}
-          />
-          {/* Camera badge */}
-          <View style={[styles.cameraBadge, { backgroundColor: colors.primary }]}>
-            <Ionicons name="camera" size={13} color={colors.primaryForeground} />
-          </View>
-          <Text style={[styles.photoHint, { color: colors.mutedForeground }]}>
-            {avatarUri ? 'Tap to change' : 'Tap to add photo'}
-          </Text>
-        </Pressable>
-
-        {/* Remove photo */}
-        {avatarUri && (
-          <Pressable onPress={() => setAvatarUri(null)} style={styles.removePhoto}>
-            <Text style={[styles.removePhotoText, { color: colors.destructive }]}>Remove photo</Text>
-          </Pressable>
-        )}
-
-        {/* Color fallback label */}
-        <Text style={[styles.label, { color: colors.foreground, marginTop: 20 }]}>
-          {avatarUri ? 'Accent color (backup)' : 'Or pick a color'}
+          Pick a color
         </Text>
         <View style={styles.colorGrid}>
           {AVATAR_COLORS.map(c => (
@@ -149,7 +101,6 @@ export default function OnboardingScreen() {
         {/* Live preview */}
         <View style={[styles.preview, { backgroundColor: colors.card, borderColor: colors.border }]}>
           <Avatar
-            uri={avatarUri}
             color={selectedColor}
             username={username.trim() || '?'}
             size={52}
@@ -193,15 +144,6 @@ const styles = StyleSheet.create({
   label: { fontSize: 13, fontFamily: 'Inter_600SemiBold', marginBottom: 10, letterSpacing: 0.5 },
   input: { borderRadius: 12, borderWidth: 1.5, paddingHorizontal: 16, paddingVertical: 14, fontSize: 16, fontFamily: 'Inter_500Medium' },
   error: { fontSize: 12, fontFamily: 'Inter_400Regular', marginTop: 6 },
-  avatarPicker: { flexDirection: 'row', alignItems: 'center', gap: 16, marginBottom: 6 },
-  cameraBadge: {
-    width: 26, height: 26, borderRadius: 13,
-    justifyContent: 'center', alignItems: 'center',
-    marginLeft: -20, marginBottom: -48, zIndex: 2,
-  },
-  photoHint: { fontSize: 13, fontFamily: 'Inter_400Regular' },
-  removePhoto: { marginBottom: 4 },
-  removePhotoText: { fontSize: 13, fontFamily: 'Inter_500Medium' },
   colorGrid: { flexDirection: 'row', flexWrap: 'wrap', gap: 12, marginBottom: 24 },
   colorDot: { width: 40, height: 40, borderRadius: 20, borderWidth: 2, borderColor: 'transparent' },
   preview: { flexDirection: 'row', alignItems: 'center', gap: 14, borderRadius: 14, padding: 14, borderWidth: 1 },

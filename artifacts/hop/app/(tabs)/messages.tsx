@@ -250,11 +250,23 @@ export default function MessagesScreen() {
   // Clean up timer on unmount
   useEffect(() => () => { if (undoTimerRef.current) clearTimeout(undoTimerRef.current); }, []);
 
+  // Muted section expand/collapse (collapsed by default)
+  const [mutedOpen, setMutedOpen] = useState(false);
+
   const hasAny = conversations.length > 0 || groupConversations.length > 0;
 
-  const sections: { title: string; data: (Conversation | GroupConversation)[]; kind: 'group' | 'dm' }[] = [];
-  if (groupConversations.length > 0) sections.push({ title: 'GROUPS', data: groupConversations, kind: 'group' });
-  if (conversations.length > 0) sections.push({ title: 'DIRECT', data: conversations, kind: 'dm' });
+  // Split into muted / unmuted buckets
+  const unmutedGroups = groupConversations.filter(g => !isMuted(g.id));
+  const unmutedConvs  = conversations.filter(c => !isMuted(c.userId));
+  const mutedItems: (Conversation | GroupConversation)[] = [
+    ...groupConversations.filter(g => isMuted(g.id)),
+    ...conversations.filter(c => isMuted(c.userId)),
+  ];
+
+  const sections: { title: string; data: (Conversation | GroupConversation)[]; kind: 'group' | 'dm' | 'mixed' }[] = [];
+  if (unmutedGroups.length > 0) sections.push({ title: 'GROUPS', data: unmutedGroups, kind: 'group' });
+  if (unmutedConvs.length > 0)  sections.push({ title: 'DIRECT', data: unmutedConvs,  kind: 'dm' });
+  if (mutedItems.length > 0)    sections.push({ title: 'MUTED',  data: mutedOpen ? mutedItems : [], kind: 'mixed' });
 
   const openDMSheet = (conv: Conversation) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
@@ -331,15 +343,33 @@ export default function MessagesScreen() {
         <SectionList
           sections={sections}
           keyExtractor={(item) => ('userId' in item ? item.userId : item.id)}
-          renderSectionHeader={({ section }) =>
-            sections.length > 1 ? (
+          renderSectionHeader={({ section }) => {
+            if (section.kind === 'mixed') {
+              // Muted section — always shown, tappable to expand/collapse
+              return (
+                <Pressable
+                  onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); setMutedOpen(o => !o); }}
+                  style={[styles.sectionHeader, styles.sectionHeaderRow, { backgroundColor: colors.background }]}
+                >
+                  <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>{section.title}</Text>
+                  <Ionicons
+                    name={mutedOpen ? 'chevron-up' : 'chevron-down'}
+                    size={13}
+                    color={colors.mutedForeground}
+                    style={{ marginLeft: 4 }}
+                  />
+                </Pressable>
+              );
+            }
+            return sections.length > 1 ? (
               <View style={[styles.sectionHeader, { backgroundColor: colors.background }]}>
                 <Text style={[styles.sectionLabel, { color: colors.mutedForeground }]}>{section.title}</Text>
               </View>
-            ) : null
-          }
-          renderItem={({ item, section }) =>
-            section.kind === 'group' ? (
+            ) : null;
+          }}
+          renderItem={({ item, section }) => {
+            const isGroup = section.kind === 'group' || (section.kind === 'mixed' && !('userId' in item));
+            return isGroup ? (
               <GroupItem
                 group={item as GroupConversation}
                 muted={isMuted((item as GroupConversation).id)}
@@ -357,8 +387,8 @@ export default function MessagesScreen() {
                 onDelete={() => handleDeleteConv(item as Conversation)}
                 colors={colors}
               />
-            )
-          }
+            );
+          }}
           ItemSeparatorComponent={() => <View style={[styles.sep, { backgroundColor: colors.border, marginLeft: 82 }]} />}
           contentContainerStyle={{ paddingBottom: bottomPad }}
           stickySectionHeadersEnabled
@@ -523,6 +553,7 @@ const styles = StyleSheet.create({
   requestsBadge: { minWidth: 22, height: 22, borderRadius: 11, justifyContent: 'center', alignItems: 'center', paddingHorizontal: 5 },
   requestsBadgeText: { fontSize: 12, fontFamily: 'Inter_700Bold' },
   sectionHeader: { paddingHorizontal: 20, paddingTop: 16, paddingBottom: 6 },
+  sectionHeaderRow: { flexDirection: 'row', alignItems: 'center' },
   sectionLabel: { fontSize: 11, fontFamily: 'Inter_600SemiBold', letterSpacing: 0.8 },
   item: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 20, paddingVertical: 14, gap: 14 },
   avatar: { justifyContent: 'center', alignItems: 'center' },

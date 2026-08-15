@@ -13,6 +13,7 @@ import { useColors } from '@/hooks/useColors';
 import { AVATAR_COLORS, useHop } from '@/context/HopContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
+import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 
 const { height } = Dimensions.get('window');
@@ -48,6 +49,7 @@ export default function OnboardingScreen() {
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     await completeOnboarding(trimmed.toLowerCase(), selectedColor);
     setLoading(false);
+    router.replace('/(tabs)');
   };
 
   const canSubmit = username.trim().length >= 2;

@@ -233,10 +233,20 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     };
   }, [loaded]);
 
-  const saveConvs = async (convs: Conversation[]) =>
-    AsyncStorage.setItem('@hop/conversations', JSON.stringify(convs));
-  const saveGroups = async (groups: GroupConversation[]) =>
-    AsyncStorage.setItem('@hop/groups', JSON.stringify(groups));
+  const saveConvs = async (convs: Conversation[]) => {
+    try {
+      await AsyncStorage.setItem('@hop/conversations', JSON.stringify(convs));
+    } catch (e) {
+      console.warn('[HOP] Failed to persist conversations:', e);
+    }
+  };
+  const saveGroups = async (groups: GroupConversation[]) => {
+    try {
+      await AsyncStorage.setItem('@hop/groups', JSON.stringify(groups));
+    } catch (e) {
+      console.warn('[HOP] Failed to persist groups:', e);
+    }
+  };
 
   const pendingToast = toastQueue[0] ?? null;
   const dismissToast = () => setToastQueue(prev => prev.slice(1));

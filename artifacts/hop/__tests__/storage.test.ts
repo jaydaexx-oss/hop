@@ -120,6 +120,60 @@ describe('saveGroups', () => {
   });
 });
 
+// ─── onError callback ────────────────────────────────────────────────────────
+
+describe('saveConvs onError callback', () => {
+  it('calls onError when AsyncStorage.setItem rejects', async () => {
+    mockSetItem.mockRejectedValueOnce(new Error('Disk full'));
+    const onError = jest.fn();
+
+    await saveConvs(sampleConvs, onError);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call onError when AsyncStorage.setItem succeeds', async () => {
+    mockSetItem.mockResolvedValueOnce(undefined);
+    const onError = jest.fn();
+
+    await saveConvs(sampleConvs, onError);
+
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('works without an onError callback (no throw)', async () => {
+    mockSetItem.mockRejectedValueOnce(new Error('Disk full'));
+
+    await expect(saveConvs(sampleConvs)).resolves.toBeUndefined();
+  });
+});
+
+describe('saveGroups onError callback', () => {
+  it('calls onError when AsyncStorage.setItem rejects', async () => {
+    mockSetItem.mockRejectedValueOnce(new Error('Write error'));
+    const onError = jest.fn();
+
+    await saveGroups(sampleGroups, onError);
+
+    expect(onError).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not call onError when AsyncStorage.setItem succeeds', async () => {
+    mockSetItem.mockResolvedValueOnce(undefined);
+    const onError = jest.fn();
+
+    await saveGroups(sampleGroups, onError);
+
+    expect(onError).not.toHaveBeenCalled();
+  });
+
+  it('works without an onError callback (no throw)', async () => {
+    mockSetItem.mockRejectedValueOnce(new Error('Write error'));
+
+    await expect(saveGroups(sampleGroups)).resolves.toBeUndefined();
+  });
+});
+
 // ─── In-memory state independence ────────────────────────────────────────────
 //
 // saveConvs / saveGroups are fire-and-forget helpers: callers update React

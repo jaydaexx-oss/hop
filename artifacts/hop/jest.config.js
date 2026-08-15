@@ -2,6 +2,7 @@ module.exports = {
   preset: 'ts-jest',
   testEnvironment: 'node',
   testMatch: ['**/__tests__/**/*.test.[jt]s?(x)'],
+  testPathIgnorePatterns: ['/node_modules/', '/hop-context'],
   moduleNameMapper: {
     '^@/(.*)$': '<rootDir>/$1',
     '^@react-native-async-storage/async-storage$':

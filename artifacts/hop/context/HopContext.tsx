@@ -140,6 +140,17 @@ export const AVATAR_COLORS = [
 
 const sentIds = new ProcessedIdSet(10_000);
 
+// ─── Exported toast updater (used by showStorageError inside HopProvider) ────
+//
+// Exported so tests can import the REAL function and assert deduplication
+// without duplicating the logic.  HopProvider calls setToastQueue with this
+// exact reference, so any change here is reflected in both production code
+// and tests simultaneously.
+export function storageErrorToastUpdater(prev: ToastNotification[]): ToastNotification[] {
+  if (prev.some(t => t.kind === 'error')) return prev;
+  return [...prev, { kind: 'error', content: "Couldn't save messages — storage may be full." }];
+}
+
 const HopContext = createContext<HopContextType | null>(null);
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -217,7 +228,15 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           } else if (legacyRequests) {
             migrations.push(AsyncStorage.removeItem('@hop/requests'));
           }
-          if (migrations.length > 0) await Promise.all(migrations);
+          if (migrations.length > 0) {
+            try {
+              await Promise.all(migrations);
+            } catch (e) {
+              console.warn('[HOP] Migration write failed:', e);
+              // Surface the failure without aborting the rest of the load.
+              setToastQueue(storageErrorToastUpdater);
+            }
+          }
         }
 
         const [convStr, groupStr, bcastStr, mutedStr, reqStr, blockedStr] = await Promise.all([
@@ -270,7 +289,9 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
             { id: createMessageId(), senderId: 'u3', senderName: 'staticdrift', senderColor: '#45B7D1', content: 'looking for people to jam with nearby', timestamp: Date.now() - 120_000 },
           ];
           setBroadcasts(seed);
-          await AsyncStorage.setItem('@hop/broadcasts', JSON.stringify(seed));
+          // Use saveBroadcasts so a write failure surfaces an error toast
+          // rather than being swallowed by the outer catch.
+          saveBroadcasts(seed, () => setToastQueue(storageErrorToastUpdater));
         }
       } catch {
         setIsOnboarding(true);
@@ -343,11 +364,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const dismissToast = () => setToastQueue(prev => prev.slice(1));
 
   const showStorageError = useCallback(() => {
-    setToastQueue(prev => {
-      // Avoid stacking duplicate error toasts
-      if (prev.some(t => t.kind === 'error')) return prev;
-      return [...prev, { kind: 'error', content: "Couldn't save messages — storage may be full." }];
-    });
+    setToastQueue(storageErrorToastUpdater);
   }, []);
 
   // ── Mute ──────────────────────────────────────────────────────────────────

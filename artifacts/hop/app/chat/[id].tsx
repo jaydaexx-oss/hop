@@ -15,6 +15,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router, useLocalSearchParams } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { Avatar } from '@/components/Avatar';
 
 export default function ChatScreen() {
   const colors = useColors();
@@ -27,6 +28,7 @@ export default function ChatScreen() {
   const nearUser = id ? nearbyUsers.find(u => u.id === id) : undefined;
   const userName = conv?.user.username ?? nearUser?.username ?? 'Unknown';
   const userColor = conv?.user.color ?? nearUser?.color ?? '#888';
+  const userAvatarUri = conv?.user.avatarUri ?? nearUser?.avatarUri;
   const messages = conv?.messages ?? [];
 
   useEffect(() => {
@@ -50,9 +52,12 @@ export default function ChatScreen() {
       return (
         <View style={[styles.msgRow, isMe ? styles.rowRight : styles.rowLeft]}>
           {!isMe && (
-            <View style={[styles.msgAvatar, { backgroundColor: userColor }]}>
-              <Text style={styles.msgAvatarText}>{userName[0].toUpperCase()}</Text>
-            </View>
+            <Avatar
+              uri={userAvatarUri}
+              color={userColor}
+              username={userName}
+              size={26}
+            />
           )}
           <View
             style={[
@@ -97,9 +102,12 @@ export default function ChatScreen() {
         <Pressable onPress={() => router.back()} hitSlop={12} style={styles.back}>
           <Ionicons name="chevron-back" size={26} color={colors.foreground} />
         </Pressable>
-        <View style={[styles.headerAvatar, { backgroundColor: userColor }]}>
-          <Text style={styles.headerAvatarText}>{userName[0].toUpperCase()}</Text>
-        </View>
+        <Avatar
+          uri={userAvatarUri}
+          color={userColor}
+          username={userName}
+          size={36}
+        />
         <View style={styles.headerInfo}>
           <Text style={[styles.headerName, { color: colors.foreground }]}>{userName}</Text>
           <View style={styles.headerSub}>
@@ -122,9 +130,12 @@ export default function ChatScreen() {
           showsVerticalScrollIndicator={false}
           ListEmptyComponent={
             <View style={styles.emptyWrap}>
-              <View style={[styles.emptyAvatar, { backgroundColor: userColor }]}>
-                <Text style={styles.emptyInitial}>{userName[0].toUpperCase()}</Text>
-              </View>
+              <Avatar
+                uri={userAvatarUri}
+                color={userColor}
+                username={userName}
+                size={72}
+              />
               <Text style={[styles.emptyName, { color: colors.foreground }]}>{userName}</Text>
               <Text style={[styles.emptySub, { color: colors.mutedForeground }]}>
                 Start the conversation

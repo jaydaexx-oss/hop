@@ -11,6 +11,7 @@ export interface HopUser {
   color: string;
   signal: number;
   angle: number;
+  avatarUri?: string;
 }
 
 export interface Message {
@@ -81,12 +82,12 @@ interface HopContextType {
 // ─── Simulated nearby user pool ───────────────────────────────────────────────
 
 const USER_POOL: HopUser[] = [
-  { id: 'u1', username: 'wavejockey',  color: '#FF6B6B', signal: 0, angle: 0.4 },
-  { id: 'u2', username: 'neonpulse',   color: '#4ECDC4', signal: 0, angle: 1.1 },
+  { id: 'u1', username: 'wavejockey',  color: '#FF6B6B', signal: 0, angle: 0.4, avatarUri: 'https://api.dicebear.com/9.x/pixel-art/png?seed=wavejockey&size=80' },
+  { id: 'u2', username: 'neonpulse',   color: '#4ECDC4', signal: 0, angle: 1.1, avatarUri: 'https://api.dicebear.com/9.x/pixel-art/png?seed=neonpulse&size=80' },
   { id: 'u3', username: 'staticdrift', color: '#45B7D1', signal: 0, angle: 2.0 },
-  { id: 'u4', username: 'bitwhisper',  color: '#96CEB4', signal: 0, angle: 2.8 },
+  { id: 'u4', username: 'bitwhisper',  color: '#96CEB4', signal: 0, angle: 2.8, avatarUri: 'https://api.dicebear.com/9.x/pixel-art/png?seed=bitwhisper&size=80' },
   { id: 'u5', username: 'phaseloop',   color: '#DDA0DD', signal: 0, angle: 3.8 },
-  { id: 'u6', username: 'cipherwave',  color: '#F0A500', signal: 0, angle: 4.7 },
+  { id: 'u6', username: 'cipherwave',  color: '#F0A500', signal: 0, angle: 4.7, avatarUri: 'https://api.dicebear.com/9.x/pixel-art/png?seed=cipherwave&size=80' },
   { id: 'u7', username: 'darkfreq',    color: '#FF8C94', signal: 0, angle: 5.5 },
 ];
 

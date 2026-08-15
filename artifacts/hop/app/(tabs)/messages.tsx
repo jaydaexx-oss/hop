@@ -14,6 +14,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { router } from 'expo-router';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
+import { Avatar } from '@/components/Avatar';
 
 function formatTime(ts: number): string {
   const diff = Date.now() - ts;
@@ -40,9 +41,12 @@ function ConvItem({
       onPress={onPress}
       style={({ pressed }) => [styles.item, { backgroundColor: pressed ? colors.secondary : 'transparent' }]}
     >
-      <View style={[styles.avatar, { backgroundColor: conv.user.color }]}>
-        <Text style={styles.avatarText}>{conv.user.username[0].toUpperCase()}</Text>
-      </View>
+      <Avatar
+        uri={conv.user.avatarUri}
+        color={conv.user.color}
+        username={conv.user.username}
+        size={50}
+      />
       <View style={styles.body}>
         <View style={styles.top}>
           <Text style={[styles.name, { color: colors.foreground }, hasUnread && { fontFamily: 'Inter_700Bold' }]}>

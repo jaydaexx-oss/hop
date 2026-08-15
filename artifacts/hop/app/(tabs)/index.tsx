@@ -115,20 +115,14 @@ function RadarNode({
       ]}
     >
       <Pressable onPress={onPress} style={styles.nodePress}>
-        <View
-          style={[
-            styles.nodeAvatar,
-            {
-              width: SIZE,
-              height: SIZE,
-              borderRadius: SIZE / 2,
-              backgroundColor: user.color,
-              borderColor: colors.primary,
-            },
-          ]}
-        >
-          <Text style={styles.nodeInitial}>{user.username[0].toUpperCase()}</Text>
-        </View>
+        <Avatar
+          uri={user.avatarUri}
+          color={user.color}
+          username={user.username}
+          size={SIZE}
+          borderColor={colors.primary}
+          borderWidth={2}
+        />
         <Text
           style={[styles.nodeLabel, { color: colors.foreground }]}
           numberOfLines={1}

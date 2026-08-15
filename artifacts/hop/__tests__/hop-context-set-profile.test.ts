@@ -160,7 +160,151 @@ describe('HopContext — setProfile happy path', () => {
   });
 });
 
-// ─── 3. profileErrorToastUpdater unit tests ───────────────────────────────────
+// ─── 3. Delayed write — app backgrounded mid-save ─────────────────────────────
+//
+// Simulates AsyncStorage taking time to complete (e.g. the OS suspends the app
+// between the optimistic in-memory update and the actual write finishing).
+// Verifies that once the delayed write resolves, profile state and storage are
+// consistent — regardless of whether the write ultimately succeeds or fails.
+
+describe('HopContext — setProfile delayed write (backgrounded mid-save)', () => {
+  it('optimistic update is visible before the write completes', async () => {
+    const { result } = await mountWithExistingProfile();
+
+    let resolveWrite!: () => void;
+    const delayedWrite = new Promise<undefined>(resolve => {
+      resolveWrite = () => resolve(undefined);
+    });
+    mockSetItem.mockReturnValue(delayedWrite);
+
+    // Start the save and yield once so React flushes setProfileState(p).
+    // The delayedWrite promise is still pending so the async part of setProfile
+    // has not completed yet — simulating the app being backgrounded mid-save.
+    let savePromise!: Promise<boolean>;
+    await act(async () => {
+      savePromise = result.current.setProfile({ ...STORED_PROFILE, username: 'mid-save-name' });
+      // One microtask tick lets React flush the synchronous setProfileState(p)
+      // call without resolving the still-pending AsyncStorage write.
+      await Promise.resolve();
+    });
+
+    // The optimistic update should already be reflected in-memory.
+    expect(result.current.profile?.username).toBe('mid-save-name');
+
+    // Now let the write complete successfully.
+    await act(async () => {
+      resolveWrite();
+      await savePromise;
+    });
+
+    // After the write completes the in-memory profile and storage are consistent.
+    expect(result.current.profile?.username).toBe('mid-save-name');
+    expect(result.current.pendingToast).toBeNull();
+    expect(mockSetItem).toHaveBeenCalledWith(
+      '@hop/profile',
+      JSON.stringify({ ...STORED_PROFILE, username: 'mid-save-name' }),
+    );
+  });
+
+  it('profile and storage are consistent when a delayed write succeeds', async () => {
+    const { result } = await mountWithExistingProfile();
+
+    let resolveWrite!: () => void;
+    const delayedWrite = new Promise<undefined>(resolve => {
+      resolveWrite = () => resolve(undefined);
+    });
+    mockSetItem.mockReturnValue(delayedWrite);
+
+    let savePromise!: Promise<boolean>;
+    await act(async () => {
+      savePromise = result.current.setProfile({
+        ...STORED_PROFILE,
+        username: 'delayed-success',
+        color: '#6C5CE7',
+      });
+      await Promise.resolve();
+    });
+
+    // Resolve the delayed write (simulates OS resuming the app after backgrounding).
+    await act(async () => {
+      resolveWrite();
+      await savePromise;
+    });
+    await flushMicrotasks();
+
+    expect(result.current.profile?.username).toBe('delayed-success');
+    expect(result.current.profile?.color).toBe('#6C5CE7');
+    expect(result.current.pendingToast).toBeNull();
+  });
+
+  it('profile is rolled back and error toast shown when a delayed write fails', async () => {
+    const { result } = await mountWithExistingProfile();
+
+    let rejectWrite!: (err: Error) => void;
+    const delayedWrite = new Promise<undefined>((_resolve, reject) => {
+      rejectWrite = reject;
+    });
+    mockSetItem.mockReturnValue(delayedWrite);
+
+    // Start the save and flush the optimistic state update.
+    let savePromise!: Promise<boolean>;
+    await act(async () => {
+      savePromise = result.current.setProfile({ ...STORED_PROFILE, username: 'will-be-lost' });
+      await Promise.resolve();
+    });
+
+    // Optimistic update is visible while the write is in-flight.
+    expect(result.current.profile?.username).toBe('will-be-lost');
+
+    // The write fails (e.g. storage error after the app was backgrounded).
+    await act(async () => {
+      rejectWrite(new Error('storage unavailable'));
+      await savePromise; // setProfile catches the error internally and returns false
+    });
+    await flushMicrotasks();
+
+    // In-memory profile must be rolled back — UI and storage are now consistent.
+    expect(result.current.profile?.username).toBe(STORED_PROFILE.username);
+    expect(result.current.profile?.username).not.toBe('will-be-lost');
+    expect(result.current.pendingToast).not.toBeNull();
+    expect(result.current.pendingToast?.kind).toBe('error');
+  });
+
+  it('storage key holds the new value after a successful delayed write', async () => {
+    const { result } = await mountWithExistingProfile();
+
+    let resolveWrite!: () => void;
+    const delayedWrite = new Promise<undefined>(resolve => {
+      resolveWrite = () => resolve(undefined);
+    });
+    mockSetItem.mockReturnValue(delayedWrite);
+
+    const newProfile: MyProfile = {
+      ...STORED_PROFILE,
+      username: 'persisted-name',
+      color: '#00CEC9',
+    };
+
+    let savePromise!: Promise<boolean>;
+    await act(async () => {
+      savePromise = result.current.setProfile(newProfile);
+      await Promise.resolve();
+    });
+
+    await act(async () => {
+      resolveWrite();
+      await savePromise;
+    });
+    await flushMicrotasks();
+
+    // Verify AsyncStorage was called with exactly the new profile value.
+    expect(mockSetItem).toHaveBeenCalledWith('@hop/profile', JSON.stringify(newProfile));
+    // And the in-memory state matches — UI and storage are consistent.
+    expect(result.current.profile).toEqual(newProfile);
+  });
+});
+
+// ─── 4. profileErrorToastUpdater unit tests ───────────────────────────────────
 
 import { profileErrorToastUpdater } from '../context/HopContext';
 import type { ToastNotification } from '../context/HopContext';

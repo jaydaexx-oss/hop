@@ -249,9 +249,15 @@ export default function MessagesScreen() {
 
   const hasAny = conversations.length > 0 || groupConversations.length > 0;
 
+  const lastTs = (msgs: { timestamp: number }[]) =>
+    msgs.length > 0 ? msgs[msgs.length - 1].timestamp : 0;
+
+  const sortedGroups = [...groupConversations].sort((a, b) => lastTs(b.messages) - lastTs(a.messages));
+  const sortedConvs = [...conversations].sort((a, b) => lastTs(b.messages) - lastTs(a.messages));
+
   const sections: { title: string; data: (Conversation | GroupConversation)[]; kind: 'group' | 'dm' }[] = [];
-  if (groupConversations.length > 0) sections.push({ title: 'GROUPS', data: groupConversations, kind: 'group' });
-  if (conversations.length > 0) sections.push({ title: 'DIRECT', data: conversations, kind: 'dm' });
+  if (sortedGroups.length > 0) sections.push({ title: 'GROUPS', data: sortedGroups, kind: 'group' });
+  if (sortedConvs.length > 0) sections.push({ title: 'DIRECT', data: sortedConvs, kind: 'dm' });
 
   const openDMSheet = (conv: Conversation) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);

@@ -104,6 +104,8 @@ interface HopContextType {
   declineRequest: (requestId: string) => void;
   deleteConversation: (userId: string) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
+  undoDeleteConversation: (conv: Conversation) => void;
+  undoDeleteGroup: (group: GroupConversation) => void;
   openDirectMessage: (user: HopUser) => string;
 }
 
@@ -560,6 +562,24 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
+  const undoDeleteConversation = (conv: Conversation) => {
+    setConversations(prev => {
+      if (prev.find(c => c.userId === conv.userId)) return prev;
+      const updated = [conv, ...prev];
+      saveConvs(updated, showStorageError);
+      return updated;
+    });
+  };
+
+  const undoDeleteGroup = (group: GroupConversation) => {
+    setGroupConversations(prev => {
+      if (prev.find(g => g.id === group.id)) return prev;
+      const updated = [group, ...prev];
+      saveGroups(updated, showStorageError);
+      return updated;
+    });
+  };
+
   const totalUnread =
     conversations.reduce((s, c) => s + c.unread, 0) +
     groupConversations.reduce((s, g) => s + g.unread, 0);
@@ -576,7 +596,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       createGroup, getConversation, getGroupConversation,
       markRead, markGroupRead, completeOnboarding, clearHistory,
       blockUser, reportUser, acceptRequest, declineRequest,
-      deleteConversation, deleteGroup, openDirectMessage,
+      deleteConversation, deleteGroup, undoDeleteConversation, undoDeleteGroup, openDirectMessage,
     }}>
       {children}
     </HopContext.Provider>

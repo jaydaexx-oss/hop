@@ -1,6 +1,7 @@
-import React, { useRef, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Alert,
+  Animated,
   Platform,
   Pressable,
   SectionList,
@@ -209,13 +210,42 @@ function GroupItem({
 export default function MessagesScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup, isMuted } = useHop();
+  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup, undoDeleteConversation, undoDeleteGroup, isMuted } = useHop();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 100 : insets.bottom + 60;
 
   // Action sheet state — holds the user to show actions for
   const [sheetTarget, setSheetTarget] = useState<{ user: HopUser; isDM: boolean } | null>(null);
+
+  // Undo-delete state
+  const [undoPending, setUndoPending] = useState<{ label: string; onUndo: () => void } | null>(null);
+  const undoTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const undoAnim = useRef(new Animated.Value(0)).current;
+
+  const clearUndo = useCallback(() => {
+    if (undoTimerRef.current) {
+      clearTimeout(undoTimerRef.current);
+      undoTimerRef.current = null;
+    }
+    Animated.timing(undoAnim, { toValue: 0, duration: 220, useNativeDriver: true }).start(() =>
+      setUndoPending(null)
+    );
+  }, [undoAnim]);
+
+  const showUndoToast = useCallback(
+    (label: string, onUndo: () => void) => {
+      // Cancel any existing undo toast before showing a new one
+      if (undoTimerRef.current) clearTimeout(undoTimerRef.current);
+      setUndoPending({ label, onUndo });
+      Animated.timing(undoAnim, { toValue: 1, duration: 220, useNativeDriver: true }).start();
+      undoTimerRef.current = setTimeout(clearUndo, 4000);
+    },
+    [undoAnim, clearUndo]
+  );
+
+  // Clean up timer on unmount
+  useEffect(() => () => { if (undoTimerRef.current) clearTimeout(undoTimerRef.current); }, []);
 
   const hasAny = conversations.length > 0 || groupConversations.length > 0;
 
@@ -228,40 +258,20 @@ export default function MessagesScreen() {
     setSheetTarget({ user: conv.user, isDM: true });
   };
 
-  const confirmDeleteConv = (conv: Conversation) => {
-    Alert.alert(
-      'Delete Conversation',
-      `Remove your chat with ${conv.user.username}? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            deleteConversation(conv.userId);
-          },
-        },
-      ]
-    );
+  const handleDeleteConv = (conv: Conversation) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    deleteConversation(conv.userId);
+    showUndoToast(`Conversation with ${conv.user.username} deleted`, () => {
+      undoDeleteConversation(conv);
+    });
   };
 
-  const confirmDeleteGroup = (group: GroupConversation) => {
-    Alert.alert(
-      'Delete Group',
-      `Remove "${group.name}" from your inbox? This cannot be undone.`,
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Delete',
-          style: 'destructive',
-          onPress: () => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            deleteGroup(group.id);
-          },
-        },
-      ]
-    );
+  const handleDeleteGroup = (group: GroupConversation) => {
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+    deleteGroup(group.id);
+    showUndoToast(`"${group.name}" deleted`, () => {
+      undoDeleteGroup(group);
+    });
   };
 
   return (
@@ -330,7 +340,7 @@ export default function MessagesScreen() {
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                   Alert.alert((item as GroupConversation).name, `${(item as GroupConversation).members.length} members in this group`);
                 }}
-                onDelete={() => confirmDeleteGroup(item as GroupConversation)}
+                onDelete={() => handleDeleteGroup(item as GroupConversation)}
                 colors={colors}
               />
             ) : (
@@ -339,7 +349,7 @@ export default function MessagesScreen() {
                 muted={isMuted((item as Conversation).userId)}
                 onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push(`/chat/${(item as Conversation).userId}`); }}
                 onLongPress={() => openDMSheet(item as Conversation)}
-                onDelete={() => confirmDeleteConv(item as Conversation)}
+                onDelete={() => handleDeleteConv(item as Conversation)}
                 colors={colors}
               />
             )
@@ -348,6 +358,39 @@ export default function MessagesScreen() {
           contentContainerStyle={{ paddingBottom: bottomPad }}
           stickySectionHeadersEnabled
         />
+      )}
+
+      {/* Undo delete snackbar */}
+      {undoPending && (
+        <Animated.View
+          style={[
+            styles.undoBar,
+            { bottom: bottomPad + 12 },
+            {
+              transform: [
+                {
+                  translateY: undoAnim.interpolate({
+                    inputRange: [0, 1],
+                    outputRange: [80, 0],
+                  }),
+                },
+              ],
+              opacity: undoAnim,
+            },
+          ]}
+        >
+          <Text style={styles.undoLabel} numberOfLines={1}>{undoPending.label}</Text>
+          <TouchableOpacity
+            onPress={() => {
+              undoPending.onUndo();
+              clearUndo();
+            }}
+            hitSlop={12}
+            style={styles.undoBtn}
+          >
+            <Text style={styles.undoBtnText}>Undo</Text>
+          </TouchableOpacity>
+        </Animated.View>
       )}
 
       {/* DM action sheet */}
@@ -455,5 +498,37 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 12,
     fontFamily: 'Inter_600SemiBold',
+  },
+  undoBar: {
+    position: 'absolute',
+    left: 16,
+    right: 16,
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: 'rgba(28, 28, 32, 0.96)',
+    borderRadius: 14,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    gap: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 4 },
+    shadowOpacity: 0.3,
+    shadowRadius: 10,
+    elevation: 8,
+    zIndex: 9998,
+  },
+  undoLabel: {
+    flex: 1,
+    color: 'rgba(255,255,255,0.85)',
+    fontFamily: 'Inter_400Regular',
+    fontSize: 13,
+  },
+  undoBtn: {
+    paddingHorizontal: 4,
+  },
+  undoBtnText: {
+    color: '#6C9EFF',
+    fontFamily: 'Inter_700Bold',
+    fontSize: 13,
   },
 });

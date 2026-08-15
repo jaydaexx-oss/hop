@@ -21,7 +21,7 @@ import * as Haptics from 'expo-haptics';
 export default function ProfileScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { profile, setProfile } = useHop();
+  const { profile, setProfile, clearHistory } = useHop();
   const [editing, setEditing] = useState(false);
   const [nameInput, setNameInput] = useState(profile?.username ?? '');
 
@@ -171,7 +171,7 @@ export default function ProfileScreen() {
           />
         </View>
 
-        <View style={styles.row}>
+        <View style={[styles.row, { borderBottomColor: colors.border }]}>
           <View style={styles.rowLeft}>
             <Ionicons name="bluetooth-outline" size={20} color={colors.foreground} />
             <Text style={[styles.rowLabel, { color: colors.foreground }]}>Bluetooth</Text>
@@ -181,6 +181,32 @@ export default function ProfileScreen() {
             <Text style={[styles.statusText, { color: colors.primary }]}>Active</Text>
           </View>
         </View>
+
+        <Pressable
+          style={styles.row}
+          onPress={() => {
+            Alert.alert(
+              'Clear chat history',
+              'This will permanently delete all direct messages and group conversations.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Clear',
+                  style: 'destructive',
+                  onPress: async () => {
+                    await clearHistory();
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                  },
+                },
+              ],
+            );
+          }}
+        >
+          <View style={styles.rowLeft}>
+            <Ionicons name="trash-outline" size={20} color={colors.destructive} />
+            <Text style={[styles.rowLabel, { color: colors.destructive }]}>Clear chat history</Text>
+          </View>
+        </Pressable>
       </View>
 
       <Text style={[styles.version, { color: colors.mutedForeground }]}>

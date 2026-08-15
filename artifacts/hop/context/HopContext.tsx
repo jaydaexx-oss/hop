@@ -90,6 +90,7 @@ interface HopContextType {
   markRead: (userId: string) => void;
   markGroupRead: (groupId: string) => void;
   completeOnboarding: (username: string, color: string, avatarUri?: string) => Promise<void>;
+  clearHistory: () => Promise<void>;
 }
 
 // ─── Simulated nearby user pool ───────────────────────────────────────────────
@@ -148,8 +149,48 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         } else {
           setIsOnboarding(true);
         }
-        if (convStr) setConversations(JSON.parse(convStr));
-        if (groupStr) setGroupConversations(JSON.parse(groupStr));
+        if (convStr) {
+          const parsed: Conversation[] = JSON.parse(convStr);
+          // Dedup by userId: merge duplicate entries (can happen if simulated IDs shift),
+          // preserving all messages sorted by timestamp.
+          const byUserId: Record<string, Conversation> = {};
+          for (const conv of parsed) {
+            if (!byUserId[conv.userId]) {
+              byUserId[conv.userId] = conv;
+            } else {
+              // Merge messages, deduplicate by id, sort chronologically
+              const merged = [...byUserId[conv.userId].messages, ...conv.messages];
+              const seenMsgIds = new Set<string>();
+              const dedupedMsgs = merged.filter(m => {
+                if (seenMsgIds.has(m.id)) return false;
+                seenMsgIds.add(m.id);
+                return true;
+              }).sort((a, b) => a.timestamp - b.timestamp);
+              // Keep the more recently active entry's metadata (user info)
+              const existingLast = byUserId[conv.userId].messages.at(-1)?.timestamp ?? 0;
+              const incomingLast = conv.messages.at(-1)?.timestamp ?? 0;
+              const winner = incomingLast > existingLast ? conv : byUserId[conv.userId];
+              byUserId[conv.userId] = { ...winner, messages: dedupedMsgs };
+            }
+          }
+          setConversations(Object.values(byUserId));
+        }
+        if (groupStr) {
+          const parsed: GroupConversation[] = JSON.parse(groupStr);
+          // Re-hydrate senderColor and senderName from the stored members array so
+          // that stale colors written at send-time are corrected on reload.
+          const hydrated = parsed.map(group => ({
+            ...group,
+            messages: group.messages.map(msg => {
+              const member = group.members.find(m => m.id === msg.senderId);
+              if (member) {
+                return { ...msg, senderColor: member.color, senderName: member.username };
+              }
+              return msg;
+            }),
+          }));
+          setGroupConversations(hydrated);
+        }
         if (bcastStr) {
           setBroadcasts(JSON.parse(bcastStr));
         } else {
@@ -381,6 +422,15 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     });
   };
 
+  const clearHistory = async () => {
+    setConversations([]);
+    setGroupConversations([]);
+    await Promise.all([
+      AsyncStorage.removeItem('@hop/conversations'),
+      AsyncStorage.removeItem('@hop/groups'),
+    ]);
+  };
+
   const totalUnread =
     conversations.reduce((s, c) => s + c.unread, 0) +
     groupConversations.reduce((s, g) => s + g.unread, 0);
@@ -393,7 +443,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       pendingToast, dismissToast,
       setProfile, sendMessage, sendGroupMessage, sendBroadcast,
       createGroup, getConversation, getGroupConversation,
-      markRead, markGroupRead, completeOnboarding,
+      markRead, markGroupRead, completeOnboarding, clearHistory,
     }}>
       {children}
     </HopContext.Provider>

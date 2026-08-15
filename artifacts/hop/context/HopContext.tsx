@@ -212,6 +212,11 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     (async () => {
+      // Collect whether to enter onboarding and set it in the finally block
+      // together with setLoaded(true), so both state updates are batched in
+      // a single React flush.  This prevents the mid-IIFE setIsOnboarding(true)
+      // call from firing outside of act() in the test environment.
+      let shouldOnboard = false;
       try {
         // Load profile first so we can scope the muted key to this profile.
         const profStr = await AsyncStorage.getItem('@hop/profile');
@@ -221,7 +226,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           setProfileState(parsed);
           profileId = parsed.id;
         } else {
-          setIsOnboarding(true);
+          shouldOnboard = true;
         }
 
         // ── One-time migration: lift legacy unscoped keys → profile-scoped keys ──
@@ -341,8 +346,11 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           saveBroadcasts(seed, () => setToastQueue(storageErrorToastUpdater));
         }
       } catch {
-        setIsOnboarding(true);
+        shouldOnboard = true;
       } finally {
+        // Batch isOnboarding + loaded in a single React flush so no
+        // intermediate "half-loaded" state is visible in the UI or tests.
+        if (shouldOnboard) setIsOnboarding(true);
         setLoaded(true);
       }
     })();
@@ -440,7 +448,19 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     setMutedIds(new Set());
     setBlockedIds([]);
     setMessageRequests([]);
-    await setProfile({ id: createMessageId(), username, color, discoverable: true, avatarUri });
+    const newProfile: MyProfile = { id: createMessageId(), username, color, discoverable: true, avatarUri };
+    // Optimistically update in-memory state so the UI feels instant…
+    setProfileState(newProfile);
+    try {
+      await AsyncStorage.setItem('@hop/profile', JSON.stringify(newProfile));
+    } catch {
+      // Storage write failed — roll back the optimistic update so the app
+      // remains in onboarding and the user can retry.  No partial state should
+      // leak to a subsequent launch because the key was never written.
+      setProfileState(null);
+      setToastQueue(storageErrorToastUpdater);
+      return;
+    }
     setIsOnboarding(false);
   };
 

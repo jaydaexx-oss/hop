@@ -161,26 +161,34 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // ── Mute key helper ───────────────────────────────────────────────────────
+
+  const muteKey = (profileId: string) => `@hop/muted/${profileId}`;
+
   // ── Persistence load ──────────────────────────────────────────────────────
 
   useEffect(() => {
     (async () => {
       try {
-        const [profStr, convStr, groupStr, bcastStr, mutedStr, reqStr, blockedStr] = await Promise.all([
-          AsyncStorage.getItem('@hop/profile'),
-          AsyncStorage.getItem('@hop/conversations'),
-          AsyncStorage.getItem('@hop/groups'),
-          AsyncStorage.getItem('@hop/broadcasts'),
-          AsyncStorage.getItem('@hop/muted'),
-          AsyncStorage.getItem('@hop/requests'),
-          AsyncStorage.getItem('@hop/blocked'),
-        ]);
-
+        // Load profile first so we can scope the muted key to this profile.
+        const profStr = await AsyncStorage.getItem('@hop/profile');
+        let profileId: string | null = null;
         if (profStr) {
-          setProfileState(JSON.parse(profStr));
+          const parsed: MyProfile = JSON.parse(profStr);
+          setProfileState(parsed);
+          profileId = parsed.id;
         } else {
           setIsOnboarding(true);
         }
+
+        const [convStr, groupStr, bcastStr, mutedStr, reqStr, blockedStr] = await Promise.all([
+          AsyncStorage.getItem('@hop/conversations'),
+          AsyncStorage.getItem('@hop/groups'),
+          AsyncStorage.getItem('@hop/broadcasts'),
+          profileId ? AsyncStorage.getItem(muteKey(profileId)) : Promise.resolve(null),
+          AsyncStorage.getItem('@hop/requests'),
+          AsyncStorage.getItem('@hop/blocked'),
+        ]);
         if (convStr) {
           const parsed: Conversation[] = JSON.parse(convStr);
           const byUserId: Record<string, Conversation> = {};
@@ -308,10 +316,12 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   // ── Mute ──────────────────────────────────────────────────────────────────
 
   const toggleMute = async (id: string) => {
+    if (!profile) return;
+    const key = muteKey(profile.id);
     setMutedIds(prev => {
       const next = new Set(prev);
       next.has(id) ? next.delete(id) : next.add(id);
-      AsyncStorage.setItem('@hop/muted', JSON.stringify([...next]));
+      AsyncStorage.setItem(key, JSON.stringify([...next]));
       return next;
     });
   };
@@ -325,6 +335,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   };
 
   const completeOnboarding = async (username: string, color: string, avatarUri?: string) => {
+    // New profile → start with a clean mute list so state doesn't carry over.
+    setMutedIds(new Set());
     await setProfile({ id: createMessageId(), username, color, discoverable: true, avatarUri });
     setIsOnboarding(false);
   };

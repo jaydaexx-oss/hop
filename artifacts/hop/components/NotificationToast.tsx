@@ -15,7 +15,7 @@ const TOAST_DURATION_MS = 3000;
 const SLIDE_DURATION_MS = 280;
 
 export function NotificationToast() {
-  const { pendingToast, dismissToast } = useHop();
+  const { pendingToast, dismissToast, clearHistory } = useHop();
   const insets = useSafeAreaInsets();
   const pathname = usePathname();
 
@@ -152,6 +152,21 @@ export function NotificationToast() {
             {pendingToast.content}
           </Text>
         </Animated.View>
+        {pendingToast.kind === 'error' && (
+          <Pressable
+            onPress={() => {
+              clearHistory();
+              slideOut();
+            }}
+            style={({ pressed }) => [
+              styles.clearBtn,
+              pressed && styles.clearBtnPressed,
+            ]}
+            hitSlop={8}
+          >
+            <Text style={styles.clearBtnText}>Clear history</Text>
+          </Pressable>
+        )}
       </Pressable>
     </Animated.View>
   );
@@ -215,5 +230,22 @@ const styles = StyleSheet.create({
     color: 'rgba(255,255,255,0.65)',
     fontFamily: 'Inter_400Regular',
     fontSize: 13,
+  },
+  clearBtn: {
+    paddingVertical: 5,
+    paddingHorizontal: 10,
+    borderRadius: 10,
+    backgroundColor: 'rgba(255, 160, 60, 0.18)',
+    borderWidth: 1,
+    borderColor: 'rgba(255, 160, 60, 0.35)',
+    marginLeft: 4,
+  },
+  clearBtnPressed: {
+    backgroundColor: 'rgba(255, 160, 60, 0.32)',
+  },
+  clearBtnText: {
+    color: '#FFA03C',
+    fontFamily: 'Inter_600SemiBold',
+    fontSize: 12,
   },
 });

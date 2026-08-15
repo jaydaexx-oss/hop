@@ -263,6 +263,12 @@ export default function MessagesScreen() {
     ...conversations.filter(c => isMuted(c.userId)),
   ];
 
+  // Reset collapsed state when the last muted item is removed so the section
+  // always starts collapsed the next time something gets muted.
+  useEffect(() => {
+    if (mutedItems.length === 0) setMutedOpen(false);
+  }, [mutedItems.length]);
+
   const sections: { title: string; data: (Conversation | GroupConversation)[]; kind: 'group' | 'dm' | 'mixed' }[] = [];
   if (unmutedGroups.length > 0) sections.push({ title: 'GROUPS', data: unmutedGroups, kind: 'group' });
   if (unmutedConvs.length > 0)  sections.push({ title: 'DIRECT', data: unmutedConvs,  kind: 'dm' });

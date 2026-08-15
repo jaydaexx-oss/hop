@@ -504,26 +504,41 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   // ── Block / Report ────────────────────────────────────────────────────────
 
   const blockUser = useCallback(async (userId: string) => {
-    setBlockedIds(prev => {
-      if (prev.includes(userId)) return prev;
-      const next = [...prev, userId];
-      const pid = profileRef.current?.id;
-      if (pid) AsyncStorage.setItem(blockedKey(pid), JSON.stringify(next));
-      return next;
-    });
+    if (!profile) return;
+    const pid = profile.id;
+
+    // Skip if already blocked so the operation is idempotent.
+    if (blockedIds.includes(userId)) return;
+
+    const next = [...blockedIds, userId];
+
+    // Optimistic updates — apply in-memory immediately so the UI responds.
+    setBlockedIds(next);
     setNearbyUsers(prev => prev.filter(u => u.id !== userId));
     setConversations(prev => {
-      const next = prev.filter(c => c.userId !== userId);
-      saveConvs(next, showStorageError);
-      return next;
+      const filtered = prev.filter(c => c.userId !== userId);
+      saveConvs(filtered, showStorageError);
+      return filtered;
     });
     setMessageRequests(prev => {
-      const next = prev.filter(r => r.fromUser.id !== userId);
-      const pid = profileRef.current?.id;
-      if (pid) AsyncStorage.setItem(requestsKey(pid), JSON.stringify(next));
-      return next;
+      const filtered = prev.filter(r => r.fromUser.id !== userId);
+      // Fire-and-forget is acceptable for requests because the worst case is
+      // a stale request reappearing; the block itself is the critical write.
+      AsyncStorage.setItem(requestsKey(pid), JSON.stringify(filtered));
+      return filtered;
     });
-  }, []);
+
+    // Persist the block.  This is the critical write — if it fails the blocked
+    // user will reappear after a restart, so we must rollback and surface an error.
+    try {
+      await AsyncStorage.setItem(blockedKey(pid), JSON.stringify(next));
+    } catch {
+      // Surgically remove only this userId so we don't clobber any other
+      // concurrent block operations that may have already succeeded.
+      setBlockedIds(current => current.filter(id => id !== userId));
+      setToastQueue(storageErrorToastUpdater);
+    }
+  }, [blockedIds, profile, showStorageError]);
 
   const reportUser = useCallback((userId: string) => {
     const user = USER_POOL.find(u => u.id === userId);

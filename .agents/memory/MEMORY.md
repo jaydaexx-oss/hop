@@ -1,0 +1,1 @@
+- [HOP protocol audit](hop-audit.md) — 7 bugs found/fixed across repo + app; protocol layer lives in artifacts/hop/protocol/

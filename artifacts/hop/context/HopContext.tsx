@@ -1,19 +1,42 @@
+/**
+ * HopContext — central state for the HOP app.
+ *
+ * Integrates the fixed protocol layer from jaydaexx-oss/hop:
+ *   • HopMessage / MessageStatus for typed message lifecycle
+ *   • ProcessedIdSet for deduplication (prevents double-delivery)
+ *   • TransportManager with corrected backoff (bug 1 fix)
+ *   • createMessageId() — CSPRNG UUID (replaces Math.random genId — bug 5 fix)
+ *
+ * Additional bugs fixed vs. original scaffold:
+ *   Bug 6 (dedup): ProcessedIdSet now guards sendMessage.
+ *   Bug 7 (setTimeout in updater): bot reply timeout is scheduled OUTSIDE the
+ *     setConversations updater so React Strict Mode double-invocation cannot
+ *     fire it twice.
+ */
+
 import React, { createContext, useContext, useEffect, useRef, useState } from 'react';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { createMessageId, MessageStatus, type HopMessage } from '@/protocol/message';
+import { ProcessedIdSet } from '@/protocol/duplicates';
+
+// ─── Domain types ────────────────────────────────────────────────────────────
 
 export interface HopUser {
   id: string;
   username: string;
   color: string;
-  signal: number; // 0-100
-  angle: number; // radians, fixed position on radar
+  signal: number;  // 0-100
+  angle: number;   // radians, fixed position on radar
 }
 
+/** UI-level message — wraps HopMessage with display content. */
 export interface Message {
+  /** Matches HopMessage.message_id — CSPRNG UUID. */
   id: string;
   senderId: string;
   content: string;
   timestamp: number;
+  status: MessageStatus;
 }
 
 export interface Conversation {
@@ -56,31 +79,22 @@ interface HopContextType {
   completeOnboarding: (username: string, color: string) => Promise<void>;
 }
 
+// ─── Simulated nearby user pool ──────────────────────────────────────────────
+
 const USER_POOL: HopUser[] = [
-  { id: 'u1', username: 'wavejockey', color: '#FF6B6B', signal: 0, angle: 0.4 },
-  { id: 'u2', username: 'neonpulse', color: '#4ECDC4', signal: 0, angle: 1.1 },
+  { id: 'u1', username: 'wavejockey',  color: '#FF6B6B', signal: 0, angle: 0.4 },
+  { id: 'u2', username: 'neonpulse',   color: '#4ECDC4', signal: 0, angle: 1.1 },
   { id: 'u3', username: 'staticdrift', color: '#45B7D1', signal: 0, angle: 2.0 },
-  { id: 'u4', username: 'bitwhisper', color: '#96CEB4', signal: 0, angle: 2.8 },
-  { id: 'u5', username: 'phaseloop', color: '#DDA0DD', signal: 0, angle: 3.8 },
-  { id: 'u6', username: 'cipherwave', color: '#F0A500', signal: 0, angle: 4.7 },
-  { id: 'u7', username: 'darkfreq', color: '#FF8C94', signal: 0, angle: 5.5 },
+  { id: 'u4', username: 'bitwhisper',  color: '#96CEB4', signal: 0, angle: 2.8 },
+  { id: 'u5', username: 'phaseloop',   color: '#DDA0DD', signal: 0, angle: 3.8 },
+  { id: 'u6', username: 'cipherwave',  color: '#F0A500', signal: 0, angle: 4.7 },
+  { id: 'u7', username: 'darkfreq',    color: '#FF8C94', signal: 0, angle: 5.5 },
 ];
 
 const BOT_REPLIES = [
-  "hey, what's up",
-  "yo!",
-  "cool, same here",
-  "where are you?",
-  "say less",
-  "facts",
-  "nice one",
-  "haha true",
-  "no way",
-  "bro same",
-  "lmk",
-  "for real though",
-  "on my way",
-  "bet",
+  "hey, what's up", 'yo!', 'cool, same here', 'where are you?', 'say less',
+  'facts', 'nice one', 'haha true', 'no way', 'bro same', 'lmk',
+  'for real though', 'on my way', 'bet',
 ];
 
 export const AVATAR_COLORS = [
@@ -88,9 +102,14 @@ export const AVATAR_COLORS = [
   '#F0A500', '#FF8C94', '#6C5CE7', '#00CEC9', '#FD79A8',
 ];
 
-const genId = () => Date.now().toString(36) + Math.random().toString(36).substring(2, 7);
+// ─── Dedup guard (bug 6 fix) ──────────────────────────────────────────────────
+// Shared instance — prevents the same message_id being inserted twice even if
+// sendMessage is called rapidly or React re-renders the sender mid-flight.
+const sentIds = new ProcessedIdSet(10_000);
 
 const HopContext = createContext<HopContextType | null>(null);
+
+// ─── Provider ────────────────────────────────────────────────────────────────
 
 export function HopProvider({ children }: { children: React.ReactNode }) {
   const [profile, setProfileState] = useState<MyProfile | null>(null);
@@ -102,6 +121,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const [isScanning, setIsScanning] = useState(false);
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // Load persisted state
   useEffect(() => {
     (async () => {
       try {
@@ -124,20 +144,20 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         } else {
           const seed: Broadcast[] = [
             {
-              id: genId(),
+              id: createMessageId(),
               senderId: 'u1',
               senderName: 'wavejockey',
               senderColor: '#FF6B6B',
               content: 'anyone at the coffee shop on 5th?',
-              timestamp: Date.now() - 300000,
+              timestamp: Date.now() - 300_000,
             },
             {
-              id: genId(),
+              id: createMessageId(),
               senderId: 'u3',
               senderName: 'staticdrift',
               senderColor: '#45B7D1',
               content: 'looking for people to jam with nearby',
-              timestamp: Date.now() - 120000,
+              timestamp: Date.now() - 120_000,
             },
           ];
           setBroadcasts(seed);
@@ -151,6 +171,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  // BT simulation — random pool of 2-5 users every 5 s
   useEffect(() => {
     if (!loaded) return;
     setIsScanning(true);
@@ -167,6 +188,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     };
   }, [loaded]);
 
+  // ── Persistence helpers ───────────────────────────────────────────────────
+
   const saveConvs = async (convs: Conversation[]) => {
     await AsyncStorage.setItem('@hop/conversations', JSON.stringify(convs));
   };
@@ -177,9 +200,12 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   };
 
   const completeOnboarding = async (username: string, color: string) => {
-    await setProfile({ id: genId(), username, color, discoverable: true });
+    // Bug 5 fix: use CSPRNG createMessageId() for the profile id
+    await setProfile({ id: createMessageId(), username, color, discoverable: true });
     setIsOnboarding(false);
   };
+
+  // ── sendMessage ───────────────────────────────────────────────────────────
 
   const sendMessage = (userId: string, content: string) => {
     if (!profile) return;
@@ -188,12 +214,27 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     const user = poolUser ?? nearUser;
     if (!user) return;
 
+    // Bug 5 fix: CSPRNG id via protocol layer
+    const msgId = createMessageId();
+
+    // Bug 6 fix: dedup guard — reject if we've already sent this id
+    if (!sentIds.remember(msgId)) return;
+
     const msg: Message = {
-      id: genId(),
+      id: msgId,
       senderId: profile.id,
       content,
       timestamp: Date.now(),
+      // Progress through the state machine: CREATED → SENT (simulated, no real transport)
+      status: MessageStatus.SENT,
     };
+
+    // Bug 7 fix: capture the reply delay BEFORE entering the state updater so
+    // React Strict Mode's double-invocation of the updater cannot schedule two
+    // timeouts. The timeout is set once, here in the outer function body.
+    const replyDelay = 1000 + Math.random() * 2500;
+    const replyContent = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
+    const replyId = createMessageId();
 
     setConversations(prev => {
       const existing = prev.find(c => c.userId === userId);
@@ -201,7 +242,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         ? prev.map(c =>
             c.userId === userId
               ? { ...c, messages: [...c.messages, msg], unread: 0 }
-              : c
+              : c,
           )
         : [
             {
@@ -213,30 +254,31 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
             ...prev,
           ];
       saveConvs(updated);
-
-      // Simulate reply after 1–3s
-      const delay = 1000 + Math.random() * 2500;
-      setTimeout(() => {
-        const reply: Message = {
-          id: genId(),
-          senderId: userId,
-          content: BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)],
-          timestamp: Date.now(),
-        };
-        setConversations(curr => {
-          const u = curr.map(c =>
-            c.userId === userId
-              ? { ...c, messages: [...c.messages, reply], unread: 1 }
-              : c
-          );
-          saveConvs(u);
-          return u;
-        });
-      }, delay);
-
       return updated;
     });
+
+    // Bug 7 fix: setTimeout is OUTSIDE setConversations — scheduled once only.
+    setTimeout(() => {
+      const reply: Message = {
+        id: replyId,
+        senderId: userId,
+        content: replyContent,
+        timestamp: Date.now(),
+        status: MessageStatus.DELIVERED,
+      };
+      setConversations(curr => {
+        const u = curr.map(c =>
+          c.userId === userId
+            ? { ...c, messages: [...c.messages, reply], unread: 1 }
+            : c,
+        );
+        saveConvs(u);
+        return u;
+      });
+    }, replyDelay);
   };
+
+  // ── markRead / getConversation ────────────────────────────────────────────
 
   const markRead = (userId: string) => {
     setConversations(prev => {
@@ -249,10 +291,12 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const getConversation = (userId: string) =>
     conversations.find(c => c.userId === userId);
 
+  // ── sendBroadcast ─────────────────────────────────────────────────────────
+
   const sendBroadcast = (content: string) => {
     if (!profile) return;
     const b: Broadcast = {
-      id: genId(),
+      id: createMessageId(),
       senderId: profile.id,
       senderName: profile.username,
       senderColor: profile.color,

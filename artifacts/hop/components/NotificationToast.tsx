@@ -33,6 +33,24 @@ export function NotificationToast() {
     return pathname === `/group/${pendingToast.targetId}`;
   })();
 
+  // If the queue head targets the conversation the user is already inside,
+  // skip it immediately so the rest of the queue isn't blocked.
+  // Also handles route changes that happen while a toast is animating.
+  useEffect(() => {
+    if (!pendingToast || !isInsideTarget) return;
+    // Cancel any in-flight dismiss timer and reset the animation position
+    // so the next toast can slide in cleanly.
+    if (dismissTimerRef.current) {
+      clearTimeout(dismissTimerRef.current);
+      dismissTimerRef.current = null;
+    }
+    slideAnim.stopAnimation();
+    slideAnim.setValue(0);
+    dismissToast();
+    // pathname is the dependency that makes isInsideTarget re-evaluate on navigation
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pendingToast, pathname]);
+
   // Animate in whenever a new toast arrives (and user isn't already there)
   useEffect(() => {
     if (!pendingToast || isInsideTarget) return;
@@ -64,7 +82,12 @@ export function NotificationToast() {
       toValue: 0,
       duration: SLIDE_DURATION_MS,
       useNativeDriver: true,
-    }).start(() => dismissToast());
+    }).start(({ finished }) => {
+      // Only dequeue when the animation ran to completion.
+      // If stopAnimation() was called (e.g. by the route-aware skip effect),
+      // finished === false and we let the skip effect handle dismissal.
+      if (finished) dismissToast();
+    });
   };
 
   const handlePress = () => {

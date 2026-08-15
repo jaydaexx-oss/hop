@@ -134,7 +134,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const [groupConversations, setGroupConversations] = useState<GroupConversation[]>([]);
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [isScanning, setIsScanning] = useState(false);
-  const [pendingToast, setPendingToast] = useState<ToastNotification | null>(null);
+  const [toastQueue, setToastQueue] = useState<ToastNotification[]>([]);
   const [mutedIds, setMutedIds] = useState<Set<string>>(new Set());
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -238,7 +238,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const saveGroups = async (groups: GroupConversation[]) =>
     AsyncStorage.setItem('@hop/groups', JSON.stringify(groups));
 
-  const dismissToast = () => setPendingToast(null);
+  const pendingToast = toastQueue[0] ?? null;
+  const dismissToast = () => setToastQueue(prev => prev.slice(1));
 
   const toggleMute = async (id: string) => {
     setMutedIds(prev => {
@@ -307,14 +308,14 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       const sender = USER_POOL.find(u => u.id === userId);
       setMutedIds(currentMuted => {
         if (!currentMuted.has(userId)) {
-          setPendingToast({
+          setToastQueue(prev => [...prev, {
             kind: 'dm',
             targetId: userId,
             senderName: sender?.username ?? 'Someone',
             senderColor: sender?.color ?? '#888',
             senderAvatarUri: sender?.avatarUri,
             content: replyContent,
-          });
+          }]);
         }
         return currentMuted;
       });
@@ -379,14 +380,14 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         // Fire toast for the group reply (skip if conversation is muted)
         setMutedIds(currentMuted => {
           if (!currentMuted.has(groupId)) {
-            setPendingToast({
+            setToastQueue(prev => [...prev, {
               kind: 'group',
               targetId: groupId,
               senderName: bot.username,
               senderColor: bot.color,
               senderAvatarUri: bot.avatarUri,
               content: replyText,
-            });
+            }]);
           }
           return currentMuted;
         });

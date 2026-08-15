@@ -154,8 +154,8 @@ export function NotificationToast() {
         </Animated.View>
         {pendingToast.kind === 'error' && (
           <Pressable
-            onPress={() => {
-              clearHistory();
+            onPress={async () => {
+              await clearHistory();
               slideOut();
             }}
             style={({ pressed }) => [

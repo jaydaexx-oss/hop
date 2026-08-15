@@ -228,12 +228,22 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         // Before reading the scoped keys, check if legacy data exists and the
         // scoped key is absent.  Copy the data over, then delete the old key so
         // the migration never runs again.
+        //
+        // Keys that were ever stored without a profile suffix:
+        //   @hop/blocked   — introduced without a suffix, scoped in a later build
+        //   @hop/requests  — same as above
+        //   @hop/muted     — introduced bare in "Add per-conversation mute toggle",
+        //                    then namespaced to @hop/muted/<profileId> in a later
+        //                    build; returning users need this migrated or their
+        //                    muted list is silently lost after an update.
         if (profileId) {
-          const [legacyBlocked, legacyRequests, scopedBlocked, scopedRequests] = await Promise.all([
+          const [legacyBlocked, legacyRequests, legacyMuted, scopedBlocked, scopedRequests, scopedMuted] = await Promise.all([
             AsyncStorage.getItem('@hop/blocked'),
             AsyncStorage.getItem('@hop/requests'),
+            AsyncStorage.getItem('@hop/muted'),
             AsyncStorage.getItem(blockedKey(profileId)),
             AsyncStorage.getItem(requestsKey(profileId)),
+            AsyncStorage.getItem(muteKey(profileId)),
           ]);
           const migrations: Promise<void>[] = [];
           if (legacyBlocked && !scopedBlocked) {
@@ -253,6 +263,15 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
             );
           } else if (legacyRequests) {
             migrations.push(AsyncStorage.removeItem('@hop/requests'));
+          }
+          if (legacyMuted && !scopedMuted) {
+            migrations.push(
+              AsyncStorage.setItem(muteKey(profileId), legacyMuted).then(() =>
+                AsyncStorage.removeItem('@hop/muted')
+              )
+            );
+          } else if (legacyMuted) {
+            migrations.push(AsyncStorage.removeItem('@hop/muted'));
           }
           if (migrations.length > 0) {
             try {

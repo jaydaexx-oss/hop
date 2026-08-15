@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
   Alert,
   Platform,
@@ -6,8 +6,10 @@ import {
   SectionList,
   StyleSheet,
   Text,
+  TouchableOpacity,
   View,
 } from 'react-native';
+import { Swipeable } from 'react-native-gesture-handler';
 import { useColors } from '@/hooks/useColors';
 import { Conversation, GroupConversation, HopUser, useHop } from '@/context/HopContext';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
@@ -25,50 +27,81 @@ function formatTime(ts: number): string {
   return `${Math.floor(diff / 86400000)}d`;
 }
 
+// ── Delete action revealed on swipe ───────────────────────────────────────────
+function DeleteAction({ onDelete }: { onDelete: () => void }) {
+  const colors = useColors();
+  return (
+    <TouchableOpacity
+      style={[styles.deleteAction, { backgroundColor: colors.destructive }]}
+      onPress={onDelete}
+      activeOpacity={0.8}
+    >
+      <Ionicons name="trash-outline" size={22} color="#fff" />
+      <Text style={styles.deleteActionText}>Delete</Text>
+    </TouchableOpacity>
+  );
+}
+
 // ── DM row ────────────────────────────────────────────────────────────────────
 function ConvItem({
   conv,
   onPress,
   onLongPress,
+  onDelete,
   colors,
 }: {
   conv: Conversation;
   onPress: () => void;
   onLongPress: () => void;
+  onDelete: () => void;
   colors: ReturnType<typeof useColors>;
 }) {
+  const swipeRef = useRef<Swipeable>(null);
   const last = conv.messages[conv.messages.length - 1];
   const hasUnread = conv.unread > 0;
+
+  const handleDelete = () => {
+    swipeRef.current?.close();
+    onDelete();
+  };
+
   return (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={350}
-      style={({ pressed }) => [styles.item, { backgroundColor: pressed ? colors.secondary : 'transparent' }]}
+    <Swipeable
+      ref={swipeRef}
+      friction={2}
+      overshootRight={false}
+      renderRightActions={() => <DeleteAction onDelete={handleDelete} />}
     >
-      <Avatar uri={conv.user.avatarUri} color={conv.user.color} username={conv.user.username} size={50} />
-      <View style={styles.body}>
-        <View style={styles.top}>
-          <Text style={[styles.name, { color: colors.foreground }, hasUnread && { fontFamily: 'Inter_700Bold' }]}>
-            {conv.user.username}
-          </Text>
-          {last && <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(last.timestamp)}</Text>}
+      <Pressable
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={350}
+        style={({ pressed }) => [styles.item, { backgroundColor: pressed ? colors.secondary : colors.background }]}
+      >
+        <Avatar uri={conv.user.avatarUri} color={conv.user.color} username={conv.user.username} size={50} />
+        <View style={styles.body}>
+          <View style={styles.top}>
+            <Text style={[styles.name, { color: colors.foreground }, hasUnread && { fontFamily: 'Inter_700Bold' }]}>
+              {conv.user.username}
+            </Text>
+            {last && <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(last.timestamp)}</Text>}
+          </View>
+          <View style={styles.bottom}>
+            <Text
+              style={[styles.preview, { color: hasUnread ? colors.foreground : colors.mutedForeground, fontFamily: hasUnread ? 'Inter_500Medium' : 'Inter_400Regular' }]}
+              numberOfLines={1}
+            >
+              {last?.content ?? ''}
+            </Text>
+            {hasUnread && (
+              <View style={[styles.badge, { backgroundColor: colors.primary }]}>
+                <Text style={[styles.badgeText, { color: colors.primaryForeground }]}>{conv.unread}</Text>
+              </View>
+            )}
+          </View>
         </View>
-        <View style={styles.bottom}>
-          <Text
-            style={[styles.preview, { color: hasUnread ? colors.foreground : colors.mutedForeground, fontFamily: hasUnread ? 'Inter_500Medium' : 'Inter_400Regular' }]}
-            numberOfLines={1}
-          >
-            {last?.content ?? ''}
-          </Text>
-          {hasUnread && (
-            <View style={[styles.badge, { backgroundColor: colors.primary }]}>
-              <Text style={[styles.badgeText, { color: colors.primaryForeground }]}>{conv.unread}</Text>
-            </View>
-          )}
-        </View>
-      </View>
-    </Pressable>
+      </Pressable>
+    </Swipeable>
   );
 }
 
@@ -77,13 +110,16 @@ function GroupItem({
   group,
   onPress,
   onLongPress,
+  onDelete,
   colors,
 }: {
   group: GroupConversation;
   onPress: () => void;
   onLongPress: () => void;
+  onDelete: () => void;
   colors: ReturnType<typeof useColors>;
 }) {
+  const swipeRef = useRef<Swipeable>(null);
   const last = group.messages[group.messages.length - 1];
   const hasUnread = group.unread > 0;
   const shown = group.members.slice(0, 3);
@@ -91,59 +127,71 @@ function GroupItem({
   const OVERLAP = AVATAR * 0.5;
   const clusterW = AVATAR + (shown.length - 1) * OVERLAP;
 
+  const handleDelete = () => {
+    swipeRef.current?.close();
+    onDelete();
+  };
+
   return (
-    <Pressable
-      onPress={onPress}
-      onLongPress={onLongPress}
-      delayLongPress={350}
-      style={({ pressed }) => [styles.item, { backgroundColor: pressed ? colors.secondary : 'transparent' }]}
+    <Swipeable
+      ref={swipeRef}
+      friction={2}
+      overshootRight={false}
+      renderRightActions={() => <DeleteAction onDelete={handleDelete} />}
     >
-      <View style={{ width: clusterW, height: AVATAR, flexShrink: 0 }}>
-        {shown.map((m, i) => (
-          <View
-            key={i}
-            style={[
-              styles.avatar,
-              {
-                width: AVATAR - 6,
-                height: AVATAR - 6,
-                borderRadius: (AVATAR - 6) / 2,
-                backgroundColor: m.color,
-                position: 'absolute',
-                left: i * OVERLAP,
-                top: 3,
-                zIndex: shown.length - i,
-                borderWidth: 2,
-                borderColor: colors.background,
-              },
-            ]}
-          >
-            <Text style={[styles.avatarText, { fontSize: 14 }]}>{m.username[0].toUpperCase()}</Text>
-          </View>
-        ))}
-      </View>
-      <View style={styles.body}>
-        <View style={styles.top}>
-          <Text style={[styles.name, { color: colors.foreground }, hasUnread && { fontFamily: 'Inter_700Bold' }]} numberOfLines={1}>
-            {group.name}
-          </Text>
-          {last && <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(last.timestamp)}</Text>}
-        </View>
-        <View style={styles.bottom}>
-          <Text
-            style={[styles.preview, { color: hasUnread ? colors.foreground : colors.mutedForeground, fontFamily: hasUnread ? 'Inter_500Medium' : 'Inter_400Regular' }]}
-            numberOfLines={1}
-          >
-            {last ? `${last.senderName ?? 'You'}: ${last.content}` : `${group.members.length} members`}
-          </Text>
-          {hasUnread && (
-            <View style={[styles.badge, { backgroundColor: colors.primary }]}>
-              <Text style={[styles.badgeText, { color: colors.primaryForeground }]}>{group.unread}</Text>
+      <Pressable
+        onPress={onPress}
+        onLongPress={onLongPress}
+        delayLongPress={350}
+        style={({ pressed }) => [styles.item, { backgroundColor: pressed ? colors.secondary : colors.background }]}
+      >
+        <View style={{ width: clusterW, height: AVATAR, flexShrink: 0 }}>
+          {shown.map((m, i) => (
+            <View
+              key={i}
+              style={[
+                styles.avatar,
+                {
+                  width: AVATAR - 6,
+                  height: AVATAR - 6,
+                  borderRadius: (AVATAR - 6) / 2,
+                  backgroundColor: m.color,
+                  position: 'absolute',
+                  left: i * OVERLAP,
+                  top: 3,
+                  zIndex: shown.length - i,
+                  borderWidth: 2,
+                  borderColor: colors.background,
+                },
+              ]}
+            >
+              <Text style={[styles.avatarText, { fontSize: 14 }]}>{m.username[0].toUpperCase()}</Text>
             </View>
-          )}
+          ))}
         </View>
-      </View>
-    </Pressable>
+        <View style={styles.body}>
+          <View style={styles.top}>
+            <Text style={[styles.name, { color: colors.foreground }, hasUnread && { fontFamily: 'Inter_700Bold' }]} numberOfLines={1}>
+              {group.name}
+            </Text>
+            {last && <Text style={[styles.time, { color: colors.mutedForeground }]}>{formatTime(last.timestamp)}</Text>}
+          </View>
+          <View style={styles.bottom}>
+            <Text
+              style={[styles.preview, { color: hasUnread ? colors.foreground : colors.mutedForeground, fontFamily: hasUnread ? 'Inter_500Medium' : 'Inter_400Regular' }]}
+              numberOfLines={1}
+            >
+              {last ? `${last.senderName ?? 'You'}: ${last.content}` : `${group.members.length} members`}
+            </Text>
+            {hasUnread && (
+              <View style={[styles.badge, { backgroundColor: colors.primary }]}>
+                <Text style={[styles.badgeText, { color: colors.primaryForeground }]}>{group.unread}</Text>
+              </View>
+            )}
+          </View>
+        </View>
+      </Pressable>
+    </Swipeable>
   );
 }
 
@@ -151,7 +199,7 @@ function GroupItem({
 export default function MessagesScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { conversations, groupConversations, messageRequests, blockUser, reportUser } = useHop();
+  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup } = useHop();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 100 : insets.bottom + 60;
@@ -168,6 +216,42 @@ export default function MessagesScreen() {
   const openDMSheet = (conv: Conversation) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
     setSheetTarget({ user: conv.user, isDM: true });
+  };
+
+  const confirmDeleteConv = (conv: Conversation) => {
+    Alert.alert(
+      'Delete Conversation',
+      `Remove your chat with ${conv.user.username}? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            deleteConversation(conv.userId);
+          },
+        },
+      ]
+    );
+  };
+
+  const confirmDeleteGroup = (group: GroupConversation) => {
+    Alert.alert(
+      'Delete Group',
+      `Remove "${group.name}" from your inbox? This cannot be undone.`,
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Delete',
+          style: 'destructive',
+          onPress: () => {
+            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+            deleteGroup(group.id);
+          },
+        },
+      ]
+    );
   };
 
   return (
@@ -232,10 +316,10 @@ export default function MessagesScreen() {
                 group={item as GroupConversation}
                 onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push(`/group/${(item as GroupConversation).id}`); }}
                 onLongPress={() => {
-                  // Groups don't have a single blockable user — show info toast
                   Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
                   Alert.alert((item as GroupConversation).name, `${(item as GroupConversation).members.length} members in this group`);
                 }}
+                onDelete={() => confirmDeleteGroup(item as GroupConversation)}
                 colors={colors}
               />
             ) : (
@@ -243,6 +327,7 @@ export default function MessagesScreen() {
                 conv={item as Conversation}
                 onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push(`/chat/${(item as Conversation).userId}`); }}
                 onLongPress={() => openDMSheet(item as Conversation)}
+                onDelete={() => confirmDeleteConv(item as Conversation)}
                 colors={colors}
               />
             )
@@ -346,4 +431,15 @@ const styles = StyleSheet.create({
   empty: { alignItems: 'center', paddingTop: 80, gap: 10, paddingHorizontal: 40 },
   emptyTitle: { fontSize: 18, fontFamily: 'Inter_600SemiBold' },
   emptyText: { fontSize: 14, textAlign: 'center', fontFamily: 'Inter_400Regular' },
+  deleteAction: {
+    justifyContent: 'center',
+    alignItems: 'center',
+    width: 88,
+    gap: 4,
+  },
+  deleteActionText: {
+    color: '#fff',
+    fontSize: 12,
+    fontFamily: 'Inter_600SemiBold',
+  },
 });

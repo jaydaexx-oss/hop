@@ -106,6 +106,8 @@ interface HopContextType {
   reportUser: (userId: string) => void;
   acceptRequest: (requestId: string) => void;
   declineRequest: (requestId: string) => void;
+  deleteConversation: (userId: string) => Promise<void>;
+  deleteGroup: (groupId: string) => Promise<void>;
 }
 
 // ─── Simulated nearby user pool ───────────────────────────────────────────────
@@ -254,9 +256,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     if (!loaded) return;
-    // After a short initial delay, occasionally have a nearby stranger send a request
     const scheduleNext = () => {
-      const delay = 18_000 + Math.random() * 22_000; // 18–40 s
+      const delay = 18_000 + Math.random() * 22_000;
       requestRef.current = setTimeout(() => {
         setConversations(currentConvs => {
           setBlockedIds(currentBlocked => {
@@ -337,7 +338,6 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       AsyncStorage.setItem('@hop/blocked', JSON.stringify(next));
       return next;
     });
-    // Remove from nearby, conversations, and requests
     setNearbyUsers(prev => prev.filter(u => u.id !== userId));
     setConversations(prev => {
       const next = prev.filter(c => c.userId !== userId);
@@ -373,7 +373,6 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       if (!req) return prev;
       const next = prev.filter(r => r.id !== requestId);
       AsyncStorage.setItem('@hop/requests', JSON.stringify(next));
-      // Move into conversations
       setConversations(convs => {
         if (convs.find(c => c.userId === req.fromUser.id)) return convs;
         const initMsg: Message = {
@@ -518,6 +517,24 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     await Promise.all([AsyncStorage.removeItem('@hop/conversations'), AsyncStorage.removeItem('@hop/groups')]);
   };
 
+  // ── Delete conversation / group ───────────────────────────────────────────
+
+  const deleteConversation = async (userId: string) => {
+    setConversations(prev => {
+      const updated = prev.filter(c => c.userId !== userId);
+      saveConvs(updated);
+      return updated;
+    });
+  };
+
+  const deleteGroup = async (groupId: string) => {
+    setGroupConversations(prev => {
+      const updated = prev.filter(g => g.id !== groupId);
+      saveGroups(updated);
+      return updated;
+    });
+  };
+
   const totalUnread =
     conversations.reduce((s, c) => s + c.unread, 0) +
     groupConversations.reduce((s, g) => s + g.unread, 0);
@@ -534,6 +551,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       createGroup, getConversation, getGroupConversation,
       markRead, markGroupRead, completeOnboarding, clearHistory,
       blockUser, reportUser, acceptRequest, declineRequest,
+      deleteConversation, deleteGroup,
     }}>
       {children}
     </HopContext.Provider>

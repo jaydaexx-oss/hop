@@ -160,9 +160,16 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  // ── Mute key helper ───────────────────────────────────────────────────────
+  // ── Storage key helpers ───────────────────────────────────────────────────
 
-  const muteKey = (profileId: string) => `@hop/muted/${profileId}`;
+  const muteKey     = (profileId: string) => `@hop/muted/${profileId}`;
+  const blockedKey  = (profileId: string) => `@hop/blocked/${profileId}`;
+  const requestsKey = (profileId: string) => `@hop/requests/${profileId}`;
+
+  // Keep a ref so async callbacks always have the latest profile without
+  // needing to be recreated every time profile changes.
+  const profileRef = useRef<MyProfile | null>(null);
+  useEffect(() => { profileRef.current = profile; }, [profile]);
 
   // ── Persistence load ──────────────────────────────────────────────────────
 
@@ -180,13 +187,46 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           setIsOnboarding(true);
         }
 
+        // ── One-time migration: lift legacy unscoped keys → profile-scoped keys ──
+        // Before reading the scoped keys, check if legacy data exists and the
+        // scoped key is absent.  Copy the data over, then delete the old key so
+        // the migration never runs again.
+        if (profileId) {
+          const [legacyBlocked, legacyRequests, scopedBlocked, scopedRequests] = await Promise.all([
+            AsyncStorage.getItem('@hop/blocked'),
+            AsyncStorage.getItem('@hop/requests'),
+            AsyncStorage.getItem(blockedKey(profileId)),
+            AsyncStorage.getItem(requestsKey(profileId)),
+          ]);
+          const migrations: Promise<void>[] = [];
+          if (legacyBlocked && !scopedBlocked) {
+            migrations.push(
+              AsyncStorage.setItem(blockedKey(profileId), legacyBlocked).then(() =>
+                AsyncStorage.removeItem('@hop/blocked')
+              )
+            );
+          } else if (legacyBlocked) {
+            migrations.push(AsyncStorage.removeItem('@hop/blocked'));
+          }
+          if (legacyRequests && !scopedRequests) {
+            migrations.push(
+              AsyncStorage.setItem(requestsKey(profileId), legacyRequests).then(() =>
+                AsyncStorage.removeItem('@hop/requests')
+              )
+            );
+          } else if (legacyRequests) {
+            migrations.push(AsyncStorage.removeItem('@hop/requests'));
+          }
+          if (migrations.length > 0) await Promise.all(migrations);
+        }
+
         const [convStr, groupStr, bcastStr, mutedStr, reqStr, blockedStr] = await Promise.all([
           AsyncStorage.getItem('@hop/conversations'),
           AsyncStorage.getItem('@hop/groups'),
           AsyncStorage.getItem('@hop/broadcasts'),
-          profileId ? AsyncStorage.getItem(muteKey(profileId)) : Promise.resolve(null),
-          AsyncStorage.getItem('@hop/requests'),
-          AsyncStorage.getItem('@hop/blocked'),
+          profileId ? AsyncStorage.getItem(muteKey(profileId))     : Promise.resolve(null),
+          profileId ? AsyncStorage.getItem(requestsKey(profileId)) : Promise.resolve(null),
+          profileId ? AsyncStorage.getItem(blockedKey(profileId))  : Promise.resolve(null),
         ]);
         if (convStr) {
           const parsed: Conversation[] = JSON.parse(convStr);
@@ -280,7 +320,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
                 const preview = REQUEST_OPENERS[Math.floor(Math.random() * REQUEST_OPENERS.length)];
                 const req: MessageRequest = { id: createMessageId(), fromUser: sender, preview, timestamp: Date.now() };
                 const updated = [req, ...currentRequests];
-                AsyncStorage.setItem('@hop/requests', JSON.stringify(updated));
+                const pid = profileRef.current?.id;
+                if (pid) AsyncStorage.setItem(requestsKey(pid), JSON.stringify(updated));
                 return updated;
               }
               return currentRequests;
@@ -331,8 +372,10 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   };
 
   const completeOnboarding = async (username: string, color: string, avatarUri?: string) => {
-    // New profile → start with a clean mute list so state doesn't carry over.
+    // New profile → start with clean per-profile state so nothing carries over.
     setMutedIds(new Set());
+    setBlockedIds([]);
+    setMessageRequests([]);
     await setProfile({ id: createMessageId(), username, color, discoverable: true, avatarUri });
     setIsOnboarding(false);
   };
@@ -343,7 +386,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     setBlockedIds(prev => {
       if (prev.includes(userId)) return prev;
       const next = [...prev, userId];
-      AsyncStorage.setItem('@hop/blocked', JSON.stringify(next));
+      const pid = profileRef.current?.id;
+      if (pid) AsyncStorage.setItem(blockedKey(pid), JSON.stringify(next));
       return next;
     });
     setNearbyUsers(prev => prev.filter(u => u.id !== userId));
@@ -354,7 +398,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     });
     setMessageRequests(prev => {
       const next = prev.filter(r => r.fromUser.id !== userId);
-      AsyncStorage.setItem('@hop/requests', JSON.stringify(next));
+      const pid = profileRef.current?.id;
+      if (pid) AsyncStorage.setItem(requestsKey(pid), JSON.stringify(next));
       return next;
     });
   }, []);
@@ -380,7 +425,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       const req = prev.find(r => r.id === requestId);
       if (!req) return prev;
       const next = prev.filter(r => r.id !== requestId);
-      AsyncStorage.setItem('@hop/requests', JSON.stringify(next));
+      const pid = profileRef.current?.id;
+      if (pid) AsyncStorage.setItem(requestsKey(pid), JSON.stringify(next));
       setConversations(convs => {
         if (convs.find(c => c.userId === req.fromUser.id)) return convs;
         const initMsg: Message = {
@@ -407,7 +453,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const declineRequest = useCallback((requestId: string) => {
     setMessageRequests(prev => {
       const next = prev.filter(r => r.id !== requestId);
-      AsyncStorage.setItem('@hop/requests', JSON.stringify(next));
+      const pid = profileRef.current?.id;
+      if (pid) AsyncStorage.setItem(requestsKey(pid), JSON.stringify(next));
       return next;
     });
   }, []);

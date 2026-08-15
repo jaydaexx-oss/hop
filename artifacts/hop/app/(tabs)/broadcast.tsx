@@ -9,8 +9,10 @@ import {
   View,
 } from 'react-native';
 import { KeyboardAvoidingView } from 'react-native-keyboard-controller';
+import { router } from 'expo-router';
 import { useColors } from '@/hooks/useColors';
 import { Broadcast, useHop } from '@/context/HopContext';
+import { Avatar } from '@/components/Avatar';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import * as Haptics from 'expo-haptics';
@@ -25,34 +27,75 @@ function formatTime(ts: number): string {
 
 function BroadcastCard({
   item,
+  isOwn,
   colors,
+  onReply,
 }: {
   item: Broadcast;
+  isOwn: boolean;
   colors: ReturnType<typeof useColors>;
+  onReply: () => void;
 }) {
+  const Wrapper = isOwn ? View : Pressable;
+  const wrapperProps = isOwn ? {} : {
+    onPress: onReply,
+    style: ({ pressed }: { pressed: boolean }) => [
+      styles.card,
+      { backgroundColor: colors.card, opacity: pressed ? 0.82 : 1 },
+    ],
+  };
+
   return (
-    <View style={[styles.card, { backgroundColor: colors.card }]}>
-      <View style={[styles.cardAvatar, { backgroundColor: item.senderColor }]}>
-        <Text style={styles.cardAvatarText}>{item.senderName[0].toUpperCase()}</Text>
-      </View>
+    // @ts-ignore — Pressable/View conditional is fine at runtime
+    <Wrapper {...(isOwn ? { style: [styles.card, { backgroundColor: colors.card }] } : wrapperProps)}>
+      <Avatar
+        color={item.senderColor}
+        username={item.senderName}
+        size={38}
+      />
       <View style={styles.cardBody}>
         <View style={styles.cardMeta}>
-          <Text style={[styles.cardName, { color: colors.foreground }]}>{item.senderName}</Text>
+          <View style={styles.cardNameRow}>
+            <Text style={[styles.cardName, { color: colors.foreground }]}>{item.senderName}</Text>
+            {isOwn && (
+              <View style={[styles.ownBadge, { backgroundColor: colors.primary + '22' }]}>
+                <Text style={[styles.ownBadgeText, { color: colors.primary }]}>you</Text>
+              </View>
+            )}
+          </View>
           <Text style={[styles.cardTime, { color: colors.mutedForeground }]}>
             {formatTime(item.timestamp)}
           </Text>
         </View>
         <Text style={[styles.cardContent, { color: colors.foreground }]}>{item.content}</Text>
+        {!isOwn && (
+          <View style={styles.replyHint}>
+            <Ionicons name="arrow-undo-outline" size={11} color={colors.primary} />
+            <Text style={[styles.replyHintText, { color: colors.primary }]}>Tap to reply</Text>
+          </View>
+        )}
       </View>
-    </View>
+    </Wrapper>
   );
 }
 
 export default function BroadcastScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { broadcasts, sendBroadcast, profile } = useHop();
+  const { broadcasts, sendBroadcast, profile, openDirectMessage } = useHop();
   const [input, setInput] = useState('');
+
+  const handleReply = (item: Broadcast) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    const userId = openDirectMessage({
+      id: item.senderId,
+      username: item.senderName,
+      color: item.senderColor,
+      signal: 70,
+      angle: 0,
+    });
+    router.push(`/chat/${userId}`);
+  };
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 34 : insets.bottom;
@@ -81,7 +124,14 @@ export default function BroadcastScreen() {
         <FlatList
           data={broadcasts}
           keyExtractor={b => b.id}
-          renderItem={({ item }) => <BroadcastCard item={item} colors={colors} />}
+          renderItem={({ item }) => (
+            <BroadcastCard
+              item={item}
+              isOwn={item.senderId === profile?.id}
+              colors={colors}
+              onReply={() => handleReply(item)}
+            />
+          )}
           contentContainerStyle={styles.list}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
           ListEmptyComponent={
@@ -159,20 +209,16 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     gap: 12,
   },
-  cardAvatar: {
-    width: 38,
-    height: 38,
-    borderRadius: 19,
-    justifyContent: 'center',
-    alignItems: 'center',
-    flexShrink: 0,
-  },
-  cardAvatarText: { color: '#fff', fontWeight: 'bold' as const, fontSize: 15, fontFamily: 'Inter_700Bold' },
   cardBody: { flex: 1 },
-  cardMeta: { flexDirection: 'row', justifyContent: 'space-between', marginBottom: 5 },
+  cardMeta: { flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 5 },
+  cardNameRow: { flexDirection: 'row', alignItems: 'center', gap: 7, flexShrink: 1 },
   cardName: { fontSize: 13, fontFamily: 'Inter_600SemiBold' },
+  ownBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
+  ownBadgeText: { fontSize: 10, fontFamily: 'Inter_600SemiBold' },
   cardTime: { fontSize: 11, fontFamily: 'Inter_400Regular' },
   cardContent: { fontSize: 14, fontFamily: 'Inter_400Regular', lineHeight: 21 },
+  replyHint: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 7 },
+  replyHintText: { fontSize: 11, fontFamily: 'Inter_500Medium' },
   composer: {
     flexDirection: 'row',
     alignItems: 'flex-end',

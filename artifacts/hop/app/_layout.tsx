@@ -14,6 +14,7 @@ import {
 import { Stack } from 'expo-router';
 import * as SplashScreen from 'expo-splash-screen';
 import { HopProvider } from '@/context/HopContext';
+import { NotificationToast } from '@/components/NotificationToast';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -55,6 +56,7 @@ export default function RootLayout() {
             <KeyboardProvider>
               <HopProvider>
                 <RootLayoutNav />
+                <NotificationToast />
               </HopProvider>
             </KeyboardProvider>
           </GestureHandlerRootView>

@@ -57,6 +57,17 @@ export interface MyProfile {
   avatarUri?: string;
 }
 
+export interface ToastNotification {
+  /** 'dm' | 'group' */
+  kind: 'dm' | 'group';
+  /** userId for DMs, groupId for groups */
+  targetId: string;
+  senderName: string;
+  senderColor: string;
+  senderAvatarUri?: string;
+  content: string;
+}
+
 interface HopContextType {
   profile: MyProfile | null;
   isOnboarding: boolean;
@@ -67,6 +78,8 @@ interface HopContextType {
   broadcasts: Broadcast[];
   isScanning: boolean;
   totalUnread: number;
+  pendingToast: ToastNotification | null;
+  dismissToast: () => void;
   setProfile: (profile: MyProfile) => Promise<void>;
   sendMessage: (userId: string, content: string) => void;
   sendGroupMessage: (groupId: string, content: string) => void;
@@ -117,6 +130,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const [groupConversations, setGroupConversations] = useState<GroupConversation[]>([]);
   const [broadcasts, setBroadcasts] = useState<Broadcast[]>([]);
   const [isScanning, setIsScanning] = useState(false);
+  const [pendingToast, setPendingToast] = useState<ToastNotification | null>(null);
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
@@ -175,6 +189,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const saveGroups = async (groups: GroupConversation[]) =>
     AsyncStorage.setItem('@hop/groups', JSON.stringify(groups));
 
+  const dismissToast = () => setPendingToast(null);
+
   const setProfile = async (p: MyProfile) => {
     setProfileState(p);
     await AsyncStorage.setItem('@hop/profile', JSON.stringify(p));
@@ -223,6 +239,16 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         saveConvs(u);
         return u;
       });
+      // Fire toast so the global overlay can decide whether to show it
+      const sender = USER_POOL.find(u => u.id === userId);
+      setPendingToast({
+        kind: 'dm',
+        targetId: userId,
+        senderName: sender?.username ?? 'Someone',
+        senderColor: sender?.color ?? '#888',
+        senderAvatarUri: sender?.avatarUri,
+        content: replyContent,
+      });
     }, replyDelay);
   };
 
@@ -267,12 +293,13 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         const bots = group.members;
         if (bots.length === 0) return curr;
         const bot = bots[Math.floor(Math.random() * bots.length)];
+        const replyText = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
         const reply: Message = {
           id: replyId,
           senderId: bot.id,
           senderName: bot.username,
           senderColor: bot.color,
-          content: BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)],
+          content: replyText,
           timestamp: Date.now(),
           status: MessageStatus.DELIVERED,
         };
@@ -280,6 +307,15 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           g.id === groupId ? { ...g, messages: [...g.messages, reply], unread: 1 } : g
         );
         saveGroups(updated);
+        // Fire toast for the group reply
+        setPendingToast({
+          kind: 'group',
+          targetId: groupId,
+          senderName: bot.username,
+          senderColor: bot.color,
+          senderAvatarUri: bot.avatarUri,
+          content: replyText,
+        });
         return updated;
       });
     }, replyDelay);
@@ -354,6 +390,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       profile, isOnboarding, loaded, nearbyUsers,
       conversations, groupConversations, broadcasts,
       isScanning, totalUnread,
+      pendingToast, dismissToast,
       setProfile, sendMessage, sendGroupMessage, sendBroadcast,
       createGroup, getConversation, getGroupConversation,
       markRead, markGroupRead, completeOnboarding,

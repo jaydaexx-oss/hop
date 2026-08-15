@@ -438,12 +438,29 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const toggleMute = async (id: string) => {
     if (!profile) return;
     const key = muteKey(profile.id);
-    setMutedIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      AsyncStorage.setItem(key, JSON.stringify([...next]));
-      return next;
-    });
+    // Capture the operation direction before touching state.  We cannot use
+    // the snapshot for rollback (stale if concurrent toggles are in-flight),
+    // but we can use it to know which direction to reverse.
+    const wasMuted = mutedIds.has(id);
+
+    // Compute the new set from the current snapshot and apply it optimistically.
+    const next = new Set(mutedIds);
+    wasMuted ? next.delete(id) : next.add(id);
+    setMutedIds(next);
+
+    try {
+      await AsyncStorage.setItem(key, JSON.stringify([...next]));
+    } catch {
+      // Write failed — surgically reverse only this operation using a
+      // functional updater so we never clobber concurrent toggles that
+      // succeeded between our optimistic update and this rollback.
+      setMutedIds(current => {
+        const rolled = new Set(current);
+        wasMuted ? rolled.add(id) : rolled.delete(id);
+        return rolled;
+      });
+      setToastQueue(storageErrorToastUpdater);
+    }
   };
   const isMuted = (id: string) => mutedIds.has(id);
 

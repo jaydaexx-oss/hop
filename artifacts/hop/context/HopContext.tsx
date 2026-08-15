@@ -173,6 +173,11 @@ export function storageErrorToastUpdater(prev: ToastNotification[]): ToastNotifi
   return [...prev, { kind: 'error', content: "Couldn't save messages — storage may be full." }];
 }
 
+export function profileErrorToastUpdater(prev: ToastNotification[]): ToastNotification[] {
+  if (prev.some(t => t.kind === 'error')) return prev;
+  return [...prev, { kind: 'error', content: "Couldn't save your profile — please try again." }];
+}
+
 const HopContext = createContext<HopContextType | null>(null);
 
 // ─── Provider ─────────────────────────────────────────────────────────────────
@@ -458,7 +463,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       // remains in onboarding and the user can retry.  No partial state should
       // leak to a subsequent launch because the key was never written.
       setProfileState(null);
-      setToastQueue(storageErrorToastUpdater);
+      setToastQueue(profileErrorToastUpdater);
       return;
     }
     setIsOnboarding(false);

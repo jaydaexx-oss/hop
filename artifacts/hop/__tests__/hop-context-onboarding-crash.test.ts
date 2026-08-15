@@ -101,7 +101,13 @@ describe('HopContext — completeOnboarding storage failure', () => {
     });
     await flushMicrotasks();
 
-    expect(result.current.pendingToast).toMatchObject({ kind: 'error' });
+    expect(result.current.pendingToast).toMatchObject({
+      kind: 'error',
+      content: "Couldn't save your profile — please try again.",
+    });
+    expect(result.current.pendingToast).not.toMatchObject({
+      content: expect.stringContaining('messages'),
+    });
   });
 });
 

@@ -210,13 +210,16 @@ function GroupItem({
 export default function MessagesScreen() {
   const colors = useColors();
   const insets = useSafeAreaInsets();
-  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup, undoDeleteConversation, undoDeleteGroup, isMuted } = useHop();
+  const { conversations, groupConversations, messageRequests, blockUser, reportUser, deleteConversation, deleteGroup, undoDeleteConversation, undoDeleteGroup, isMuted, toggleMute } = useHop();
 
   const topPad = Platform.OS === 'web' ? 67 : insets.top;
   const bottomPad = Platform.OS === 'web' ? 100 : insets.bottom + 60;
 
-  // Action sheet state — holds the user to show actions for
-  const [sheetTarget, setSheetTarget] = useState<{ user: HopUser; isDM: boolean } | null>(null);
+  // Action sheet state
+  type SheetTarget =
+    | { kind: 'dm'; user: HopUser }
+    | { kind: 'group'; group: GroupConversation };
+  const [sheetTarget, setSheetTarget] = useState<SheetTarget | null>(null);
 
   // Undo-delete state
   const [undoPending, setUndoPending] = useState<{ label: string; onUndo: () => void } | null>(null);
@@ -261,7 +264,12 @@ export default function MessagesScreen() {
 
   const openDMSheet = (conv: Conversation) => {
     Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    setSheetTarget({ user: conv.user, isDM: true });
+    setSheetTarget({ kind: 'dm', user: conv.user });
+  };
+
+  const openGroupSheet = (group: GroupConversation) => {
+    Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+    setSheetTarget({ kind: 'group', group });
   };
 
   const handleDeleteConv = (conv: Conversation) => {
@@ -342,10 +350,7 @@ export default function MessagesScreen() {
                 group={item as GroupConversation}
                 muted={isMuted((item as GroupConversation).id)}
                 onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push(`/group/${(item as GroupConversation).id}`); }}
-                onLongPress={() => {
-                  Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-                  Alert.alert((item as GroupConversation).name, `${(item as GroupConversation).members.length} members in this group`);
-                }}
+                onLongPress={() => openGroupSheet(item as GroupConversation)}
                 onDelete={() => handleDeleteGroup(item as GroupConversation)}
                 colors={colors}
               />
@@ -400,9 +405,9 @@ export default function MessagesScreen() {
       )}
 
       {/* DM action sheet */}
-      {sheetTarget?.isDM && (
+      {sheetTarget?.kind === 'dm' && (
         <ActionSheet
-          visible={!!sheetTarget}
+          visible
           onDismiss={() => setSheetTarget(null)}
           user={{
             username: sheetTarget.user.username,
@@ -415,6 +420,11 @@ export default function MessagesScreen() {
               label: 'Message',
               icon: 'chatbubble-outline',
               onPress: () => { setSheetTarget(null); router.push(`/chat/${sheetTarget.user.id}`); },
+            },
+            {
+              label: isMuted(sheetTarget.user.id) ? 'Unmute' : 'Mute',
+              icon: isMuted(sheetTarget.user.id) ? 'notifications-outline' : 'notifications-off-outline',
+              onPress: () => { const id = sheetTarget.user.id; setSheetTarget(null); toggleMute(id); },
             },
             {
               label: 'Report',
@@ -436,6 +446,26 @@ export default function MessagesScreen() {
                   ]);
                 }, 150);
               },
+            },
+          ]}
+        />
+      )}
+
+      {/* Group action sheet */}
+      {sheetTarget?.kind === 'group' && (
+        <ActionSheet
+          visible
+          onDismiss={() => setSheetTarget(null)}
+          user={{
+            username: sheetTarget.group.name,
+            color: sheetTarget.group.members[0]?.color ?? '#888',
+            subtitle: `${sheetTarget.group.members.length} members`,
+          }}
+          actions={[
+            {
+              label: isMuted(sheetTarget.group.id) ? 'Unmute' : 'Mute',
+              icon: isMuted(sheetTarget.group.id) ? 'notifications-outline' : 'notifications-off-outline',
+              onPress: () => { const id = sheetTarget.group.id; setSheetTarget(null); toggleMute(id); },
             },
           ]}
         />

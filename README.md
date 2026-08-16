@@ -52,8 +52,11 @@ cd apps/api
 source .venv/bin/activate
 pip install -r requirements-test.txt
 pip install uvicorn
-DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=http://localhost:8081 uvicorn app.main:app --reload --port 8000
+DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=http://localhost:8081 \
+  uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
+
+`--host 0.0.0.0` is required so a physical iPhone on your LAN can reach the API. Simulator-only use can stay on 127.0.0.1.
 
 Postgres migrations (when Postgres is running):
 
@@ -62,16 +65,18 @@ cd apps/api
 alembic upgrade head
 ```
 
-Mobile:
+Mobile (development client — **not Expo Go**):
 
 ```bash
-cp .env.example .env
+cp apps/mobile/.env.example apps/mobile/.env
+# Physical iPhone: set EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000 in apps/mobile/.env
 cd apps/mobile
 npm install
-npx expo start --dev-client
+npx expo prebuild --platform ios
+npx expo run:ios --device
 ```
 
-Nearby BLE requires a **development build** on a physical iPhone and Android phone. Expo Go, simulators, and web are not valid BLE tests. Exact steps: `docs/BLE_TESTING.md`.
+Install steps, signing, and diagnostics: **`docs/IOS_DEVICE_TESTING.md`**. Nearby BLE procedure: **`docs/BLE_TESTING.md`**. Simulators, Expo Go, and web are not valid BLE tests.
 
 Android emulator: `EXPO_PUBLIC_API_URL=http://10.0.2.2:8000`.
 

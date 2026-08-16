@@ -12,13 +12,17 @@ HOP BLE has **not** been verified on hardware in this environment (no Xcode / no
 - Two HOP accounts (different usernames)
 - Bluetooth on, phones a few meters apart, screens awake, **Nearby tab open on both**
 
-Expo Go cannot load `munim-bluetooth`. You must install a **development build**.
+Expo Go cannot load `munim-bluetooth`. You must install a **development build**. Exact iPhone install + LAN API steps for this repo: **`docs/IOS_DEVICE_TESTING.md`**.
+
+Physical phones must **not** use `EXPO_PUBLIC_API_URL=http://127.0.0.1:8000` (localhost on the phone is the phone). Use `http://<Mac-LAN-IP>:8000` on the same Wi-Fi, with the API bound to `0.0.0.0`, or `https://<API_DOMAIN>`.
 
 ## 1. Build development clients
 
 From `apps/mobile` after `npm install`:
 
 ### iOS (physical device)
+
+See **`docs/IOS_DEVICE_TESTING.md`** for API URL, signing, and diagnostics.
 
 ```bash
 cd apps/mobile

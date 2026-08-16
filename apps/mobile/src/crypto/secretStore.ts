@@ -18,6 +18,9 @@ async function nativeStore(): Promise<typeof import('expo-secure-store') | null>
 }
 
 function failClosed(): boolean {
+  // Development client + Metro: __DEV__ is true, so a memory fallback is allowed if
+  // SecureStore is missing (web/tests). TestFlight / release must ship with __DEV__ false
+  // and NODE_ENV=production so this path fails closed — never weaken that for store builds.
   const isDev = typeof __DEV__ === 'undefined' ? process.env.NODE_ENV !== 'production' : __DEV__;
   return shouldFailClosedSecretStore({
     isDev,

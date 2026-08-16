@@ -6,7 +6,8 @@ FastAPI backend for register/login, 1:1 conversations, opaque `crypto_box` messa
 
 | Environment | URL |
 |---|---|
-| Local (no Docker) | `http://127.0.0.1:8000` |
+| Local (no Docker) | `http://127.0.0.1:8000` (Simulator / this Mac). Bind `--host 0.0.0.0` for phones. |
+| Physical iPhone (same Wi-Fi) | `http://<MAC_LAN_IP>:8000` — never `127.0.0.1` on the device. See `docs/IOS_DEVICE_TESTING.md`. |
 | Local Docker | `http://127.0.0.1:8000` (dev compose) |
 | Production | `https://<API_DOMAIN>` |
 

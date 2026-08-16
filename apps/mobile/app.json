@@ -13,7 +13,11 @@
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "HOP uses Bluetooth to find nearby HOP users and exchange a message when Nearby is open.",
         "NSBluetoothPeripheralUsageDescription": "HOP uses Bluetooth to be discoverable by nearby HOP users while Nearby is open.",
-        "NSMicrophoneUsageDescription": "HOP records short voice messages you send to other HOP users."
+        "NSMicrophoneUsageDescription": "HOP records short voice messages you send to other HOP users.",
+        "NSLocalNetworkUsageDescription": "HOP talks to your development API on the local network when EXPO_PUBLIC_API_URL is your Mac LAN address. Nearby uses Bluetooth, not Wi-Fi multicast.",
+        "NSAppTransportSecurity": {
+          "NSAllowsLocalNetworking": true
+        }
       }
     },
     "android": {
@@ -63,7 +67,11 @@
         "munim-bluetooth",
         {
           "androidBluetoothPermissions": ["scan", "connect", "advertise"],
-          "localNetworkUsageDescription": "HOP Nearby uses Bluetooth Low Energy, not your local network, to find nearby HOP users."
+          "bluetoothAlwaysUsageDescription": "HOP uses Bluetooth to find nearby HOP users and exchange a message when Nearby is open.",
+          "bluetoothPeripheralUsageDescription": "HOP uses Bluetooth to be discoverable by nearby HOP users while Nearby is open.",
+          "localNetworkUsageDescription": "HOP talks to your development API on the local network when EXPO_PUBLIC_API_URL is your Mac LAN address. Nearby uses Bluetooth, not Wi-Fi multicast.",
+          "bluetoothBackground": false,
+          "multipeerServiceTypes": false
         }
       ]
     ],

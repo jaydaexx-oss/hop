@@ -55,6 +55,7 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="chat/[id]" options={{ title: 'Chat' }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
+        <Stack.Screen name="device-diagnostics" options={{ title: 'Diagnostics' }} />
       </Stack>
     </ThemeProvider>
   );

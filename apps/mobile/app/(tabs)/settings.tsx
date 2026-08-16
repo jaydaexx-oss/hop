@@ -1,4 +1,5 @@
 import { Alert, Pressable, StyleSheet } from 'react-native';
+import { useRouter } from 'expo-router';
 
 import { Text, View } from '@/components/Themed';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -15,6 +16,7 @@ export default function SettingsScreen() {
   const { identityError } = useOffline();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
+  const router = useRouter();
 
   function confirmReplaceIdentity() {
     if (!user) return;
@@ -70,6 +72,13 @@ export default function SettingsScreen() {
       <Pressable onPress={confirmReplaceIdentity} style={[styles.button, { borderColor: '#DC2626' }]}>
         <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Replace local identity keys</Text>
       </Pressable>
+      {__DEV__ ? (
+        <Pressable
+          onPress={() => router.push('/device-diagnostics')}
+          style={[styles.button, { borderColor: colors.tint }]}>
+          <Text style={[styles.buttonLabel, { color: colors.tint }]}>Device diagnostics</Text>
+        </Pressable>
+      ) : null}
       <Pressable onPress={logout} style={[styles.button, { borderColor: colors.tint }]}>
         <Text style={[styles.buttonLabel, { color: colors.tint }]}>Log out</Text>
       </Pressable>

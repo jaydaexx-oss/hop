@@ -1,4 +1,4 @@
-import { Redirect } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { useState } from 'react';
 import {
   KeyboardAvoidingView,
@@ -13,9 +13,11 @@ import { Text } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { LOOPBACK_API_DEVICE_HINT, apiUrlUsesLoopback } from '@/src/api/client';
 
 export default function LoginScreen() {
   const { user, login, register, error } = useAuth();
+  const router = useRouter();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const [mode, setMode] = useState<'login' | 'register'>('login');
@@ -64,6 +66,7 @@ export default function LoginScreen() {
           style={[styles.input, { color: colors.text, backgroundColor: colors.card, borderColor: colors.tabIconDefault }]}
         />
         {(localError || error) && <Text style={styles.error}>{localError || error}</Text>}
+        {__DEV__ && apiUrlUsesLoopback() ? <Text style={styles.error}>{LOOPBACK_API_DEVICE_HINT}</Text> : null}
         <Pressable
           onPress={submit}
           disabled={busy || !username || password.length < 8}
@@ -75,6 +78,11 @@ export default function LoginScreen() {
             {mode === 'login' ? 'Need an account? Register' : 'Have an account? Log in'}
           </Text>
         </Pressable>
+        {__DEV__ ? (
+          <Pressable onPress={() => router.push('/device-diagnostics')}>
+            <Text style={[styles.switch, { color: colors.tint }]}>Device diagnostics</Text>
+          </Pressable>
+        ) : null}
       </View>
     </KeyboardAvoidingView>
   );

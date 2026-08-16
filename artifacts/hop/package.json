@@ -68,6 +68,7 @@
     "expo-audio": "~1.1.1",
     "expo-av": "~16.0.8",
     "expo-camera": "^57.0.3",
+    "react-native-ble-plx": "^3.5.1",
     "react-native-qrcode-svg": "^6.3.21"
   }
 }

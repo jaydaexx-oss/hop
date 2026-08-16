@@ -4,6 +4,8 @@ import { Alert } from 'react-native';
 import { saveConvs, saveGroups, saveBroadcasts } from './storage';
 import { createMessageId, MessageStatus } from '@/protocol/message';
 import { ProcessedIdSet } from '@/protocol/duplicates';
+import { useBluetoothDiscovery } from '@/hooks/useBluetoothDiscovery';
+import type { BleDiscoveryStatus } from '@/hooks/useBluetoothDiscovery';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -121,6 +123,14 @@ interface HopContextType {
   undoDeleteConversation: (conv: Conversation) => void;
   undoDeleteGroup: (group: GroupConversation) => void;
   openDirectMessage: (user: HopUser) => string;
+  /**
+   * Profile IDs of HOP peers verified over real BLE.
+   * Empty in Expo Go / web preview — populated only on physical devices with
+   * a dev build that have run the BLE discovery flow.
+   */
+  verifiedBlePeers: ReadonlySet<string>;
+  /** State of the BLE radio / scan cycle on this device. */
+  bleState: BleDiscoveryStatus;
 }
 
 // ─── Simulated nearby user pool ───────────────────────────────────────────────
@@ -189,6 +199,12 @@ const HopContext = createContext<HopContextType | null>(null);
 // ─── Provider ─────────────────────────────────────────────────────────────────
 
 export function HopProvider({ children }: { children: React.ReactNode }) {
+  // ── Real BLE discovery ────────────────────────────────────────────────────
+  // On native dev builds: actively scans for HOP peripherals, populates
+  // verifiedBlePeers with confirmed profile IDs.
+  // On web / Expo Go: returns { status: 'unsupported', verifiedBlePeers: empty Set }.
+  const { status: bleState, verifiedBlePeers } = useBluetoothDiscovery();
+
   const [profile, setProfileState] = useState<MyProfile | null>(null);
   const [isOnboarding, setIsOnboarding] = useState(false);
   const [loaded, setLoaded] = useState(false);
@@ -947,6 +963,7 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       markRead, markGroupRead, completeOnboarding, clearHistory,
       blockUser, reportUser, acceptRequest, declineRequest,
       deleteConversation, deleteGroup, leaveGroup, rejoinGroup, undoDeleteConversation, undoDeleteGroup, openDirectMessage,
+      verifiedBlePeers, bleState,
     }}>
       {children}
     </HopContext.Provider>

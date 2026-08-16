@@ -18,6 +18,8 @@ import * as Haptics from 'expo-haptics';
 import { Avatar } from '@/components/Avatar';
 import { PTTButton } from '@/components/PTTButton';
 import { VoiceMessageBubble } from '@/components/VoiceMessageBubble';
+import { TransportBadge, OfflineQueueBanner } from '@/components/TransportBadge';
+import { useTransportState } from '@/hooks/useTransportState';
 
 export default function ChatScreen() {
   const colors = useColors();
@@ -29,6 +31,7 @@ export default function ChatScreen() {
   } = useHop();
   const [input, setInput] = useState('');
   const [inputMode, setInputMode] = useState<'text' | 'ptt'>('text');
+  const transport = useTransportState(id);
 
   const conv = id ? getConversation(id) : undefined;
   const nearUser = id ? nearbyUsers.find(u => u.id === id) : undefined;
@@ -121,10 +124,7 @@ export default function ChatScreen() {
         <Avatar uri={userAvatarUri} color={userColor} username={userName} size={36} />
         <View style={styles.headerInfo}>
           <Text style={[styles.headerName, { color: colors.foreground }]}>{userName}</Text>
-          <View style={styles.headerSub}>
-            <View style={[styles.onlineDot, { backgroundColor: colors.primary }]} />
-            <Text style={[styles.headerSubText, { color: colors.mutedForeground }]}>nearby</Text>
-          </View>
+          <TransportBadge kind={transport.kind} label={transport.label} colors={colors} />
         </View>
         <Pressable onPress={() => id && toggleMute(id)} hitSlop={12} style={styles.muteBtn}>
           <Ionicons
@@ -136,6 +136,9 @@ export default function ChatScreen() {
       </View>
 
       <KeyboardAvoidingView behavior="padding" style={styles.flex} keyboardVerticalOffset={0}>
+        {/* Offline queue banner */}
+        {transport.hasQueue && <OfflineQueueBanner colors={colors} />}
+
         {/* Messages */}
         <FlatList
           data={[...messages].reverse()}

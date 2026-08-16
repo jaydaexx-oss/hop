@@ -10,17 +10,11 @@ import {
 } from 'react';
 import { AppState } from 'react-native';
 import {
-  DEFAULT_TTL_MS,
   BluetoothTransport,
   createBluetoothTransport,
-  createMessage,
   decryptApplicationMessage,
-  decodeUnencryptedText,
-  encryptApplicationMessage,
-  toEnvelope,
   type BleLinkStatus,
   type BlePeer,
-  type EncryptedEnvelope,
   type IdentityKeyPair,
 } from '@hop/protocol';
 
@@ -134,13 +128,17 @@ export function BleProvider({ children }: { children: ReactNode }) {
           appendLog(`Delivery acknowledgment for ${plain.ack_of ?? envelope.message_id}.`);
           return true;
         }
-        appendLog(`Received encrypted message from ${from.displayName}.`);
+        appendLog(
+          plain.kind === 'voice'
+            ? `Received encrypted voice message from ${from.displayName}.`
+            : `Received encrypted message from ${from.displayName}.`,
+        );
         const stored = {
           message_id: plain.message_id,
           conversation_id: plain.conversation_id,
           sender_id: plain.sender_id,
           recipient_id: plain.recipient_id,
-          text: plain.text,
+          text: null,
           encrypted_payload: envelope.encrypted_payload,
           status: 'DELIVERED' as const,
           transport: 'bluetooth' as const,
@@ -173,35 +171,8 @@ export function BleProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!manager) return;
     const engine = engineRef.current;
-    const transport = createBluetoothTransport(
-      engine,
-      (envelope) =>
-        engine.listPeers().find((peer) => peer.userId === envelope.recipient_id)?.deviceId ?? null,
-      async (envelope) => {
-        const me = userRef.current;
-        if (!me) throw new Error('Sign in before sending nearby.');
-        const identity = identityRef.current ?? (await loadOrCreateIdentity(me.id));
-        identityRef.current = identity;
-        const peer = engine.listPeers().find((item) => item.userId === envelope.recipient_id);
-        if (!peer?.publicKey) throw new Error('Secure session is not established.');
-        const text = decodeUnencryptedText(envelope.encrypted_payload);
-        if (!text) throw new Error('No plaintext to seal for BLE.');
-        return encryptApplicationMessage(
-          {
-            message_id: envelope.message_id,
-            sender_id: envelope.sender_id,
-            recipient_id: envelope.recipient_id,
-            conversation_id: envelope.conversation_id,
-            text,
-            created_at: envelope.created_at,
-            expires_at: envelope.expires_at,
-            ttl: envelope.ttl,
-            hop_count: 0,
-          },
-          peer.publicKey,
-          identity,
-        );
-      },
+    const transport = createBluetoothTransport(engine, (envelope) =>
+      engine.listPeers().find((peer) => peer.userId === envelope.recipient_id)?.deviceId ?? null,
     );
     manager.register(transport);
     return () => {
@@ -311,71 +282,46 @@ export function BleProvider({ children }: { children: ReactNode }) {
 
   const sendTestPayload = useCallback(
     async (deviceId: string) => {
+      if (!__DEV__) {
+        setError('Nearby debug ping is not available in production builds.');
+        return;
+      }
       const me = userRef.current;
       if (!me) return;
       const peer = engineRef.current.listPeers().find((item) => item.deviceId === deviceId);
-      const recipient = peer?.userId ?? me.id;
-      const identity = identityRef.current;
-      if (!identity) {
-        setError('Identity keys are not ready.');
+      if (!peer?.userId || peer.userId === me.id) {
+        setError('Cannot send without a real recipient');
         return;
       }
-      if (!peer?.publicKey) {
+      if (!peer.publicKey) {
         setError('Secure session is not established.');
         return;
       }
-      const message = createMessage({
-        sender_id: me.id,
-        recipient_id: recipient,
-        conversation_id: `ble:${[me.id, recipient].sort().join(':')}`,
-      });
-      const text = `nearby ping from ${me.username}`;
-      const encrypted_payload = await encryptApplicationMessage(
-        {
-          message_id: message.message_id,
-          sender_id: message.sender_id,
-          recipient_id: message.recipient_id,
-          conversation_id: message.conversation_id,
-          text,
-          created_at: message.created_at,
-          expires_at: message.expires_at,
-          ttl: message.ttl,
-          hop_count: 0,
-        },
-        peer.publicKey,
-        identity,
-      );
-      const envelope: EncryptedEnvelope = toEnvelope({
-        ...message,
-        encrypted_payload,
-        transport: 'bluetooth',
+      const svc = serviceRef.current;
+      const sqlite = storeRef.current;
+      if (!svc || !sqlite) {
+        setError('Messaging is not ready.');
+        return;
+      }
+      const ids = [me.id, peer.userId].sort();
+      const conversationId = `ble:${ids.join(':')}`;
+      await sqlite.saveConversation({
+        id: conversationId,
+        peer_id: peer.userId,
+        peer_username: peer.displayName || 'HOP user',
+        peer_public_key: peer.publicKey,
+        created_at: new Date().toISOString(),
       });
       setBusy(true);
       setError(null);
       try {
-        const result = await engineRef.current.send(deviceId, envelope);
-        if (!result.ok) {
-          setError(result.error ?? 'BLE send failed');
-          return;
-        }
-        appendLog(`Sent encrypted message to ${peer?.displayName ?? 'peer'}.`);
-        const sqlite = storeRef.current;
-        if (sqlite) {
-          await sqlite.saveMessage({
-            message_id: envelope.message_id,
-            conversation_id: envelope.conversation_id,
-            sender_id: envelope.sender_id,
-            recipient_id: envelope.recipient_id,
-            text: null,
-            encrypted_payload: envelope.encrypted_payload,
-            status: 'SENT',
-            transport: 'bluetooth',
-            created_at: envelope.created_at,
-            expires_at: envelope.expires_at,
-            ttl: envelope.ttl ?? DEFAULT_TTL_MS,
-            hop_count: 0,
-          });
-        }
+        await svc.sendText({
+          conversation_id: conversationId,
+          sender_id: me.id,
+          recipient_id: peer.userId,
+          text: `nearby ping from ${me.username}`,
+        });
+        appendLog(`Sent encrypted debug ping to ${peer.displayName} via MessageService.`);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'BLE send failed');
       } finally {

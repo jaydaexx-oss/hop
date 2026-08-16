@@ -87,6 +87,7 @@ export default function NearbyScreen() {
   const visiblePeers = peers.filter((peer) => peer.userId !== user?.id);
 
   async function messagePeer(peer: BlePeer) {
+    // Production CTA: open the 1:1 thread, then ChatScreen sends via MessageService.
     if (!user || !peer.userId) return;
     setOpeningId(peer.deviceId);
     setOpenError(null);

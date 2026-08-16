@@ -17,13 +17,17 @@ import {
   type StoredMessage,
 } from '@hop/protocol';
 
+import { PTTButton, type VoiceClip } from '@/components/PTTButton';
 import { Text, View } from '@/components/Themed';
+import { VoiceMessageBubble } from '@/components/VoiceMessageBubble';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { api, type ChatMessage } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
+import { sendChatText, sendChatVoice } from '@/src/chat/sendChat';
 import { storedToChat, useOffline } from '@/src/offline/OfflineProvider';
+import { clearVoicePlaybackTemps } from '@/src/voice/cache';
 import { useHopSocket } from '@/src/ws';
 
 export default function ChatScreen() {
@@ -38,6 +42,7 @@ export default function ChatScreen() {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [recipientId, setRecipientId] = useState(peerId ?? '');
+  const [inputMode, setInputMode] = useState<'text' | 'ptt'>('text');
   const [sending, setSending] = useState(false);
 
   const lastOutbound = useMemo(
@@ -76,6 +81,12 @@ export default function ChatScreen() {
       ),
     });
   }, [navigation, peer, transportView.line, colors.muted]);
+
+  useEffect(() => {
+    return () => {
+      clearVoicePlaybackTemps().catch(() => undefined);
+    };
+  }, []);
 
   const load = useCallback(async () => {
     if (!id) return;
@@ -155,6 +166,10 @@ export default function ChatScreen() {
 
   async function send() {
     if (!id || !draft.trim() || !service || sending) return;
+    if (!recipientId || recipientId === me.id) {
+      setError('Cannot send without a real recipient');
+      return;
+    }
     const text = draft.trim();
     setDraft('');
     setError(null);
@@ -162,7 +177,7 @@ export default function ChatScreen() {
     const optimistic: ChatMessage = {
       message_id: `sending-${Date.now()}`,
       sender_id: me.id,
-      recipient_id: recipientId || me.id,
+      recipient_id: recipientId,
       conversation_id: id,
       text,
       status: 'SENDING',
@@ -171,10 +186,10 @@ export default function ChatScreen() {
     };
     setMessages((current) => [...current, optimistic]);
     try {
-      const sent = await service.sendText({
+      const sent = await sendChatText(service, {
         conversation_id: id,
         sender_id: me.id,
-        recipient_id: recipientId || me.id,
+        recipient_id: recipientId,
         text,
       });
       setMessages((current) => [
@@ -195,6 +210,39 @@ export default function ChatScreen() {
     }
   }
 
+  async function sendVoice(clip: VoiceClip) {
+    if (!id || !service || sending) return;
+    if (!recipientId || recipientId === me.id) {
+      setError('Cannot send without a real recipient');
+      return;
+    }
+    setError(null);
+    setSending(true);
+    try {
+      const sent = await sendChatVoice(service, {
+        conversation_id: id,
+        sender_id: me.id,
+        recipient_id: recipientId,
+        audio_b64: clip.audio_b64,
+        duration_ms: clip.duration_ms,
+        mime: clip.mime,
+      });
+      setMessages((current) => [
+        ...current.filter((row) => row.message_id !== sent.message_id),
+        storedToChat(sent),
+      ]);
+      await syncNow();
+      if (service) {
+        const local = await service.listMessages(id);
+        setMessages(local.map(storedToChat));
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Voice send failed');
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
@@ -208,15 +256,30 @@ export default function ChatScreen() {
         renderItem={({ item }) => {
           const mine = item.sender_id === me.id;
           const failed = isFailedMessageStatus(item.status);
+          const voice = item.kind === 'voice';
           return (
             <View style={[styles.bubbleWrap, mine ? styles.mineWrap : styles.theirsWrap]}>
-              <View
-                style={[
-                  styles.bubble,
-                  { backgroundColor: mine ? colors.tint : colors.card },
-                ]}>
-                <Text style={{ color: mine ? '#042f2e' : colors.text }}>{item.text ?? '[encrypted]'}</Text>
-              </View>
+              {voice ? (
+                <VoiceMessageBubble
+                  messageId={item.message_id}
+                  audioB64={item.audio_b64}
+                  durationMs={item.duration_ms}
+                  mime={item.mime}
+                  isMe={mine}
+                  tint={colors.tint}
+                  tintForeground="#042f2e"
+                  card={colors.card}
+                  muted={colors.muted}
+                />
+              ) : (
+                <View
+                  style={[
+                    styles.bubble,
+                    { backgroundColor: mine ? colors.tint : colors.card },
+                  ]}>
+                  <Text style={{ color: mine ? '#042f2e' : colors.text }}>{item.text ?? '[encrypted]'}</Text>
+                </View>
+              )}
               {mine ? (
                 <Text style={[styles.status, { color: failed ? '#DC2626' : colors.muted }]}>
                   {formatMessageStatus(item.status)}
@@ -227,19 +290,43 @@ export default function ChatScreen() {
         }}
       />
       <View style={[styles.composer, { backgroundColor: colors.background }]}>
-        <TextInput
-          value={draft}
-          onChangeText={setDraft}
-          placeholder="Message"
-          placeholderTextColor={colors.muted}
-          style={[styles.input, { color: colors.text, backgroundColor: colors.card }]}
-        />
-        <Pressable
-          onPress={send}
-          disabled={sending}
-          style={[styles.send, { backgroundColor: colors.tint, opacity: sending ? 0.6 : 1 }]}>
-          <Text style={styles.sendLabel}>Send</Text>
-        </Pressable>
+        {inputMode === 'ptt' ? (
+          <View style={styles.pttRow}>
+            <PTTButton
+              tint={colors.tint}
+              tintForeground="#042f2e"
+              muted={colors.muted}
+              card={colors.card}
+              onSend={sendVoice}
+            />
+            <Pressable
+              onPress={() => setInputMode('text')}
+              style={[styles.toggle, { backgroundColor: colors.card }]}>
+              <Text style={[styles.toggleLabel, { color: colors.text }]}>Aa</Text>
+            </Pressable>
+          </View>
+        ) : (
+          <>
+            <Pressable
+              onPress={() => setInputMode('ptt')}
+              style={[styles.toggle, { backgroundColor: colors.card }]}>
+              <Text style={[styles.toggleLabel, { color: colors.tint }]}>PTT</Text>
+            </Pressable>
+            <TextInput
+              value={draft}
+              onChangeText={setDraft}
+              placeholder="Message"
+              placeholderTextColor={colors.muted}
+              style={[styles.input, { color: colors.text, backgroundColor: colors.card }]}
+            />
+            <Pressable
+              onPress={send}
+              disabled={sending}
+              style={[styles.send, { backgroundColor: colors.tint, opacity: sending ? 0.6 : 1 }]}>
+              <Text style={styles.sendLabel}>Send</Text>
+            </Pressable>
+          </>
+        )}
       </View>
     </KeyboardAvoidingView>
   );
@@ -256,8 +343,11 @@ const styles = StyleSheet.create({
   bubble: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
   status: { fontSize: 11, marginTop: 2 },
   composer: { flexDirection: 'row', gap: 8, padding: 12, alignItems: 'center' },
+  pttRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   input: { flex: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, fontSize: 16 },
   send: { borderRadius: 16, paddingHorizontal: 16, paddingVertical: 10 },
   sendLabel: { color: '#042f2e', fontWeight: '700' },
+  toggle: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 10, minHeight: 44, justifyContent: 'center' },
+  toggleLabel: { fontWeight: '700', fontSize: 13 },
   error: { color: '#DC2626', paddingHorizontal: 16, paddingTop: 8 },
 });

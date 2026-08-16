@@ -3,6 +3,7 @@ import { createInternetTransport } from "./internetTransport.js";
 import { LocalTransport } from "./localTransport.js";
 import { isExpired } from "./message.js";
 import { DEFAULT_RETRY_POLICY, nextBackoffMs, type RetryPolicy } from "./retry.js";
+import { isBoxedEnvelopePayload, refuseUnencryptedPayloadError } from "./sendGuards.js";
 import { createBluetoothTransport } from "./bluetoothTransport.js";
 import { createRelayTransport } from "./stubTransports.js";
 import type {
@@ -69,8 +70,8 @@ export class TransportManager {
    * If a selected transport's send fails, the next live route is tried.
    */
   async send(envelope: EncryptedEnvelope): Promise<SendResult> {
-    if (!envelope.encrypted_payload) {
-      return { ok: false, transport: "local", error: "Refusing to send empty/plaintext payload" };
+    if (!isBoxedEnvelopePayload(envelope.encrypted_payload)) {
+      return { ok: false, transport: "local", error: refuseUnencryptedPayloadError() };
     }
     if (isExpired(envelope)) {
       return { ok: false, transport: envelope.transport, error: "Message expired" };
@@ -89,8 +90,8 @@ export class TransportManager {
   }
 
   async enqueue(envelope: EncryptedEnvelope, now = new Date()): Promise<SendResult> {
-    if (!envelope.encrypted_payload) {
-      return { ok: false, transport: "local", error: "Refusing to send empty/plaintext payload" };
+    if (!isBoxedEnvelopePayload(envelope.encrypted_payload)) {
+      return { ok: false, transport: "local", error: refuseUnencryptedPayloadError() };
     }
     if (isExpired(envelope, now)) {
       return { ok: false, transport: envelope.transport, error: "Message expired" };

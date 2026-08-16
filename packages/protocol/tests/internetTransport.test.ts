@@ -75,7 +75,7 @@ describe("InternetTransport", () => {
     });
     const refused = await transport.send(plaintext);
     expect(refused.ok).toBe(false);
-    expect(refused.error).toMatch(/crypto_box/i);
+    expect(refused.error).toMatch(/plaintext|alg:none|crypto_box/i);
   });
 
   it("falls through to local queue when internet HTTP fails", async () => {

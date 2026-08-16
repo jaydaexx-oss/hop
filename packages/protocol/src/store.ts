@@ -1,3 +1,4 @@
+/** Durable store is ciphertext + optional local_seal. Do not persist decrypted voice. */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS messages (
   message_id TEXT PRIMARY KEY,
@@ -60,6 +61,15 @@ export interface StoredMessage {
   expires_at: string;
   ttl: number;
   hop_count: number;
+  /** In-memory only after decrypt. Never written to the SQLite text column. */
+  kind?: "message" | "delivery_ack" | "voice";
+  duration_ms?: number;
+  mime?: string;
+  audio_b64?: string;
+  codec?: string;
+  seq?: number;
+  total?: number;
+  part_of?: string;
 }
 
 export interface OutboundRow {

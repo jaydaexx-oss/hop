@@ -39,3 +39,13 @@ def test_version_endpoint(client: TestClient) -> None:
 def test_unimplemented_push_returns_501(client: TestClient) -> None:
     response = client.post("/push/register")
     assert response.status_code == 501
+    assert response.json()["detail"] == "Not implemented"
+
+
+def test_unimplemented_devices_and_sync_return_501(client: TestClient) -> None:
+    devices = client.get("/devices")
+    sync = client.get("/sync")
+    assert devices.status_code == 501
+    assert sync.status_code == 501
+    assert devices.json()["detail"] == "Not implemented"
+    assert sync.json()["detail"] == "Not implemented"

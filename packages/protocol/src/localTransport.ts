@@ -1,3 +1,4 @@
+import { isBoxedEnvelopePayload, refuseUnencryptedPayloadError } from "./sendGuards.js";
 import type { EncryptedEnvelope, SendResult, Transport, TransportRuntimeStatus } from "./transport.js";
 
 export class LocalTransport implements Transport {
@@ -10,6 +11,9 @@ export class LocalTransport implements Transport {
   }
 
   async send(envelope: EncryptedEnvelope): Promise<SendResult> {
+    if (!isBoxedEnvelopePayload(envelope.encrypted_payload)) {
+      return { ok: false, transport: this.id, error: refuseUnencryptedPayloadError() };
+    }
     const stored = { ...envelope, transport: this.id };
     this.queue.push(stored);
     return { ok: true, transport: this.id };

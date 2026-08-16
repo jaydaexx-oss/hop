@@ -4,16 +4,39 @@ import type { HopHttpClient } from "./http.js";
 import { createMessageId } from "./ids.js";
 import { DEFAULT_TTL_MS, MessageStatus, isExpired } from "./message.js";
 import { DEFAULT_RETRY_POLICY, nextBackoffMs, type RetryPolicy } from "./retry.js";
+import { requirePeerRecipient } from "./sendGuards.js";
 import { canTransition, transition } from "./stateMachine.js";
 import type { HopSqliteStore, StoredMessage } from "./store.js";
 import type { EncryptedEnvelope, NetworkStatus, TransportId } from "./transport.js";
 import type { TransportManager } from "./transportManager.js";
+import {
+  DEFAULT_VOICE_CAPTION,
+  DEFAULT_VOICE_CODEC,
+  DEFAULT_VOICE_MIME,
+  MAX_ENCRYPTED_PAYLOAD_BYTES,
+  assertEncryptedPayloadSize,
+  assertVoiceFitsBudget,
+  estimateBoxedPayloadBytes,
+  withDecryptedPlain,
+} from "./voice.js";
 
 export interface SendTextInput {
   conversation_id: string;
   sender_id: string;
   recipient_id: string;
   text: string;
+  now?: Date;
+}
+
+export interface SendVoiceInput {
+  conversation_id: string;
+  sender_id: string;
+  recipient_id: string;
+  audio_b64: string;
+  duration_ms: number;
+  mime?: string;
+  codec?: string;
+  text?: string;
   now?: Date;
 }
 
@@ -43,6 +66,7 @@ export class MessageService {
     if (!this.crypto) {
       throw new Error("Refusing to send without libsodium crypto_box keys");
     }
+    const recipient_id = requirePeerRecipient(input.sender_id, input.recipient_id);
     const now = input.now ?? new Date();
     const created_at = now.toISOString();
     const expires_at = new Date(now.getTime() + DEFAULT_TTL_MS).toISOString();
@@ -50,7 +74,7 @@ export class MessageService {
     const plain: ApplicationPlaintext = {
       message_id,
       sender_id: input.sender_id,
-      recipient_id: input.recipient_id,
+      recipient_id,
       conversation_id: input.conversation_id,
       text: input.text,
       created_at,
@@ -67,7 +91,7 @@ export class MessageService {
       message_id,
       conversation_id: input.conversation_id,
       sender_id: input.sender_id,
-      recipient_id: input.recipient_id,
+      recipient_id,
       text: input.text,
       encrypted_payload,
       local_seal,
@@ -83,6 +107,67 @@ export class MessageService {
     await this.persistMessage(record);
     await this.store.enqueue(record.message_id, 0, now.getTime());
     return this.flushOne({ ...record, text: input.text }, now, true);
+  }
+
+  async sendVoice(input: SendVoiceInput): Promise<StoredMessage> {
+    if (!this.crypto) {
+      throw new Error("Refusing to send without libsodium crypto_box keys");
+    }
+    const recipient_id = requirePeerRecipient(input.sender_id, input.recipient_id);
+    assertVoiceFitsBudget({ audio_b64: input.audio_b64, duration_ms: input.duration_ms });
+    const now = input.now ?? new Date();
+    const created_at = now.toISOString();
+    const expires_at = new Date(now.getTime() + DEFAULT_TTL_MS).toISOString();
+    const message_id = createMessageId();
+    const caption = input.text?.trim() ? input.text.trim() : DEFAULT_VOICE_CAPTION;
+    const plain: ApplicationPlaintext = {
+      message_id,
+      sender_id: input.sender_id,
+      recipient_id,
+      conversation_id: input.conversation_id,
+      text: caption,
+      created_at,
+      expires_at,
+      ttl: DEFAULT_TTL_MS,
+      hop_count: 0,
+      kind: "voice",
+      audio_b64: input.audio_b64,
+      duration_ms: input.duration_ms,
+      mime: input.mime ?? DEFAULT_VOICE_MIME,
+      codec: input.codec ?? DEFAULT_VOICE_CODEC,
+      seq: 0,
+      total: 1,
+    };
+    if (estimateBoxedPayloadBytes(plain) > MAX_ENCRYPTED_PAYLOAD_BYTES) {
+      throw new Error("Voice payload exceeds maximum size");
+    }
+    const encrypted_payload = await this.crypto.encrypt(plain);
+    if (!isCryptoBoxPayload(encrypted_payload)) {
+      throw new Error("encrypt() must return a libsodium crypto_box payload");
+    }
+    assertEncryptedPayloadSize(encrypted_payload);
+    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
+    let record: StoredMessage = {
+      message_id,
+      conversation_id: input.conversation_id,
+      sender_id: input.sender_id,
+      recipient_id,
+      text: null,
+      encrypted_payload,
+      local_seal,
+      status: MessageStatus.CREATED,
+      transport: "local",
+      created_at,
+      expires_at,
+      ttl: DEFAULT_TTL_MS,
+      hop_count: 0,
+    };
+    record = this.withStatus(record, MessageStatus.ENCRYPTED);
+    record = this.withStatus(record, MessageStatus.QUEUED);
+    await this.persistMessage(record);
+    await this.store.enqueue(record.message_id, 0, now.getTime());
+    const sent = await this.flushOne(record, now, true);
+    return withDecryptedPlain(sent, plain);
   }
 
   async listMessages(conversationId: string): Promise<StoredMessage[]> {
@@ -263,7 +348,7 @@ export class MessageService {
         const plain = await this.crypto.decrypt(message.local_seal, undefined, message.message_id, {
           expectedSenderId: message.sender_id,
         });
-        return { ...message, text: plain.text };
+        return withDecryptedPlain(message, plain);
       } catch {
         /* fall through to network payload */
       }
@@ -276,17 +361,28 @@ export class MessageService {
         expectedSenderId: message.sender_id,
         expectedRecipientId: message.recipient_id,
       });
-      return { ...message, text: plain.text };
+      return withDecryptedPlain(message, plain);
     } catch {
       return message;
     }
   }
 
   private async persistMessage(message: StoredMessage): Promise<void> {
-    const stored =
-      isCryptoBoxPayload(message.encrypted_payload) && message.encrypted_payload
-        ? { ...message, text: null, local_seal: message.local_seal ?? null }
-        : message;
+    const stored: StoredMessage = {
+      message_id: message.message_id,
+      conversation_id: message.conversation_id,
+      sender_id: message.sender_id,
+      recipient_id: message.recipient_id,
+      text: isCryptoBoxPayload(message.encrypted_payload) ? null : message.text,
+      encrypted_payload: message.encrypted_payload,
+      local_seal: message.local_seal ?? null,
+      status: message.status,
+      transport: message.transport,
+      created_at: message.created_at,
+      expires_at: message.expires_at,
+      ttl: message.ttl,
+      hop_count: message.hop_count,
+    };
     await this.store.saveMessage(stored);
   }
 
@@ -299,7 +395,7 @@ export class MessageService {
         expectedSenderId: message.sender_id,
         expectedRecipientId: message.recipient_id,
       });
-      return { ...message, text: plain.text };
+      return withDecryptedPlain(message, plain);
     } catch {
       return { ...message, text: message.text ?? null };
     }

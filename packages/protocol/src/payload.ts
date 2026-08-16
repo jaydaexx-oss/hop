@@ -1,3 +1,4 @@
+/** Test-only alg:none helpers. Production send paths must never call these. */
 const UNENCRYPTED_ALG = "none";
 
 function utf8ToB64(text: string): string {

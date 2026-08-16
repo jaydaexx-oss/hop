@@ -26,6 +26,10 @@ export type ChatMessage = {
   ttl?: number;
   hop_count?: number;
   transport?: string;
+  kind?: "message" | "delivery_ack" | "voice";
+  duration_ms?: number;
+  mime?: string;
+  audio_b64?: string;
 };
 
 export class ApiError extends Error {

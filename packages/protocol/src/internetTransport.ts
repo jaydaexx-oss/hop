@@ -25,7 +25,7 @@ export class InternetTransport implements Transport {
       return {
         ok: false,
         transport: this.id,
-        error: "Internet path requires a libsodium crypto_box payload",
+        error: "Refusing to send plaintext or alg:none payload",
       };
     }
     try {

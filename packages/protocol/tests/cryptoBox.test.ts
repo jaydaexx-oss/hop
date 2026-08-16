@@ -87,6 +87,50 @@ describe("libsodium crypto_box application messages", () => {
       encryptApplicationMessage({ ...plain, text: "  " }, blake.publicKey, alice),
     ).rejects.toThrow(/empty/i);
   });
+
+  it("round-trips a voice clip and keeps audio out of the ciphertext JSON", async () => {
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const fixture = "HOP_VOICE_FIXTURE_DO_NOT_LEAK";
+    const voice = {
+      ...plain,
+      kind: "voice" as const,
+      text: "Voice message",
+      audio_b64: Buffer.from(fixture, "utf8").toString("base64"),
+      duration_ms: 1200,
+      mime: "audio/mp4",
+      codec: "aac",
+      seq: 0,
+      total: 1,
+    };
+    const packed = await encryptApplicationMessage(voice, blake.publicKey, alice);
+    expect(packed).not.toContain(fixture);
+    expect(packed).not.toContain(voice.audio_b64);
+    const opened = await decryptApplicationMessage(packed, blake, alice.publicKey, voice.message_id);
+    expect(opened.kind).toBe("voice");
+    expect(opened.audio_b64).toBe(voice.audio_b64);
+    expect(opened.duration_ms).toBe(1200);
+    expect(opened.mime).toBe("audio/mp4");
+    expect(opened.text).toBe("Voice message");
+  });
+
+  it("refuses voice with no audio and allows a voice caption", async () => {
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    await expect(
+      encryptApplicationMessage(
+        { ...plain, kind: "voice", text: "Voice message" },
+        blake.publicKey,
+        alice,
+      ),
+    ).rejects.toThrow(/no audio/i);
+    const packed = await encryptApplicationMessage(
+      { ...plain, kind: "voice", text: "  ", audio_b64: "YQ==" },
+      blake.publicKey,
+      alice,
+    );
+    expect(isCryptoBoxPayload(packed)).toBe(true);
+  });
 });
 
 describe("BLE ack retry", () => {

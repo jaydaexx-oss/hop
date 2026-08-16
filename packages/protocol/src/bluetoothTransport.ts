@@ -1,5 +1,6 @@
 import { isCryptoBoxPayload } from "./cryptoBox.js";
 import { isExpired, shouldStopForwarding } from "./message.js";
+import { refuseUnencryptedPayloadError } from "./sendGuards.js";
 import type { BleLink } from "./bleLink.js";
 import type { EncryptedEnvelope, SendResult, Transport, TransportRuntimeStatus } from "./transport.js";
 
@@ -31,16 +32,13 @@ export class BluetoothTransport implements Transport {
   }
 
   async send(envelope: EncryptedEnvelope): Promise<SendResult> {
-    if (!envelope.encrypted_payload) {
-      return { ok: false, transport: this.id, error: "Refusing to send empty or unauthenticated payload" };
+    if (!envelope.encrypted_payload || !isCryptoBoxPayload(envelope.encrypted_payload)) {
+      return { ok: false, transport: this.id, error: refuseUnencryptedPayloadError() };
     }
     let payload = envelope.encrypted_payload;
-    if (!isCryptoBoxPayload(payload)) {
-      if (!this.preparePayload) {
-        return { ok: false, transport: this.id, error: "Refusing to send empty or unauthenticated payload" };
-      }
+    if (this.preparePayload) {
       try {
-        payload = await this.preparePayload(envelope);
+        payload = await this.preparePayload({ ...envelope, encrypted_payload: payload });
       } catch (err) {
         return {
           ok: false,
@@ -49,7 +47,7 @@ export class BluetoothTransport implements Transport {
         };
       }
       if (!isCryptoBoxPayload(payload)) {
-        return { ok: false, transport: this.id, error: "Refusing to send empty or unauthenticated payload" };
+        return { ok: false, transport: this.id, error: refuseUnencryptedPayloadError() };
       }
     }
     if (isExpired(envelope) || shouldStopForwarding(envelope)) {

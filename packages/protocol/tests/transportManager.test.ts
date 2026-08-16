@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { LocalTransport } from "../src/localTransport.js";
+import { CRYPTO_BOX_ALG } from "../src/cryptoBox.js";
 import { createMessage } from "../src/message.js";
 import { encodeUnencryptedText } from "../src/payload.js";
 import { createBluetoothTransport } from "../src/bluetoothTransport.js";
@@ -8,13 +9,23 @@ import { createInternetTransport } from "../src/internetTransport.js";
 import { toEnvelope, type EncryptedEnvelope, type SendResult, type Transport, type TransportId } from "../src/transport.js";
 import { TransportManager } from "../src/transportManager.js";
 
+function boxedPayload(): string {
+  return JSON.stringify({
+    v: 1,
+    alg: CRYPTO_BOX_ALG,
+    sender_pk: "pk",
+    nonce: "n",
+    ciphertext: "ct",
+  });
+}
+
 function encryptedEnvelope(recipientId = "recipient") {
   const message = createMessage({
     sender_id: "sender",
     recipient_id: recipientId,
     conversation_id: "convo",
   });
-  return toEnvelope({ ...message, encrypted_payload: encodeUnencryptedText("hello") });
+  return toEnvelope({ ...message, encrypted_payload: boxedPayload() });
 }
 
 function mockTransport(
@@ -192,7 +203,20 @@ describe("TransportManager", () => {
     envelope.encrypted_payload = "";
     const result = await manager.enqueue(envelope);
     expect(result.ok).toBe(false);
-    expect(result.error).toMatch(/plaintext/i);
+    expect(result.error).toMatch(/plaintext|alg:none/i);
+  });
+
+  it("refuses alg:none so it cannot leave TransportManager", async () => {
+    const internetSent: EncryptedEnvelope[] = [];
+    const manager = new TransportManager();
+    manager.register(mockTransport("internet", { available: true, sent: internetSent }));
+    manager.register(new LocalTransport());
+    const envelope = encryptedEnvelope();
+    envelope.encrypted_payload = encodeUnencryptedText("hello");
+    const result = await manager.send(envelope);
+    expect(result.ok).toBe(false);
+    expect(result.error).toMatch(/plaintext|alg:none/i);
+    expect(internetSent).toHaveLength(0);
   });
 
   it("discards duplicate inbound message ids", () => {

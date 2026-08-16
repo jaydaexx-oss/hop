@@ -97,9 +97,11 @@ describe("BluetoothTransport", () => {
     expect(result.error).toMatch(/unauthenticated|plaintext/i);
   });
 
-  it("refuses unauthenticated alg:none payloads", async () => {
+  it("refuses alg:none even if preparePayload is supplied", async () => {
     const link = new MockBleLink();
-    const transport = createBluetoothTransport(link, () => "peer-device");
+    const transport = createBluetoothTransport(link, () => "peer-device", async () =>
+      JSON.stringify({ alg: "none", text: "hi" }),
+    );
     const msg = envelope();
     msg.encrypted_payload = JSON.stringify({ alg: "none", text: "hi" });
     const result = await transport.send(msg);

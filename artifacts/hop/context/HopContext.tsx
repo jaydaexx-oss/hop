@@ -512,6 +512,10 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
 
     const next = [...blockedIds, userId];
 
+    // Capture the conversation being removed BEFORE the optimistic update so
+    // we can restore it synchronously in the rollback path.
+    const removedConversation = conversations.find(c => c.userId === userId);
+
     // Optimistic updates — apply in-memory immediately so the UI responds.
     setBlockedIds(next);
     setNearbyUsers(prev => prev.filter(u => u.id !== userId));
@@ -536,9 +540,20 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       // Surgically remove only this userId so we don't clobber any other
       // concurrent block operations that may have already succeeded.
       setBlockedIds(current => current.filter(id => id !== userId));
+      // Restore the conversation that was optimistically removed, re-inserting
+      // it in the correct sort position (newest last message first), and
+      // persist the restored list so the inbox survives a restart.
+      if (removedConversation) {
+        const conv = removedConversation;
+        setConversations(current => {
+          const restored = sortedConvs([...current, conv]);
+          saveConvs(restored, showStorageError);
+          return restored;
+        });
+      }
       setToastQueue(storageErrorToastUpdater);
     }
-  }, [blockedIds, profile, showStorageError]);
+  }, [blockedIds, conversations, profile, showStorageError]);
 
   const reportUser = useCallback((userId: string) => {
     const user = USER_POOL.find(u => u.id === userId);

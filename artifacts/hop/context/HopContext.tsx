@@ -8,6 +8,11 @@ import { useBluetoothDiscovery } from '@/hooks/useBluetoothDiscovery';
 import type { BleDiscoveryStatus, DiscoveredHopPeer } from '@/hooks/useBluetoothDiscovery';
 import { useBluetoothAdvertising } from '@/hooks/useBluetoothAdvertising';
 import type { AdvertisingStatus } from '@/hooks/useBluetoothAdvertising';
+import { useBluetoothAuthentication } from '@/hooks/useBluetoothAuthentication';
+import { startGattServer, stopGattServer, subscribeToIncomingMessages } from '@/protocol/ble/GattServer';
+import { bluetoothTransport } from '@/protocol/ble/BluetoothTransport';
+import { decodeMessageContent, encodeMessageContent, envelopeToBase64 } from '@/protocol/ble/bleMessage';
+import type { EncryptedEnvelope } from '@/protocol/transportManager';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -219,7 +224,9 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   // ── Real BLE discovery ────────────────────────────────────────────────────
   // On native dev builds: scans for HOP peripherals, parses advertisement data.
   // On web / Expo Go: returns { status: 'unsupported', empty sets }.
-  const { status: bleState, verifiedBlePeers, discoveredHopPeers } = useBluetoothDiscovery();
+  // Note: verifiedBlePeers from discovery is always empty (by design — no GATT in scan).
+  //       The real verifiedBlePeers comes from useBluetoothAuthentication below.
+  const { status: bleState, discoveredHopPeers } = useBluetoothDiscovery();
 
   // ── Real BLE advertising ──────────────────────────────────────────────────
   // On native dev builds: broadcasts HOP_SERVICE_UUID + rotating tempId.
@@ -231,6 +238,21 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     startAdvertising,
     stopAdvertising,
   } = useBluetoothAdvertising();
+
+  // ── BLE peer authentication ───────────────────────────────────────────────
+  // Watches discoveredHopPeers; for each new device performs GATT connect →
+  // read HOP_PEER_ID_CHAR → disconnect → adds to verifiedBlePeers.
+  const {
+    verifiedBlePeers,
+    peerDeviceMap,
+  } = useBluetoothAuthentication(discoveredHopPeers);
+
+  // ── Sync verified peers + device map to the BLE transport singleton ───────
+  // bluetoothTransport.send() needs both to route outbound messages.
+  useEffect(() => {
+    bluetoothTransport.setVerifiedPeers(verifiedBlePeers);
+    bluetoothTransport.setDeviceMap(peerDeviceMap);
+  }, [verifiedBlePeers, peerDeviceMap]);
 
   const [profile, setProfileState] = useState<MyProfile | null>(null);
   const [isOnboarding, setIsOnboarding] = useState(false);
@@ -410,6 +432,19 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     })();
   }, []);
 
+  // ── GATT server (peripheral role) ────────────────────────────────────────
+  // Start when the profile is available so we can serve HOP_PEER_ID_CHAR.
+  // Stopped on unmount / profile change so we don't serve a stale profileId.
+  useEffect(() => {
+    if (!profile) return;
+    startGattServer(profile.id).catch(e =>
+      console.warn('[HOP] GATT server start failed:', e),
+    );
+    return () => {
+      stopGattServer().catch(() => {});
+    };
+  }, [profile?.id]);
+
   // ── BT scan simulation ────────────────────────────────────────────────────
 
   useEffect(() => {
@@ -475,6 +510,76 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const showStorageError = useCallback(() => {
     setToastQueue(storageErrorToastUpdater);
   }, []);
+
+  // ── Incoming BLE messages ─────────────────────────────────────────────────
+  //
+  // Called by the GATT server when a remote central writes to HOP_MESSAGE_CHAR.
+  // Decodes the EncryptedEnvelope, deduplicates it, and adds it to the
+  // relevant conversation — same routing path as an internet-received message.
+  const receiveBluetoothMessage = useCallback((envelope: EncryptedEnvelope) => {
+    if (!profileRef.current) return;
+    if (envelope.recipient_id !== profileRef.current.id) return;
+    if (!sentIds.remember(envelope.message_id)) return; // deduplicate
+
+    const content = decodeMessageContent(envelope.encrypted_payload);
+    const senderId = envelope.sender_id;
+    const msgTimestamp = (() => {
+      const t = Date.parse(envelope.created_at);
+      return isNaN(t) ? Date.now() : t;
+    })();
+
+    const msg: Message = {
+      id: envelope.message_id,
+      senderId,
+      content,
+      timestamp: msgTimestamp,
+      status: MessageStatus.DELIVERED,
+    };
+
+    setConversations(prev => {
+      const existing = prev.find(c => c.userId === senderId);
+      const syntheticUser: HopUser = {
+        id: senderId,
+        username: `hop_${senderId.slice(0, 6)}`,
+        color: '#00CCFF',
+        signal: 90,
+        angle: 0,
+      };
+      const raw = existing
+        ? prev.map(c =>
+            c.userId === senderId
+              ? { ...c, messages: [...c.messages, msg], unread: c.unread + 1 }
+              : c,
+          )
+        : [{ userId: senderId, user: syntheticUser, messages: [msg], unread: 1 }, ...prev];
+      const updated = sortedConvs(raw);
+      saveConvs(updated, showStorageError);
+      return updated;
+    });
+
+    // Notification toast (skipped if sender is muted)
+    setMutedIds(currentMuted => {
+      if (!currentMuted.has(senderId)) {
+        setToastQueue(prev => {
+          const filtered = prev.filter(t => t.kind === 'error' || t.targetId !== senderId);
+          return [...filtered, {
+            kind: 'dm' as const,
+            targetId: senderId,
+            senderName: `hop_${senderId.slice(0, 6)}`,
+            senderColor: '#00CCFF',
+            content,
+          }];
+        });
+      }
+      return currentMuted;
+    });
+  }, [showStorageError]);
+
+  // Subscribe to incoming BLE messages from the GATT server.
+  useEffect(() => {
+    const unsubscribe = subscribeToIncomingMessages(receiveBluetoothMessage);
+    return unsubscribe;
+  }, [receiveBluetoothMessage]);
 
   // ── Mute ──────────────────────────────────────────────────────────────────
 
@@ -657,26 +762,77 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
 
   const sendMessage = (userId: string, content: string) => {
     if (!profile) return;
-    const user = USER_POOL.find(u => u.id === userId) ?? nearbyUsers.find(u => u.id === userId);
-    if (!user) return;
+
+    // Resolve recipient — could be a sim user (USER_POOL) or a real BLE peer.
+    // For real BLE peers, userId IS their profileId; they won't be in USER_POOL.
+    const simUser = USER_POOL.find(u => u.id === userId) ?? nearbyUsers.find(u => u.id === userId);
+    const isBlePeer = verifiedBlePeers.has(userId);
+    const existingBleConvUser = conversations.find(c => c.userId === userId)?.user;
+    const syntheticBleUser: HopUser = {
+      id: userId,
+      username: `hop_${userId.slice(0, 6)}`,
+      color: '#00CCFF',
+      signal: 90,
+      angle: 0,
+    };
+    const resolvedUser = simUser ?? (isBlePeer ? (existingBleConvUser ?? syntheticBleUser) : undefined);
+    if (!resolvedUser) return;
 
     const msgId = createMessageId();
     if (!sentIds.remember(msgId)) return;
 
     const msg: Message = { id: msgId, senderId: profile.id, content, timestamp: Date.now(), status: MessageStatus.SENT };
-    const replyDelay = 1000 + Math.random() * 2500;
-    const replyContent = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
-    const replyId = createMessageId();
 
     setConversations(prev => {
       const existing = prev.find(c => c.userId === userId);
       const raw = existing
         ? prev.map(c => c.userId === userId ? { ...c, messages: [...c.messages, msg], unread: 0 } : c)
-        : [{ userId, user: { ...user, signal: nearbyUsers.find(u => u.id === userId)?.signal ?? 80 }, messages: [msg], unread: 0 }, ...prev];
+        : [{ userId, user: { ...resolvedUser, signal: nearbyUsers.find(u => u.id === userId)?.signal ?? 80 }, messages: [msg], unread: 0 }, ...prev];
       const updated = sortedConvs(raw);
       saveConvs(updated, showStorageError);
       return updated;
     });
+
+    // ── BLE send for authenticated nearby peers ────────────────────────────
+    if (isBlePeer) {
+      const envelope: EncryptedEnvelope = {
+        message_id: msgId,
+        sender_id: profile.id,
+        recipient_id: userId,
+        conversation_id: userId,  // 1:1 conversation key = recipientId
+        encrypted_payload: encodeMessageContent(content),
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString(),
+        ttl: 7 * 24 * 60 * 60 * 1000,
+        hop_count: 0,
+        transport: 'bluetooth',
+      };
+      // Fire-and-forget — the TransportManager retry queue handles failures.
+      bluetoothTransport.send(envelope).then(result => {
+        if (!result.ok) {
+          console.warn('[HOP BLE] Send failed:', result.error);
+          // Update message status to failed in UI
+          setConversations(curr =>
+            curr.map(c =>
+              c.userId === userId
+                ? {
+                    ...c,
+                    messages: c.messages.map(m =>
+                      m.id === msgId ? { ...m, status: MessageStatus.FAILED } : m,
+                    ),
+                  }
+                : c,
+            ),
+          );
+        }
+      });
+      return; // Real BLE peers don't get a bot reply
+    }
+
+    // ── Bot reply simulation for demo users ───────────────────────────────
+    const replyDelay = 1000 + Math.random() * 2500;
+    const replyContent = BOT_REPLIES[Math.floor(Math.random() * BOT_REPLIES.length)];
+    const replyId = createMessageId();
 
     setTimeout(() => {
       const reply: Message = { id: replyId, senderId: userId, content: replyContent, timestamp: Date.now(), status: MessageStatus.DELIVERED };

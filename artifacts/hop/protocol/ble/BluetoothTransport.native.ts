@@ -1,76 +1,128 @@
 /**
  * BluetoothTransport — native iOS / Android implementation.
  *
- * Implements the Transport interface from transportManager.ts using the HOP
- * BLE GATT profile defined in constants.ts.
+ * Implements the Transport interface using the HOP BLE GATT profile.
  *
- * CURRENT STATUS (PoC milestone):
- *   ✅ isAvailable() — returns true when ≥1 verified HOP BLE peer is known
- *   🚧 send()        — NOT YET IMPLEMENTED; BLE message delivery is the next
- *                      milestone after peer discovery is confirmed on hardware.
+ * ─── send() flow ─────────────────────────────────────────────────────────────
  *
- * isAvailable() does NOT initiate scanning — that is handled by the
- * useBluetoothDiscovery hook, which owns the BleManager lifecycle and feeds
- * discovered peer IDs into this transport via setVerifiedPeers().
+ *  1. Look up the recipient's BLE device ID from `peerDeviceMap`
+ *     (populated by useBluetoothAuthentication after the GATT handshake).
+ *  2. Connect to that device via react-native-ble-plx.
+ *  3. Discover services and characteristics.
+ *  4. Serialize the EncryptedEnvelope to JSON → base64 (max 500 bytes).
+ *  5. Write to HOP_MESSAGE_CHAR on the peer's GATT server.
+ *  6. Disconnect.
  *
- * Why separate scanning from the transport?
- *   The TransportManager is a synchronous protocol primitive that does not own
- *   async lifecycle (timers, event subscriptions).  Keeping scanning in a React
- *   hook lets us tie it to the component tree lifecycle cleanly and avoids
- *   double-scanning bugs.
+ * ─── Not implemented ─────────────────────────────────────────────────────────
+ *
+ *  ✗ Delivery acknowledgement (ACK notification from the peer).
+ *  ✗ Message chunking (>500-byte messages are rejected with an error).
+ *  ✗ Persistent connections (every send reconnects).
+ *
+ * These are the next steps after this milestone.
  */
 
-import type { Transport, EncryptedEnvelope, SendResult, TransportId } from '../transportManager';
+import type { Device } from 'react-native-ble-plx';
+import { getBleManager } from './bleManager';
+import { envelopeToBase64 } from './bleMessage';
+import {
+  HOP_SERVICE_UUID,
+  HOP_MESSAGE_CHAR,
+  HOP_CONNECT_TIMEOUT_MS,
+} from './constants';
+import type {
+  Transport,
+  EncryptedEnvelope,
+  SendResult,
+  TransportId,
+} from '../transportManager';
 
 export class BluetoothTransport implements Transport {
   readonly id: TransportId = 'bluetooth';
 
-  /**
-   * The set of profile IDs for verified HOP peers that were seen over BLE
-   * recently (within HOP_PEER_TTL_MS).  Updated by useBluetoothDiscovery.
-   */
+  /** Profile IDs of BLE-authenticated peers — updated by useBluetoothAuthentication. */
   private verifiedPeerIds = new Set<string>();
 
-  /** Called by useBluetoothDiscovery whenever the discovered peer set changes. */
+  /**
+   * Maps profileId → BLE deviceId for verified peers.
+   * Set by useBluetoothAuthentication via setDeviceMap().
+   */
+  private deviceMap = new Map<string, string>();
+
+  // ── Called by hooks ────────────────────────────────────────────────────────
+
   setVerifiedPeers(peers: ReadonlySet<string>): void {
     this.verifiedPeerIds = new Set(peers);
   }
 
-  /**
-   * Returns true when at least one verified HOP BLE peer is currently reachable.
-   *
-   * NOTE: This does not check whether the *specific recipient* is reachable via
-   * BLE.  Per-peer routing is the next milestone.  For now the contract is:
-   *   "if any HOP peer is nearby over BLE, prefer BLE for all nearby messages."
-   * useTransportState narrows this further by checking the specific peerId.
-   */
-  async isAvailable(): Promise<boolean> {
-    return this.verifiedPeerIds.size > 0;
+  setDeviceMap(map: ReadonlyMap<string, string>): void {
+    this.deviceMap = new Map(map);
   }
 
   isVerifiedPeer(profileId: string): boolean {
     return this.verifiedPeerIds.has(profileId);
   }
 
+  // ── Transport interface ────────────────────────────────────────────────────
+
+  async isAvailable(): Promise<boolean> {
+    return this.verifiedPeerIds.size > 0;
+  }
+
   /**
-   * Send an encrypted envelope over BLE.
+   * Send an EncryptedEnvelope to a verified BLE peer via GATT write.
    *
-   * NOT IMPLEMENTED in this PoC.  BLE message delivery requires:
-   *   1. Maintaining a persistent GATT connection to the target peer
-   *   2. Writing to HOP_MESSAGE_CHAR with framing for payloads > MTU
-   *   3. Waiting for an acknowledgement notification
-   *   4. Handling reconnection on link loss
-   *
-   * This is intentionally deferred to keep the discovery milestone focused.
-   * The TransportManager will fall through to the internet transport when this
-   * returns ok:false.
+   * Failures are not retried here — the TransportManager's retry queue
+   * handles re-enqueuing if this returns ok:false.
    */
-  async send(_envelope: EncryptedEnvelope): Promise<SendResult> {
-    return {
-      ok: false,
-      transport: 'bluetooth',
-      error: 'BLE message send not yet implemented — discovery PoC only',
-    };
+  async send(envelope: EncryptedEnvelope): Promise<SendResult> {
+    const deviceId = this.deviceMap.get(envelope.recipient_id);
+    if (!deviceId) {
+      return {
+        ok: false,
+        transport: 'bluetooth',
+        error: `Peer ${envelope.recipient_id.slice(0, 8)}… not in BLE device map — not reachable over BLE`,
+      };
+    }
+
+    const base64Payload = envelopeToBase64(envelope);
+    if (!base64Payload) {
+      return {
+        ok: false,
+        transport: 'bluetooth',
+        error: 'Message too large for BLE (>500 bytes) — chunking not yet implemented',
+      };
+    }
+
+    let device: Device | null = null;
+    try {
+      const manager = getBleManager();
+
+      device = await manager.connectToDevice(deviceId, {
+        timeout: HOP_CONNECT_TIMEOUT_MS,
+        autoConnect: false,
+      });
+
+      await device.discoverAllServicesAndCharacteristics();
+
+      await device.writeCharacteristicWithResponseForService(
+        HOP_SERVICE_UUID,
+        HOP_MESSAGE_CHAR,
+        base64Payload,
+      );
+
+      return { ok: true, transport: 'bluetooth' };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      console.warn(`[HOP BLE send] Failed to send to ${deviceId}: ${msg}`);
+      return { ok: false, transport: 'bluetooth', error: msg };
+    } finally {
+      try {
+        await device?.cancelConnection();
+      } catch {
+        /* already disconnected — harmless */
+      }
+    }
   }
 }
 

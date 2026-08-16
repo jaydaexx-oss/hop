@@ -26,6 +26,10 @@ export class BluetoothTransport implements Transport {
     // no-op on web
   }
 
+  setDeviceMap(_map: ReadonlyMap<string, string>): void {
+    // no-op on web
+  }
+
   isVerifiedPeer(_profileId: string): boolean {
     return false;
   }

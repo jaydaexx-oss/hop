@@ -46,7 +46,8 @@
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { BleManager, State as BleState } from 'react-native-ble-plx';
+import { State as BleState } from 'react-native-ble-plx';
+import { getBleManager } from '@/protocol/ble/bleManager';
 import {
   HOP_SERVICE_UUID,
   HOP_BLE_PROTOCOL_VERSION,
@@ -70,12 +71,7 @@ import type {
 } from './useBluetoothDiscovery';
 export type { BleDiscoveryState, BleDiscoveryStatus, DiscoveredHopPeer };
 
-// ─── BleManager singleton ─────────────────────────────────────────────────────
-let _manager: BleManager | null = null;
-function getManager(): BleManager {
-  if (!_manager) _manager = new BleManager();
-  return _manager;
-}
+// BleManager singleton lives in protocol/ble/bleManager.ts (shared with auth hook)
 
 // ─── Advertisement data parser ────────────────────────────────────────────────
 
@@ -143,7 +139,7 @@ export function useBluetoothDiscovery(): BleDiscoveryState {
   const scanTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rescanTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const ttlTimer    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const manager = getManager();
+  const manager = getBleManager();
 
   // ── Publish peer map ──────────────────────────────────────────────────────
   const publishPeers = useCallback(() => {

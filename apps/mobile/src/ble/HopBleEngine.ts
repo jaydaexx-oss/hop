@@ -38,6 +38,19 @@ const SCAN_OFF_MS = 8_000;
 const PEER_STALE_MS = 25_000;
 const ACK_TIMEOUT_MS = 8_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
+const MAX_ENGINE_ERRORS = 50;
+
+export type BleEngineError = {
+  at: string;
+  message: string;
+};
+
+export type BleEngineStats = {
+  packetsSent: number;
+  packetsReceived: number;
+  acksReceived: number;
+  errors: BleEngineError[];
+};
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -81,6 +94,33 @@ export class HopBleEngine implements BleLink {
   private scanOffTimer: ReturnType<typeof setTimeout> | null = null;
   private staleTimer: ReturnType<typeof setInterval> | null = null;
   private detail = 'BLE engine is idle.';
+  private packetsSent = 0;
+  private packetsReceived = 0;
+  private acksReceived = 0;
+  private errors: BleEngineError[] = [];
+  private readonly statsListeners = new Set<() => void>();
+
+  stats(): BleEngineStats {
+    return {
+      packetsSent: this.packetsSent,
+      packetsReceived: this.packetsReceived,
+      acksReceived: this.acksReceived,
+      errors: [...this.errors],
+    };
+  }
+
+  onStatsChanged(handler: () => void): () => void {
+    this.statsListeners.add(handler);
+    return () => this.statsListeners.delete(handler);
+  }
+
+  clearStatsAndErrors(): void {
+    this.packetsSent = 0;
+    this.packetsReceived = 0;
+    this.acksReceived = 0;
+    this.errors = [];
+    this.emitStats();
+  }
 
   status(): BleLinkStatus {
     const blocked = bleRuntimeBlockedReason();
@@ -181,6 +221,61 @@ export class HopBleEngine implements BleLink {
     }
   }
 
+  async startScanManual(): Promise<void> {
+    const native = this.native;
+    if (!native || !this.session) {
+      throw new Error('Start a nearby session before scanning.');
+    }
+    this.clearScanTimers();
+    await native.startScan({
+      serviceUUIDs: [HOP_BLE_SERVICE_UUID],
+      allowDuplicates: true,
+      scanMode: this.scanMode,
+    });
+    this.scanning = true;
+  }
+
+  async stopScanManual(): Promise<void> {
+    this.clearScanTimers();
+    if (!this.native) {
+      this.scanning = false;
+      return;
+    }
+    try {
+      await this.native.stopScan();
+    } catch {
+      /* already stopped */
+    }
+    this.scanning = false;
+  }
+
+  async startAdvertisingManual(): Promise<void> {
+    const native = this.native;
+    const session = this.session;
+    if (!native || !session) {
+      throw new Error('Start a nearby session before advertising.');
+    }
+    await native.startAdvertising({
+      serviceUUIDs: [HOP_BLE_SERVICE_UUID],
+      localName: advertiseLocalName(session.username),
+    });
+    this.advertising = true;
+    this.advertisingSupported = true;
+  }
+
+  async stopAdvertisingManual(): Promise<void> {
+    if (!this.native) {
+      this.advertising = false;
+      return;
+    }
+    try {
+      await this.native.stopAdvertising();
+    } catch {
+      /* already stopped */
+    }
+    this.advertising = false;
+  }
+
   async stopSession(): Promise<void> {
     this.clearTimers();
     const native = this.native;
@@ -226,7 +321,12 @@ export class HopBleEngine implements BleLink {
   async connect(deviceId: string, timeoutMs = DEFAULT_CONNECT_TIMEOUT_MS): Promise<BlePeer> {
     const native = await this.ensureNative();
     if (!native) throw new Error('Native BLE module is unavailable.');
-    await withTimeout(native.connect(deviceId), timeoutMs, 'BLE connect');
+    try {
+      await withTimeout(native.connect(deviceId), timeoutMs, 'BLE connect');
+    } catch (err) {
+      this.recordError(err instanceof Error ? err.message : 'BLE connect failed');
+      throw err;
+    }
     this.connected.add(deviceId);
     this.emitConnection(deviceId, true);
     try {
@@ -244,11 +344,21 @@ export class HopBleEngine implements BleLink {
     } catch {
       /* ack notify is best-effort */
     }
-    const peer = await this.readHandshake(native, deviceId);
+    let peer: BlePeer;
+    try {
+      peer = await this.readHandshake(native, deviceId);
+    } catch (err) {
+      this.connected.delete(deviceId);
+      await Promise.resolve(native.disconnect(deviceId)).catch(() => undefined);
+      this.recordError(err instanceof Error ? err.message : 'Handshake failed');
+      throw err;
+    }
     if (!peer.publicKey) {
       this.connected.delete(deviceId);
       await Promise.resolve(native.disconnect(deviceId)).catch(() => undefined);
-      throw new Error('Secure session failed: peer did not publish a libsodium public key.');
+      const message = 'Secure session failed: peer did not publish a libsodium public key.';
+      this.recordError(message);
+      throw new Error(message);
     }
     peer.sessionEstablished = true;
     this.peers.set(deviceId, peer);
@@ -291,7 +401,7 @@ export class HopBleEngine implements BleLink {
     }
 
     const bytes = encodeEnvelope({ ...envelope, transport: 'bluetooth' });
-    return sendWithAckRetry(
+    const result = await sendWithAckRetry(
       async (): Promise<AckAttempt> => {
         const ack = this.waitForAck(envelope.message_id);
         try {
@@ -300,8 +410,9 @@ export class HopBleEngine implements BleLink {
           } catch {
             await this.writeChunks(native, deviceId, bytes, BLE_FALLBACK_CHUNK_BYTES);
           }
-        } catch {
+        } catch (err) {
           this.pendingAcks.delete(envelope.message_id);
+          this.recordError(err instanceof Error ? err.message : 'BLE write failed');
           return 'fail';
         }
         try {
@@ -314,6 +425,13 @@ export class HopBleEngine implements BleLink {
       },
       { retry: { baseMs: 1_000, maxMs: 8_000, maxAttempts: 3 }, timeoutError: 'Delivery ack timed out' },
     );
+    if (result.ok) {
+      this.packetsSent += 1;
+      this.emitStats();
+    } else if (result.error) {
+      this.recordError(result.error);
+    }
+    return result;
   }
 
   subscribe(
@@ -447,6 +565,8 @@ export class HopBleEngine implements BleLink {
           const pending = this.pendingAcks.get(messageId);
           if (pending) {
             this.pendingAcks.delete(messageId);
+            this.acksReceived += 1;
+            this.emitStats();
             pending();
           }
         } catch {
@@ -458,13 +578,17 @@ export class HopBleEngine implements BleLink {
       native.addEventListener('advertisingStartFailed', (payload) => {
         this.advertising = false;
         this.advertisingSupported = false;
-        this.detail = `Advertising failed: ${String(payload.message ?? payload.error ?? 'platform rejected advertising')}`;
+        const message = `Advertising failed: ${String(payload.message ?? payload.error ?? 'platform rejected advertising')}`;
+        this.detail = message;
+        this.recordError(message);
       }),
     );
     this.subscriptions.push(
       native.addEventListener('scanFailed', (payload) => {
         this.scanning = false;
-        this.detail = `Scan failed: ${String(payload.message ?? 'unknown')}`;
+        const message = `Scan failed: ${String(payload.message ?? 'unknown')}`;
+        this.detail = message;
+        this.recordError(message);
       }),
     );
   }
@@ -530,6 +654,8 @@ export class HopBleEngine implements BleLink {
       }
       if (!accepted) return;
       this.processed.remember(envelope.message_id);
+      this.packetsReceived += 1;
+      this.emitStats();
       await this.notifyAck(native, envelope.message_id);
       return;
     }
@@ -625,6 +751,16 @@ export class HopBleEngine implements BleLink {
 
   private emitConnection(deviceId: string, connected: boolean): void {
     for (const listener of this.connectionListeners) listener(deviceId, connected);
+  }
+
+  private emitStats(): void {
+    for (const listener of this.statsListeners) listener();
+  }
+
+  private recordError(message: string): void {
+    this.errors.unshift({ at: new Date().toISOString(), message });
+    this.errors = this.errors.slice(0, MAX_ENGINE_ERRORS);
+    this.emitStats();
   }
 
   private clearScanTimers(): void {

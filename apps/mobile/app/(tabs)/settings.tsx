@@ -1,4 +1,5 @@
 import { Pressable, StyleSheet } from 'react-native';
+import { router } from 'expo-router';
 
 import { Text, View } from '@/components/Themed';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -44,6 +45,13 @@ export default function SettingsScreen() {
       <Pressable onPress={logout} style={[styles.button, { borderColor: colors.tint }]}>
         <Text style={[styles.buttonLabel, { color: colors.tint }]}>Log out</Text>
       </Pressable>
+      {__DEV__ ? (
+        <Pressable
+          onPress={() => router.push('/ble-debug')}
+          style={[styles.button, { borderColor: colors.muted, marginTop: 12 }]}>
+          <Text style={[styles.buttonLabel, { color: colors.muted }]}>BLE Debug (dev)</Text>
+        </Pressable>
+      ) : null}
     </View>
   );
 }

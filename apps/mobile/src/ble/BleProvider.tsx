@@ -27,7 +27,7 @@ import {
 import { useAuth } from '@/src/auth/AuthProvider';
 import { api } from '@/src/api/hop';
 import { useOffline } from '@/src/offline/OfflineProvider';
-import { HopBleEngine } from '@/src/ble/HopBleEngine';
+import { HopBleEngine, type BleEngineStats } from '@/src/ble/HopBleEngine';
 import { loadOrCreateIdentity } from '@/src/crypto/identity';
 import { loadRelayConsent, saveRelayConsent } from '@/src/ble/relayConsent';
 
@@ -44,12 +44,18 @@ type BleContextValue = {
   busy: boolean;
   error: string | null;
   log: NearbyLog[];
+  stats: BleEngineStats;
   sessionActive: boolean;
   startNearby: () => Promise<void>;
   stopNearby: () => Promise<void>;
+  startScan: () => Promise<void>;
+  stopScan: () => Promise<void>;
+  startAdvertising: () => Promise<void>;
+  stopAdvertising: () => Promise<void>;
   connectPeer: (deviceId: string) => Promise<void>;
   disconnectPeer: () => Promise<void>;
   sendTestPayload: (deviceId: string) => Promise<void>;
+  clearLogs: () => void;
   relayConsent: boolean;
   setRelayConsent: (enabled: boolean) => Promise<void>;
 };
@@ -70,6 +76,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [log, setLog] = useState<NearbyLog[]>([]);
+  const [stats, setStats] = useState<BleEngineStats>(engineRef.current.stats());
   const [sessionActive, setSessionActive] = useState(false);
   const [relayConsent, setRelayConsentState] = useState(false);
   const storeRef = useRef(store);
@@ -95,10 +102,17 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(() => {
     setStatus(engineRef.current.status());
     setPeers(engineRef.current.listPeers());
+    setStats(engineRef.current.stats());
   }, []);
 
   const appendLog = useCallback((text: string) => {
-    setLog((current) => [{ at: shortTime(), text }, ...current].slice(0, 12));
+    setLog((current) => [{ at: shortTime(), text }, ...current].slice(0, 100));
+  }, []);
+
+  const clearLogs = useCallback(() => {
+    setLog([]);
+    engineRef.current.clearStatsAndErrors();
+    setStats(engineRef.current.stats());
   }, []);
 
   useEffect(() => {
@@ -159,11 +173,15 @@ export function BleProvider({ children }: { children: ReactNode }) {
         return false;
       }
     });
+    const offStats = engine.onStatsChanged(() => {
+      setStats(engine.stats());
+    });
     refresh();
     return () => {
       offPeers();
       offConn();
       offInbox();
+      offStats();
     };
   }, [appendLog, refresh]);
 
@@ -244,6 +262,56 @@ export function BleProvider({ children }: { children: ReactNode }) {
       appendLog('Nearby started. libsodium crypto_box identity published in handshake.');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start Nearby');
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  }, [appendLog, refresh]);
+
+  const startScan = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await engineRef.current.startScanManual();
+      appendLog('Scan started.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start scan');
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  }, [appendLog, refresh]);
+
+  const stopScan = useCallback(async () => {
+    setBusy(true);
+    try {
+      await engineRef.current.stopScanManual();
+      appendLog('Scan stopped.');
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  }, [appendLog, refresh]);
+
+  const startAdvertising = useCallback(async () => {
+    setBusy(true);
+    setError(null);
+    try {
+      await engineRef.current.startAdvertisingManual();
+      appendLog('Advertising started.');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Could not start advertising');
+    } finally {
+      setBusy(false);
+      refresh();
+    }
+  }, [appendLog, refresh]);
+
+  const stopAdvertising = useCallback(async () => {
+    setBusy(true);
+    try {
+      await engineRef.current.stopAdvertisingManual();
+      appendLog('Advertising stopped.');
     } finally {
       setBusy(false);
       refresh();
@@ -395,12 +463,18 @@ export function BleProvider({ children }: { children: ReactNode }) {
       busy,
       error,
       log,
+      stats,
       sessionActive,
       startNearby,
       stopNearby,
+      startScan,
+      stopScan,
+      startAdvertising,
+      stopAdvertising,
       connectPeer,
       disconnectPeer,
       sendTestPayload,
+      clearLogs,
       relayConsent,
       setRelayConsent,
     }),
@@ -411,12 +485,18 @@ export function BleProvider({ children }: { children: ReactNode }) {
       busy,
       error,
       log,
+      stats,
       sessionActive,
       startNearby,
       stopNearby,
+      startScan,
+      stopScan,
+      startAdvertising,
+      stopAdvertising,
       connectPeer,
       disconnectPeer,
       sendTestPayload,
+      clearLogs,
       relayConsent,
       setRelayConsent,
     ],

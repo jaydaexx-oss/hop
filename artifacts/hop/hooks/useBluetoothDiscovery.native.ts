@@ -42,27 +42,27 @@
  *  connected     = GATT link established (not in this PoC)
  *  authenticated = GATT + profile.id exchange verified (not in this PoC)
  *
+ * ─── Expo Go compatibility ────────────────────────────────────────────────────
+ *
+ *  react-native-ble-plx is a third-party native module not bundled in Expo Go.
+ *  We guard its import with a try/require so the hook can return 'unsupported'
+ *  instead of crashing the app when run in Expo Go or any environment that
+ *  lacks the native binding.  A development build is required for actual BLE.
+ *
  * See docs/BLE_IMPLEMENTATION.md for platform limitations and test procedure.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { State as BleState } from 'react-native-ble-plx';
-import { getBleManager } from '@/protocol/ble/bleManager';
+import { getBleManager, BleState } from '@/protocol/ble/bleManager';
 import {
   HOP_SERVICE_UUID,
-  HOP_BLE_PROTOCOL_VERSION,
-  HOP_COMPANY_ID,
   HOP_SCAN_TIMEOUT_MS,
   HOP_RESCAN_INTERVAL_MS,
   HOP_PEER_TTL_MS,
-  MFR_OFFSET_COMPANY_ID,
-  MFR_OFFSET_VERSION,
-  MFR_OFFSET_TEMP_ID,
-  MFR_TEMP_ID_LENGTH,
 } from '@/protocol/ble/constants';
 import { requestBlePermissions } from '@/protocol/ble/permissions';
 import { bluetoothTransport } from '@/protocol/ble/BluetoothTransport';
-import { bytesToHex } from '@/protocol/ble/tempId';
+import { parseHopAdvertisement } from '@/protocol/ble/parseHopAdvertisement';
 
 import type {
   BleDiscoveryState,
@@ -71,65 +71,26 @@ import type {
 } from './useBluetoothDiscovery';
 export type { BleDiscoveryState, BleDiscoveryStatus, DiscoveredHopPeer };
 
-// BleManager singleton lives in protocol/ble/bleManager.ts (shared with auth hook)
-
-// ─── Advertisement data parser ────────────────────────────────────────────────
-
-interface ParsedHopAdvertisement {
-  tempIdHex: string;
-  protocolVersion: number;
-}
-
-/**
- * Parses a base64-encoded manufacturer data string from react-native-ble-plx.
- *
- * Expected buffer layout (from BLE spec + HOP_COMPANY_ID convention):
- *   bytes[0..1]  = company ID, uint16 little-endian (must be HOP_COMPANY_ID)
- *   bytes[2]     = HOP protocol version
- *   bytes[3..18] = tempId (16 bytes)
- *
- * Returns null if the data is absent, too short, or not from a HOP device.
- */
-function parseHopAdvertisement(
-  manufacturerDataBase64: string | null | undefined,
-): ParsedHopAdvertisement | null {
-  if (!manufacturerDataBase64) return null;
-
-  let buf: Buffer;
-  try {
-    buf = Buffer.from(manufacturerDataBase64, 'base64');
-  } catch {
-    return null;
-  }
-
-  const minLen = MFR_OFFSET_TEMP_ID + MFR_TEMP_ID_LENGTH;
-  if (buf.length < minLen) return null;
-
-  // Validate company ID (little-endian uint16).
-  const companyId = buf.readUInt16LE(MFR_OFFSET_COMPANY_ID);
-  if (companyId !== HOP_COMPANY_ID) return null;
-
-  // Validate protocol version.
-  const protocolVersion = buf[MFR_OFFSET_VERSION];
-  if (protocolVersion !== HOP_BLE_PROTOCOL_VERSION) return null;
-
-  // Extract tempId bytes.
-  const tempIdBytes = new Uint8Array(
-    buf.buffer,
-    buf.byteOffset + MFR_OFFSET_TEMP_ID,
-    MFR_TEMP_ID_LENGTH,
-  );
-
-  return {
-    tempIdHex: bytesToHex(tempIdBytes),
-    protocolVersion,
-  };
-}
+// BleManager singleton lives in protocol/ble/bleManager.ts (shared with auth
+// hook). Returns null in Expo Go / Jest (Expo Go guard is in that module).
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useBluetoothDiscovery(): BleDiscoveryState {
-  const [status, setStatus] = useState<BleDiscoveryStatus>('idle');
+  // manager is null when the native module is unavailable OR when BleManager
+  // construction failed (Expo Go: JS package present, native binding absent).
+  // MUST be called before any useState so that _managerInitFailed is set
+  // before the initial status value is evaluated (Babel hoists `var manager`
+  // to the function scope, so referencing it before this line yields
+  // `undefined` rather than `null`, breaking the 'unsupported' guard).
+  const manager = getBleManager();
+
+  const [status, setStatus] = useState<BleDiscoveryStatus>(
+    // 'unsupported' when the native module is absent OR when BleManager
+    // construction failed (Expo Go path: JS package present, binding absent).
+    // manager === null is the definitive signal after getBleManager() runs.
+    manager !== null ? 'idle' : 'unsupported',
+  );
   const [verifiedBlePeers] = useState<ReadonlySet<string>>(new Set<string>());
   const [discoveredHopPeers, setDiscoveredHopPeers] = useState<
     ReadonlyMap<string, DiscoveredHopPeer>
@@ -139,7 +100,6 @@ export function useBluetoothDiscovery(): BleDiscoveryState {
   const scanTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rescanTimer = useRef<ReturnType<typeof setInterval> | null>(null);
   const ttlTimer    = useRef<ReturnType<typeof setInterval> | null>(null);
-  const manager = getBleManager();
 
   // ── Publish peer map ──────────────────────────────────────────────────────
   const publishPeers = useCallback(() => {
@@ -163,12 +123,13 @@ export function useBluetoothDiscovery(): BleDiscoveryState {
 
   // ── Start scan window ─────────────────────────────────────────────────────
   const startScan = useCallback(() => {
+    if (!manager) return;
     setStatus('scanning');
 
     manager.startDeviceScan(
       [HOP_SERVICE_UUID],      // requirement 8: filter to HOP only
       { allowDuplicates: true },
-      (error, device) => {
+      (error: any, device: any) => { // eslint-disable-line @typescript-eslint/no-explicit-any
         if (error) {
           console.warn('[HOP BLE Discovery] Scan error:', error.message);
           setStatus('unavailable');
@@ -210,6 +171,7 @@ export function useBluetoothDiscovery(): BleDiscoveryState {
 
   // ── Stop everything ───────────────────────────────────────────────────────
   const stopAll = useCallback(() => {
+    if (!manager) return;
     manager.stopDeviceScan();
     if (scanTimer.current)   clearTimeout(scanTimer.current);
     if (rescanTimer.current) clearInterval(rescanTimer.current);
@@ -219,7 +181,11 @@ export function useBluetoothDiscovery(): BleDiscoveryState {
 
   // ── Main effect ───────────────────────────────────────────────────────────
   useEffect(() => {
-    let stateSubscription: ReturnType<typeof manager.onStateChange> | null = null;
+    // Skip entirely when the native BLE module is unavailable (Expo Go, Jest).
+    if (!manager) return;
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let stateSubscription: any = null;
     let initialised = false;
 
     const init = async () => {
@@ -227,8 +193,9 @@ export function useBluetoothDiscovery(): BleDiscoveryState {
       if (perm === 'denied')      { setStatus('unauthorized'); return; }
       if (perm === 'unsupported') { setStatus('unsupported');  return; }
 
-      stateSubscription = manager.onStateChange((state: BleState) => {
-        if (state === BleState.PoweredOn) {
+      stateSubscription = manager.onStateChange((state: string) => {
+        const S = BleState;
+        if (state === S.PoweredOn) {
           if (!initialised) {
             initialised = true;
             startScan();
@@ -238,9 +205,9 @@ export function useBluetoothDiscovery(): BleDiscoveryState {
             );
             ttlTimer.current = setInterval(expireStale, HOP_PEER_TTL_MS / 3);
           }
-        } else if (state === BleState.PoweredOff) {
+        } else if (state === S.PoweredOff) {
           stopAll(); setStatus('off'); initialised = false;
-        } else if (state === BleState.Unauthorized) {
+        } else if (state === S.Unauthorized) {
           stopAll(); setStatus('unauthorized');
         } else {
           stopAll(); setStatus('unavailable');

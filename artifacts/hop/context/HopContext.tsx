@@ -122,7 +122,7 @@ interface HopContextType {
   blockUser: (userId: string) => Promise<void>;
   reportUser: (userId: string) => void;
   acceptRequest: (requestId: string) => void;
-  declineRequest: (requestId: string) => void;
+  declineRequest: (requestId: string) => Promise<void>;
   deleteConversation: (userId: string) => Promise<void>;
   deleteGroup: (groupId: string) => Promise<void>;
   leaveGroup: (groupId: string) => Promise<void>;
@@ -270,6 +270,16 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const scanRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const requestRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const groupConversationsRef = useRef<GroupConversation[]>([]);
+  // The last request list that was successfully written to storage.
+  // declineRequest writes against this baseline (not the optimistic in-memory
+  // state) so each write only persists its own removal — even if multiple
+  // declines are in flight simultaneously.  Every code path that writes to
+  // requestsKey must update this ref on success so it stays authoritative.
+  const committedRequestsRef = useRef<MessageRequest[]>([]);
+  // Serial write queue for declineRequest.  Each write starts only after all
+  // prior writes (and any rollbacks they triggered) have fully settled, so
+  // committedRequestsRef is always up-to-date when a write reads it.
+  const requestsWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
 
   // ── Storage key helpers ───────────────────────────────────────────────────
 
@@ -283,6 +293,69 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
   const profileRef = useRef<MyProfile | null>(null);
   useEffect(() => { profileRef.current = profile; }, [profile]);
   useEffect(() => { groupConversationsRef.current = groupConversations; }, [groupConversations]);
+
+  // ── Shared requestsKey mutation queue ─────────────────────────────────────
+  //
+  // Every code path that writes to requestsKey (decline, accept, block, and
+  // simulated arrivals) MUST go through this helper so that:
+  //   • Writes are fully serialized — no out-of-order overwrite is possible.
+  //   • Each write computes toWrite from committedRequestsRef at execution
+  //     time, so it starts from the true persisted baseline after any prior
+  //     write (or rollback) has settled.
+  //   • onFailure is called only when THIS write fails; the caller is
+  //     responsible for any rollback logic needed for its specific operation.
+  //
+  // All refs closed over (profileRef, committedRequestsRef,
+  // requestsWriteQueueRef) are stable across renders, so [] deps is correct.
+  const enqueueRequestsWrite = useCallback(
+    (
+      mutate: (committed: MessageRequest[]) => MessageRequest[],
+      onFailure?: () => void,
+    ): Promise<void> => {
+      // Capture the active profile ID at enqueue time.  Every queued
+      // operation checks this at execution time so that any chain created
+      // for an old profile (before completeOnboarding reset the ref) cannot
+      // read or mutate the new profile's committed baseline or fire callbacks
+      // that belong to the old profile.
+      const enqueueProfileId = profileRef.current?.id;
+
+      const myWrite = requestsWriteQueueRef.current.then(async () => {
+        const pid = profileRef.current?.id;
+        // Skip if the profile has changed since this write was enqueued.
+        if (!pid || pid !== enqueueProfileId) return;
+        const beforeWrite = committedRequestsRef.current;
+        const toWrite = mutate(beforeWrite);
+        try {
+          await AsyncStorage.setItem(`@hop/requests/${pid}`, JSON.stringify(toWrite));
+          // Re-check after the await: if a profile change arrived while the
+          // write was in flight, do not advance the new profile's baseline.
+          if (profileRef.current?.id === enqueueProfileId) {
+            committedRequestsRef.current = toWrite;
+            // Sync in-memory state: any request removed from committed by this
+            // write must also be absent from memory.  This fixes the race where
+            // a prior decline failure restored a request to in-memory state, but
+            // a later accept/block write then committed its removal — leaving the
+            // request visible in the UI but absent from storage.
+            const removedIds = new Set(
+              beforeWrite
+                .filter(r => !toWrite.find(t => t.id === r.id))
+                .map(r => r.id),
+            );
+            if (removedIds.size > 0) {
+              setMessageRequests(curr => curr.filter(r => !removedIds.has(r.id)));
+            }
+          }
+        } catch {
+          if (profileRef.current?.id === enqueueProfileId) {
+            onFailure?.();
+          }
+        }
+      });
+      requestsWriteQueueRef.current = myWrite;
+      return myWrite;
+    },
+    [],
+  );
 
   // ── Persistence load ──────────────────────────────────────────────────────
 
@@ -406,7 +479,13 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
           setGroupConversations(hydrated);
         }
         if (mutedStr) setMutedIds(new Set(JSON.parse(mutedStr) as string[]));
-        if (reqStr) setMessageRequests(JSON.parse(reqStr));
+        if (reqStr) {
+          const parsed: MessageRequest[] = JSON.parse(reqStr);
+          setMessageRequests(parsed);
+          // Initialise the committed baseline so declineRequest always starts
+          // from the true persisted state, not an optimistic snapshot.
+          committedRequestsRef.current = parsed;
+        }
         if (blockedStr) setBlockedIds(JSON.parse(blockedStr));
         if (leftGroupStr) setLeftGroups(JSON.parse(leftGroupStr));
         if (bcastStr) {
@@ -486,7 +565,9 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
                 const req: MessageRequest = { id: createMessageId(), fromUser: sender, preview, timestamp: Date.now() };
                 const updated = [req, ...currentRequests];
                 const pid = profileRef.current?.id;
-                if (pid) AsyncStorage.setItem(requestsKey(pid), JSON.stringify(updated));
+                // Route through the shared serialized queue so this arrival
+                // write never races with a concurrent decline/accept/block write.
+                enqueueRequestsWrite(current => [req, ...current.filter(r => r.id !== req.id)]);
                 return updated;
               }
               return currentRequests;
@@ -633,6 +714,10 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     setMutedIds(new Set());
     setBlockedIds([]);
     setMessageRequests([]);
+    // Reset both the committed baseline and the write queue so any queued
+    // writes from the old profile don't affect the new profile's storage.
+    committedRequestsRef.current = [];
+    requestsWriteQueueRef.current = Promise.resolve();
     const newProfile: MyProfile = { id: createMessageId(), username, color, discoverable: true, avatarUri };
     // Optimistically update in-memory state so the UI feels instant…
     setProfileState(newProfile);
@@ -672,13 +757,10 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       saveConvs(filtered, showStorageError);
       return filtered;
     });
-    setMessageRequests(prev => {
-      const filtered = prev.filter(r => r.fromUser.id !== userId);
-      // Fire-and-forget is acceptable for requests because the worst case is
-      // a stale request reappearing; the block itself is the critical write.
-      AsyncStorage.setItem(requestsKey(pid), JSON.stringify(filtered));
-      return filtered;
-    });
+    setMessageRequests(prev => prev.filter(r => r.fromUser.id !== userId));
+    // Route through the shared queue so this write is serialized with any
+    // concurrent decline/accept writes and can never overwrite their results.
+    enqueueRequestsWrite(current => current.filter(r => r.fromUser.id !== userId));
 
     // Persist the block.  This is the critical write — if it fails the blocked
     // user will reappear after a restart, so we must rollback and surface an error.
@@ -723,9 +805,8 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
     setMessageRequests(prev => {
       const req = prev.find(r => r.id === requestId);
       if (!req) return prev;
-      const next = prev.filter(r => r.id !== requestId);
-      const pid = profileRef.current?.id;
-      if (pid) AsyncStorage.setItem(requestsKey(pid), JSON.stringify(next));
+      // Build the conversation inside the updater so we always have the live
+      // request object (may have arrived after the last committed write).
       setConversations(convs => {
         if (convs.find(c => c.userId === req.fromUser.id)) return convs;
         const initMsg: Message = {
@@ -745,18 +826,46 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
         saveConvs(updated, showStorageError);
         return updated;
       });
-      return next;
+      return prev.filter(r => r.id !== requestId);
     });
-  }, []);
+    // Route through the shared queue so this accept write is serialized with
+    // any concurrent decline/block writes and can never overwrite their results.
+    enqueueRequestsWrite(current => current.filter(r => r.id !== requestId));
+  }, [showStorageError]);
 
-  const declineRequest = useCallback((requestId: string) => {
-    setMessageRequests(prev => {
-      const next = prev.filter(r => r.id !== requestId);
-      const pid = profileRef.current?.id;
-      if (pid) AsyncStorage.setItem(requestsKey(pid), JSON.stringify(next));
-      return next;
-    });
-  }, []);
+  const declineRequest = useCallback((requestId: string): Promise<void> => {
+    // Optimistic in-memory removal.
+    setMessageRequests(prev => prev.filter(r => r.id !== requestId));
+
+    // Route through the shared serialized queue.  The mutate fn runs at
+    // write-execution time from the committed baseline, so this write only
+    // persists its own removal — never a concurrent optimistic removal that
+    // hasn't been committed yet.
+    //
+    // NOTE: we do NOT capture the rollback payload at call time.  If the
+    // request arrived just before declineRequest was called, its arrival
+    // write may still be queued (committed baseline not yet updated).  By
+    // reading committedRequestsRef INSIDE the onFailure callback, we run
+    // after all earlier queued writes (including the arrival write) have
+    // settled, so the committed baseline is authoritative by then.
+    return enqueueRequestsWrite(
+      current => current.filter(r => r.id !== requestId),
+      () => {
+        // Write failed — committed baseline is unchanged (storage still has
+        // this request).  Read the request from the committed baseline NOW
+        // (at failure time) so we correctly handle requests that arrived and
+        // had their arrival write commit between the call and this failure.
+        const req = committedRequestsRef.current.find(r => r.id === requestId);
+        if (req) {
+          setMessageRequests(curr => {
+            if (curr.find(r => r.id === req.id)) return curr;
+            return [req, ...curr];
+          });
+        }
+        setToastQueue(storageErrorToastUpdater);
+      },
+    );
+  }, [enqueueRequestsWrite]);
 
   // ── DM send ───────────────────────────────────────────────────────────────
 

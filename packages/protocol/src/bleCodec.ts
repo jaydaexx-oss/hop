@@ -137,12 +137,31 @@ export function advertiseLocalName(username: string): string {
   return `HOP:${trimmed}`;
 }
 
+const MAC_RE = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i;
+const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const LONG_HEX_RE = /^[0-9a-f]{12,}$/i;
+
+/** True for MAC addresses, OS BLE UUIDs, and long hex hardware identifiers. */
+export function looksLikeHardwareId(value: string): boolean {
+  const trimmed = value.trim();
+  if (!trimmed) return false;
+  if (MAC_RE.test(trimmed) || UUID_RE.test(trimmed)) return true;
+  const hex = trimmed.replace(/[:-]/g, "");
+  return LONG_HEX_RE.test(hex) && hex.length >= 12;
+}
+
+export function safeNearbyDisplayName(displayName?: string | null): string {
+  const name = (displayName ?? "").trim();
+  if (!name || looksLikeHardwareId(name)) return "HOP user";
+  return name;
+}
+
 export function displayNameFromAdvertisement(localName?: string | null, deviceName?: string | null): string {
   const raw = (localName || deviceName || "").trim();
   if (raw.startsWith("HOP:")) {
     const rest = raw.slice(4).trim();
-    if (rest) return rest;
+    if (rest && !looksLikeHardwareId(rest)) return rest;
   }
-  if (raw) return raw;
+  if (raw && !looksLikeHardwareId(raw)) return raw;
   return "HOP user";
 }

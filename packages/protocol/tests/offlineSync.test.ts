@@ -172,6 +172,22 @@ describe("offline persistence and sync", () => {
     session2.driver.close();
   });
 
+  it("applies an end-to-end delivery ack without duplicating the message", async () => {
+    const file = tempDb();
+    const world = mockWorld();
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const session = await openService(file, world.http, testCrypto(alice, blake.publicKey));
+    const sent = await session.service.sendText({ ...sendInput, text: "please ack" });
+    expect(sent.status).toBe(MessageStatus.SENT);
+    expect(await session.service.applyDeliveryAck(sent.message_id)).toBe(true);
+    expect(await session.service.applyDeliveryAck(sent.message_id)).toBe(true);
+    const rows = await session.service.listMessages(CONVO);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.status).toBe(MessageStatus.DELIVERED);
+    session.driver.close();
+  });
+
   it("retries with exponential backoff while the server is failing", async () => {
     const file = tempDb();
     const world = mockWorld({ failPost: true });

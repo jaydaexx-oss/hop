@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FlatList, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
+import { conversationTransportStatus, internetStatusAvailable } from '@hop/protocol';
 
 import { Text, View } from '@/components/Themed';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -8,12 +9,14 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { api, type Conversation } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { useBle } from '@/src/ble/BleProvider';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { useHopSocket } from '@/src/ws';
 
 export default function ChatsScreen() {
   const { token } = useAuth();
-  const { cacheConversation, listCachedConversations, syncNow } = useOffline();
+  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount } = useOffline();
+  const { peers, connectedId } = useBle();
   const router = useRouter();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
@@ -60,21 +63,34 @@ export default function ChatsScreen() {
         ListEmptyComponent={
           <Text style={{ color: colors.muted }}>No chats yet. Start one from Contacts.</Text>
         }
-        renderItem={({ item }) => (
-          <Pressable
-            onPress={() =>
-              router.push(`/chat/${item.id}?peer=${item.peer.username}&peerId=${item.peer.id}`)
-            }
-            style={[styles.row, { backgroundColor: colors.card }]}>
-            <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
-              <Text style={styles.avatarLabel}>{item.peer.username.slice(0, 1).toUpperCase()}</Text>
-            </View>
-            <View style={styles.meta}>
-              <Text style={styles.name}>{item.peer.username}</Text>
-              <Text style={{ color: colors.muted }}>Tap to open</Text>
-            </View>
-          </Pressable>
-        )}
+        renderItem={({ item }) => {
+          const transport = conversationTransportStatus({
+            recipientId: item.peer.id,
+            peers: peers.map((peer) => ({
+              userId: peer.userId,
+              sessionEstablished: peer.sessionEstablished,
+              connected: connectedId === peer.deviceId,
+            })),
+            internetAvailable: internetStatusAvailable(status),
+            conversationQueued: false,
+            networkQueued: queuedCount > 0,
+          });
+          return (
+            <Pressable
+              onPress={() =>
+                router.push(`/chat/${item.id}?peer=${item.peer.username}&peerId=${item.peer.id}`)
+              }
+              style={[styles.row, { backgroundColor: colors.card }]}>
+              <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
+                <Text style={styles.avatarLabel}>{item.peer.username.slice(0, 1).toUpperCase()}</Text>
+              </View>
+              <View style={styles.meta}>
+                <Text style={styles.name}>{item.peer.username}</Text>
+                <Text style={{ color: colors.muted }}>{transport.line}</Text>
+              </View>
+            </Pressable>
+          );
+        }}
       />
     </View>
   );

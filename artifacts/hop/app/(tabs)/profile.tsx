@@ -254,6 +254,20 @@ export default function ProfileScreen() {
         </View>
 
         <Pressable
+          style={[styles.row, { borderBottomColor: colors.border }]}
+          onPress={() => { Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light); router.push('/ble-debug'); }}
+        >
+          <View style={styles.rowLeft}>
+            <Ionicons name="pulse-outline" size={20} color={colors.foreground} />
+            <Text style={[styles.rowLabel, { color: colors.foreground }]}>BLE Debug</Text>
+          </View>
+          <View style={styles.rowLeft}>
+            <Text style={[styles.rowLabel, { color: colors.mutedForeground, fontSize: 12 }]}>Dev only</Text>
+            <Ionicons name="chevron-forward" size={16} color={colors.mutedForeground} />
+          </View>
+        </Pressable>
+
+        <Pressable
           style={styles.row}
           onPress={() => {
             Alert.alert(

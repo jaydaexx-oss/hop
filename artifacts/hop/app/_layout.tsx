@@ -32,6 +32,7 @@ function RootLayoutNav() {
       <Stack.Screen name="past-groups" />
       <Stack.Screen name="user-profile/[id]" />
       <Stack.Screen name="scan" options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal' }} />
+      <Stack.Screen name="ble-debug" options={{ animation: 'slide_from_bottom', presentation: 'fullScreenModal' }} />
     </Stack>
   );
 }

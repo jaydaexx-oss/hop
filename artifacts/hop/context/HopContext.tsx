@@ -5,7 +5,9 @@ import { saveConvs, saveGroups, saveBroadcasts } from './storage';
 import { createMessageId, MessageStatus } from '@/protocol/message';
 import { ProcessedIdSet } from '@/protocol/duplicates';
 import { useBluetoothDiscovery } from '@/hooks/useBluetoothDiscovery';
-import type { BleDiscoveryStatus } from '@/hooks/useBluetoothDiscovery';
+import type { BleDiscoveryStatus, DiscoveredHopPeer } from '@/hooks/useBluetoothDiscovery';
+import { useBluetoothAdvertising } from '@/hooks/useBluetoothAdvertising';
+import type { AdvertisingStatus } from '@/hooks/useBluetoothAdvertising';
 
 // ─── Domain types ─────────────────────────────────────────────────────────────
 
@@ -131,6 +133,21 @@ interface HopContextType {
   verifiedBlePeers: ReadonlySet<string>;
   /** State of the BLE radio / scan cycle on this device. */
   bleState: BleDiscoveryStatus;
+  /**
+   * HOP devices discovered via real BLE advertisement parsing.
+   * Keyed by BLE device ID.  authState is always 'discovered' in this PoC —
+   * authentication (GATT + profile.id exchange) is the next milestone.
+   * Discovery ≠ authentication.
+   */
+  discoveredHopPeers: ReadonlyMap<string, DiscoveredHopPeer>;
+  /** BLE advertising status — 'unsupported' in Expo Go / web */
+  advertisingState: AdvertisingStatus;
+  /** Hex of the tempId currently being advertised (null when not advertising) */
+  myTempIdHex: string | null;
+  /** Seconds remaining before the current tempId rotates */
+  secondsUntilRotation: number;
+  startAdvertising: () => Promise<void>;
+  stopAdvertising: () => Promise<void>;
 }
 
 // ─── Simulated nearby user pool ───────────────────────────────────────────────
@@ -200,10 +217,20 @@ const HopContext = createContext<HopContextType | null>(null);
 
 export function HopProvider({ children }: { children: React.ReactNode }) {
   // ── Real BLE discovery ────────────────────────────────────────────────────
-  // On native dev builds: actively scans for HOP peripherals, populates
-  // verifiedBlePeers with confirmed profile IDs.
-  // On web / Expo Go: returns { status: 'unsupported', verifiedBlePeers: empty Set }.
-  const { status: bleState, verifiedBlePeers } = useBluetoothDiscovery();
+  // On native dev builds: scans for HOP peripherals, parses advertisement data.
+  // On web / Expo Go: returns { status: 'unsupported', empty sets }.
+  const { status: bleState, verifiedBlePeers, discoveredHopPeers } = useBluetoothDiscovery();
+
+  // ── Real BLE advertising ──────────────────────────────────────────────────
+  // On native dev builds: broadcasts HOP_SERVICE_UUID + rotating tempId.
+  // On web / Expo Go: returns { status: 'unsupported', ... }.
+  const {
+    status: advertisingState,
+    myTempIdHex,
+    secondsUntilRotation,
+    startAdvertising,
+    stopAdvertising,
+  } = useBluetoothAdvertising();
 
   const [profile, setProfileState] = useState<MyProfile | null>(null);
   const [isOnboarding, setIsOnboarding] = useState(false);
@@ -963,7 +990,9 @@ export function HopProvider({ children }: { children: React.ReactNode }) {
       markRead, markGroupRead, completeOnboarding, clearHistory,
       blockUser, reportUser, acceptRequest, declineRequest,
       deleteConversation, deleteGroup, leaveGroup, rejoinGroup, undoDeleteConversation, undoDeleteGroup, openDirectMessage,
-      verifiedBlePeers, bleState,
+      verifiedBlePeers, bleState, discoveredHopPeers,
+      advertisingState, myTempIdHex, secondsUntilRotation,
+      startAdvertising, stopAdvertising,
     }}>
       {children}
     </HopContext.Provider>

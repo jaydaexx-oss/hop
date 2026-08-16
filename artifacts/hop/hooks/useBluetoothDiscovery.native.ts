@@ -1,264 +1,263 @@
 /**
  * useBluetoothDiscovery — real BLE scanning hook for iOS and Android.
  *
+ * ─── What changed from the previous PoC version ──────────────────────────────
+ *
+ * The previous version attempted a GATT connect → read characteristics flow.
+ * That worked only if the discovered device was serving the HOP GATT server,
+ * which was not yet implemented.
+ *
+ * This version uses advertisement-data parsing instead:
+ *   • No GATT connection is made during discovery.
+ *   • The peer's tempId and protocol version are extracted from manufacturer
+ *     data in the advertisement packet — no connect required.
+ *   • This is faster (no round-trip), uses less power, and correctly matches
+ *     the advertising format emitted by useBluetoothAdvertising.native.ts.
+ *
  * ─── What this hook does ──────────────────────────────────────────────────────
  *
  *  1. Requests BLE permissions (Android runtime; iOS automatic via CBManager).
- *  2. Monitors the BLE radio state (on/off/unauthorized).
- *  3. Scans for peripherals advertising HOP_SERVICE_UUID.
- *  4. For each discovered device:
- *     a. Connects to it.
- *     b. Reads HOP_PEER_ID_CHAR  → peer's profile.id.
- *     c. Reads HOP_VERSION_CHAR  → peer's protocol version.
- *     d. Verifies version == HOP_BLE_PROTOCOL_VERSION.
- *     e. Disconnects immediately (no persistent connection in PoC).
- *     f. Adds the profile.id to verifiedBlePeers with a TTL timestamp.
- *  5. Re-scans on HOP_RESCAN_INTERVAL_MS timer.
- *  6. Expires stale peers after HOP_PEER_TTL_MS.
- *  7. Updates bluetoothTransport.setVerifiedPeers() on every change so the
- *     TransportManager's isAvailable() stays in sync.
+ *  2. Monitors the BLE radio state (on / off / unauthorized).
+ *  3. Scans ONLY for devices advertising HOP_SERVICE_UUID (requirement 8).
+ *  4. For each advertisement packet:
+ *     a. Parses manufacturerData (base64 from react-native-ble-plx).
+ *     b. Validates company ID (must be HOP_COMPANY_ID = 0x4850).
+ *     c. Validates protocol version (must be HOP_BLE_PROTOCOL_VERSION).
+ *     d. Extracts 16-byte tempId.
+ *     e. Adds device to discoveredHopPeers (state = 'discovered').
+ *  5. Maintains a TTL — removes stale peers after HOP_PEER_TTL_MS.
+ *  6. Re-scans on a timer.
  *
  * ─── DOES NOT ─────────────────────────────────────────────────────────────────
  *
- *  ✗ Track arbitrary Bluetooth devices.
- *  ✗ Connect to devices that do not advertise HOP_SERVICE_UUID.
- *  ✗ Store or log device MAC addresses.
- *  ✗ Send messages (discovery PoC only — see BluetoothTransport.native.ts).
+ *  ✗ Connect to discovered devices (GATT connect is the auth milestone).
+ *  ✗ Add peers to verifiedBlePeers (requires profileId from GATT read).
+ *  ✗ Track non-HOP Bluetooth devices.
+ *  ✗ Store device MAC addresses.
+ *  ✗ Treat discovery as authentication (requirement 11).
  *
- * ─── Platform notes ───────────────────────────────────────────────────────────
+ * ─── Discovery vs Authentication (requirement 10) ─────────────────────────────
  *
- *  iOS:   Requires a DEVELOPMENT BUILD (not Expo Go).
- *         Peripheral mode requires the app to be in the foreground or have
- *         the bluetooth-central background mode entitlement.
- *         The system randomises MAC addresses; use the CBPeripheral UUID instead.
+ *  discovered    = advertisement seen + valid HOP manufacturer data
+ *  connected     = GATT link established (not in this PoC)
+ *  authenticated = GATT + profile.id exchange verified (not in this PoC)
  *
- *  Android: Requires BLUETOOTH_SCAN + BLUETOOTH_CONNECT (API 31+) or
- *           ACCESS_FINE_LOCATION (API ≤ 30).  See permissions.native.ts.
- *           Background scanning is limited after Android 8 (Oreo).
- *
- *  See docs/BLE_IMPLEMENTATION.md for the full testing procedure.
+ * See docs/BLE_IMPLEMENTATION.md for platform limitations and test procedure.
  */
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BleManager, State as BleState } from 'react-native-ble-plx';
 import {
   HOP_SERVICE_UUID,
-  HOP_PEER_ID_CHAR,
-  HOP_VERSION_CHAR,
   HOP_BLE_PROTOCOL_VERSION,
+  HOP_COMPANY_ID,
   HOP_SCAN_TIMEOUT_MS,
   HOP_RESCAN_INTERVAL_MS,
   HOP_PEER_TTL_MS,
-  HOP_CONNECT_TIMEOUT_MS,
+  MFR_OFFSET_COMPANY_ID,
+  MFR_OFFSET_VERSION,
+  MFR_OFFSET_TEMP_ID,
+  MFR_TEMP_ID_LENGTH,
 } from '@/protocol/ble/constants';
 import { requestBlePermissions } from '@/protocol/ble/permissions';
 import { bluetoothTransport } from '@/protocol/ble/BluetoothTransport';
+import { bytesToHex } from '@/protocol/ble/tempId';
 
-import type { BleDiscoveryState, BleDiscoveryStatus } from './useBluetoothDiscovery';
-export type { BleDiscoveryState, BleDiscoveryStatus };
+import type {
+  BleDiscoveryState,
+  BleDiscoveryStatus,
+  DiscoveredHopPeer,
+} from './useBluetoothDiscovery';
+export type { BleDiscoveryState, BleDiscoveryStatus, DiscoveredHopPeer };
 
-// ─── Module-level BleManager singleton ───────────────────────────────────────
-// react-native-ble-plx requires exactly one BleManager per process.
+// ─── BleManager singleton ─────────────────────────────────────────────────────
 let _manager: BleManager | null = null;
 function getManager(): BleManager {
   if (!_manager) _manager = new BleManager();
   return _manager;
 }
 
-// ─── Peer TTL tracking ────────────────────────────────────────────────────────
-interface PeerEntry {
-  profileId: string;
-  lastSeenAt: number;
+// ─── Advertisement data parser ────────────────────────────────────────────────
+
+interface ParsedHopAdvertisement {
+  tempIdHex: string;
+  protocolVersion: number;
+}
+
+/**
+ * Parses a base64-encoded manufacturer data string from react-native-ble-plx.
+ *
+ * Expected buffer layout (from BLE spec + HOP_COMPANY_ID convention):
+ *   bytes[0..1]  = company ID, uint16 little-endian (must be HOP_COMPANY_ID)
+ *   bytes[2]     = HOP protocol version
+ *   bytes[3..18] = tempId (16 bytes)
+ *
+ * Returns null if the data is absent, too short, or not from a HOP device.
+ */
+function parseHopAdvertisement(
+  manufacturerDataBase64: string | null | undefined,
+): ParsedHopAdvertisement | null {
+  if (!manufacturerDataBase64) return null;
+
+  let buf: Buffer;
+  try {
+    buf = Buffer.from(manufacturerDataBase64, 'base64');
+  } catch {
+    return null;
+  }
+
+  const minLen = MFR_OFFSET_TEMP_ID + MFR_TEMP_ID_LENGTH;
+  if (buf.length < minLen) return null;
+
+  // Validate company ID (little-endian uint16).
+  const companyId = buf.readUInt16LE(MFR_OFFSET_COMPANY_ID);
+  if (companyId !== HOP_COMPANY_ID) return null;
+
+  // Validate protocol version.
+  const protocolVersion = buf[MFR_OFFSET_VERSION];
+  if (protocolVersion !== HOP_BLE_PROTOCOL_VERSION) return null;
+
+  // Extract tempId bytes.
+  const tempIdBytes = new Uint8Array(
+    buf.buffer,
+    buf.byteOffset + MFR_OFFSET_TEMP_ID,
+    MFR_TEMP_ID_LENGTH,
+  );
+
+  return {
+    tempIdHex: bytesToHex(tempIdBytes),
+    protocolVersion,
+  };
 }
 
 // ─── Hook ─────────────────────────────────────────────────────────────────────
 
 export function useBluetoothDiscovery(): BleDiscoveryState {
   const [status, setStatus] = useState<BleDiscoveryStatus>('idle');
-  const [verifiedBlePeers, setVerifiedBlePeers] = useState<ReadonlySet<string>>(
-    new Set<string>(),
-  );
+  const [verifiedBlePeers] = useState<ReadonlySet<string>>(new Set<string>());
+  const [discoveredHopPeers, setDiscoveredHopPeers] = useState<
+    ReadonlyMap<string, DiscoveredHopPeer>
+  >(new Map());
 
-  // Internal TTL map: deviceId → PeerEntry
-  const peerMap = useRef(new Map<string, PeerEntry>());
-  const scanTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const peerMap = useRef(new Map<string, DiscoveredHopPeer>());
+  const scanTimer   = useRef<ReturnType<typeof setTimeout> | null>(null);
   const rescanTimer = useRef<ReturnType<typeof setInterval> | null>(null);
-  const ttlTimer = useRef<ReturnType<typeof setInterval> | null>(null);
+  const ttlTimer    = useRef<ReturnType<typeof setInterval> | null>(null);
   const manager = getManager();
 
-  // ── Publish peer set ──────────────────────────────────────────────────────
+  // ── Publish peer map ──────────────────────────────────────────────────────
   const publishPeers = useCallback(() => {
-    const ids = new Set(
-      Array.from(peerMap.current.values()).map(e => e.profileId),
-    );
-    setVerifiedBlePeers(ids);
-    bluetoothTransport.setVerifiedPeers(ids);
+    setDiscoveredHopPeers(new Map(peerMap.current));
+    // verifiedBlePeers stays empty until GATT auth milestone.
+    bluetoothTransport.setVerifiedPeers(new Set<string>());
   }, []);
 
-  // ── Expire stale peers ────────────────────────────────────────────────────
+  // ── TTL sweep ─────────────────────────────────────────────────────────────
   const expireStale = useCallback(() => {
     const now = Date.now();
     let changed = false;
-    for (const [deviceId, entry] of peerMap.current) {
-      if (now - entry.lastSeenAt > HOP_PEER_TTL_MS) {
-        peerMap.current.delete(deviceId);
+    for (const [id, peer] of peerMap.current) {
+      if (now - peer.lastSeenAt > HOP_PEER_TTL_MS) {
+        peerMap.current.delete(id);
         changed = true;
       }
     }
     if (changed) publishPeers();
   }, [publishPeers]);
 
-  // ── Verify a discovered device ────────────────────────────────────────────
-  const verifyDevice = useCallback(async (deviceId: string) => {
-    const timeoutId = setTimeout(() => {
-      manager.cancelDeviceConnection(deviceId).catch(() => {});
-    }, HOP_CONNECT_TIMEOUT_MS);
-
-    try {
-      const device = await manager.connectToDevice(deviceId, {
-        autoConnect: false,
-      });
-      await device.discoverAllServicesAndCharacteristics();
-
-      // Read protocol version first — reject mismatches early.
-      const versionChar = await device.readCharacteristicForService(
-        HOP_SERVICE_UUID,
-        HOP_VERSION_CHAR,
-      );
-      if (versionChar.value) {
-        const versionBytes = Buffer.from(versionChar.value, 'base64');
-        const version = versionBytes[0];
-        if (version !== HOP_BLE_PROTOCOL_VERSION) {
-          console.log(
-            `[HOP BLE] Device ${deviceId} speaks protocol v${version}, we need v${HOP_BLE_PROTOCOL_VERSION}. Skipping.`,
-          );
-          await device.cancelConnection();
-          return;
-        }
-      }
-
-      // Read the peer's profile ID.
-      const idChar = await device.readCharacteristicForService(
-        HOP_SERVICE_UUID,
-        HOP_PEER_ID_CHAR,
-      );
-      if (!idChar.value) {
-        await device.cancelConnection();
-        return;
-      }
-
-      const profileId = Buffer.from(idChar.value, 'base64').toString('utf-8').trim();
-      if (!profileId || profileId.length < 8) {
-        // Reject malformed IDs.
-        await device.cancelConnection();
-        return;
-      }
-
-      // Verified HOP peer.
-      peerMap.current.set(deviceId, { profileId, lastSeenAt: Date.now() });
-      publishPeers();
-
-      await device.cancelConnection();
-    } catch (err) {
-      // Connection failed — not necessarily an error; the device may have moved away.
-      // Silently ignore; the device won't be added to verifiedBlePeers.
-    } finally {
-      clearTimeout(timeoutId);
-    }
-  }, [manager, publishPeers]);
-
-  // ── Start a scan window ───────────────────────────────────────────────────
+  // ── Start scan window ─────────────────────────────────────────────────────
   const startScan = useCallback(() => {
     setStatus('scanning');
 
     manager.startDeviceScan(
-      [HOP_SERVICE_UUID], // Only scan for HOP peripherals — requirement #8.
+      [HOP_SERVICE_UUID],      // requirement 8: filter to HOP only
       { allowDuplicates: true },
       (error, device) => {
         if (error) {
-          console.warn('[HOP BLE] Scan error:', error.message);
+          console.warn('[HOP BLE Discovery] Scan error:', error.message);
           setStatus('unavailable');
           return;
         }
         if (!device) return;
 
-        // Refresh TTL for already-verified devices without reconnecting.
-        const existing = peerMap.current.get(device.id);
-        if (existing) {
-          peerMap.current.set(device.id, { ...existing, lastSeenAt: Date.now() });
-          publishPeers();
+        const parsed = parseHopAdvertisement(device.manufacturerData);
+        if (!parsed) {
+          // Device advertises HOP_SERVICE_UUID but no valid manufacturer data.
+          // Could be an older HOP version or a misconfigured device — skip.
           return;
         }
 
-        // New device — verify it out-of-band to avoid blocking the scan callback.
-        verifyDevice(device.id);
+        const now = Date.now();
+        const existing = peerMap.current.get(device.id);
+
+        peerMap.current.set(device.id, {
+          deviceId: device.id,
+          tempIdHex: parsed.tempIdHex,
+          rssi: device.rssi ?? -100,
+          protocolVersion: parsed.protocolVersion,
+          firstSeenAt: existing?.firstSeenAt ?? now,
+          lastSeenAt: now,
+          authState: 'discovered',
+        });
+
+        publishPeers();
       },
     );
 
-    // Auto-stop after timeout to save battery.
+    // Auto-stop after scan window.
     if (scanTimer.current) clearTimeout(scanTimer.current);
     scanTimer.current = setTimeout(() => {
       manager.stopDeviceScan();
       setStatus('idle');
     }, HOP_SCAN_TIMEOUT_MS);
-  }, [manager, publishPeers, verifyDevice]);
+  }, [manager, publishPeers]);
 
   // ── Stop everything ───────────────────────────────────────────────────────
   const stopAll = useCallback(() => {
     manager.stopDeviceScan();
-    if (scanTimer.current) clearTimeout(scanTimer.current);
+    if (scanTimer.current)   clearTimeout(scanTimer.current);
     if (rescanTimer.current) clearInterval(rescanTimer.current);
-    if (ttlTimer.current) clearInterval(ttlTimer.current);
+    if (ttlTimer.current)    clearInterval(ttlTimer.current);
     setStatus('idle');
   }, [manager]);
 
-  // ── Main effect: monitor radio state, start scanning ─────────────────────
+  // ── Main effect ───────────────────────────────────────────────────────────
   useEffect(() => {
     let stateSubscription: ReturnType<typeof manager.onStateChange> | null = null;
     let initialised = false;
 
     const init = async () => {
-      const permissionStatus = await requestBlePermissions();
-      if (permissionStatus === 'denied') {
-        setStatus('unauthorized');
-        return;
-      }
-      if (permissionStatus === 'unsupported') {
-        setStatus('unsupported');
-        return;
-      }
+      const perm = await requestBlePermissions();
+      if (perm === 'denied')      { setStatus('unauthorized'); return; }
+      if (perm === 'unsupported') { setStatus('unsupported');  return; }
 
       stateSubscription = manager.onStateChange((state: BleState) => {
         if (state === BleState.PoweredOn) {
           if (!initialised) {
             initialised = true;
             startScan();
-            // Periodic re-scan.
-            rescanTimer.current = setInterval(startScan, HOP_SCAN_TIMEOUT_MS + HOP_RESCAN_INTERVAL_MS);
-            // Periodic TTL sweep.
+            rescanTimer.current = setInterval(
+              startScan,
+              HOP_SCAN_TIMEOUT_MS + HOP_RESCAN_INTERVAL_MS,
+            );
             ttlTimer.current = setInterval(expireStale, HOP_PEER_TTL_MS / 3);
           }
         } else if (state === BleState.PoweredOff) {
-          stopAll();
-          setStatus('off');
-          initialised = false;
+          stopAll(); setStatus('off'); initialised = false;
         } else if (state === BleState.Unauthorized) {
-          stopAll();
-          setStatus('unauthorized');
+          stopAll(); setStatus('unauthorized');
         } else {
-          stopAll();
-          setStatus('unavailable');
+          stopAll(); setStatus('unavailable');
         }
-      }, true /* emit current state immediately */);
+      }, true);
     };
 
     init();
-
     return () => {
       stopAll();
       stateSubscription?.remove();
     };
   }, [manager, startScan, expireStale, stopAll]);
 
-  return { status, verifiedBlePeers };
+  return { status, verifiedBlePeers, discoveredHopPeers };
 }

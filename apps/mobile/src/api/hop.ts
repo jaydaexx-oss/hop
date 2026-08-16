@@ -1,4 +1,5 @@
 import { API_URL, assertSafeApiUrl } from './client';
+import { identityPublishBody } from '@hop/protocol';
 
 export type User = {
   id: string;
@@ -77,7 +78,7 @@ export const api = {
   me: (token: string) => request<User>('/users/me', { token }),
   userById: (token: string, userId: string) => request<User>(`/users/id/${userId}`, { token }),
   putIdentity: (token: string, publicKey: string) =>
-    request<User>('/users/me/identity', { method: 'PUT', token, body: { public_key: publicKey } }),
+    request<User>('/users/me/identity', { method: 'PUT', token, body: identityPublishBody(publicKey) }),
   blockUser: (token: string, username: string) =>
     request<{ status: string }>('/users/me/blocks', { method: 'POST', token, body: { username } }),
   conversations: (token: string) => request<Conversation[]>('/conversations', { token }),

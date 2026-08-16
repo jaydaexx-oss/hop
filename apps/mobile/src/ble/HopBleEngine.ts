@@ -15,11 +15,15 @@ import {
   displayNameFromAdvertisement,
   encodeEnvelope,
   encodeHandshake,
+  encodeAuthenticatedBleAck,
   hexToBytes,
   isCryptoBoxPayload,
+  isUnauthenticatedBleAck,
+  parseCryptoBoxPayload,
   PublicKeyTofu,
   sendWithAckRetry,
   decideRelay,
+  verifyAuthenticatedBleAck,
   type AckAttempt,
   type BleLink,
   type BleLinkStatus,
@@ -72,15 +76,26 @@ export class HopBleEngine implements BleLink {
   private readonly peerListeners = new Set<() => void>();
   private readonly connectionListeners = new Set<(deviceId: string, connected: boolean) => void>();
   private readonly processed = new ProcessedIdSet();
-  readonly tofu = new PublicKeyTofu();
+  tofu: PublicKeyTofu;
   private readonly serverKeyCache = new Map<string, string>();
   private readonly reassemblers = new Map<string, BleReassembler>();
-  private readonly pendingAcks = new Map<string, () => void>();
+  private readonly pendingAcks = new Map<
+    string,
+    { resolve: () => void; from: string; peerPublicKey: string }
+  >();
   private subscriptions: unknown[] = [];
   private scanOnTimer: ReturnType<typeof setTimeout> | null = null;
   private scanOffTimer: ReturnType<typeof setTimeout> | null = null;
   private staleTimer: ReturnType<typeof setInterval> | null = null;
   private detail = 'BLE engine is idle.';
+
+  constructor(tofu?: PublicKeyTofu) {
+    this.tofu = tofu ?? new PublicKeyTofu();
+  }
+
+  setTofu(tofu: PublicKeyTofu): void {
+    this.tofu = tofu;
+  }
 
   status(): BleLinkStatus {
     const blocked = bleRuntimeBlockedReason();
@@ -289,11 +304,18 @@ export class HopBleEngine implements BleLink {
     if (!peer?.sessionEstablished || !peer.publicKey) {
       return { ok: false, transport: 'bluetooth', error: 'Secure session is not established' };
     }
+    if (peer.userId && !this.tofu.canEncryptTo(peer.userId, peer.publicKey)) {
+      return {
+        ok: false,
+        transport: 'bluetooth',
+        error: 'Peer identity key changed; re-verify before sending',
+      };
+    }
 
     const bytes = encodeEnvelope({ ...envelope, transport: 'bluetooth' });
     return sendWithAckRetry(
       async (): Promise<AckAttempt> => {
-        const ack = this.waitForAck(envelope.message_id);
+        const ack = this.waitForAck(envelope.message_id, envelope.recipient_id, peer.publicKey!);
         try {
           try {
             await this.writeChunks(native, deviceId, bytes, BLE_DEFAULT_CHUNK_BYTES);
@@ -354,9 +376,9 @@ export class HopBleEngine implements BleLink {
     }
   }
 
-  private waitForAck(messageId: string): Promise<void> {
+  private waitForAck(messageId: string, from: string, peerPublicKey: string): Promise<void> {
     return new Promise((resolve) => {
-      this.pendingAcks.set(messageId, resolve);
+      this.pendingAcks.set(messageId, { resolve, from, peerPublicKey });
     });
   }
 
@@ -368,7 +390,7 @@ export class HopBleEngine implements BleLink {
       const handshake = decodeHandshake(hex);
       if (handshake) {
         if (handshake.user_id && handshake.pk && !this.tofu.bind(handshake.user_id, handshake.pk)) {
-          throw new Error('Peer identity key does not match the key already bound to this user.');
+          throw new Error('Peer identity key changed; re-verify before sending');
         }
         if (handshake.user_id && handshake.pk) {
           await this.verifyServerIdentity(handshake.user_id, handshake.pk);
@@ -442,16 +464,7 @@ export class HopBleEngine implements BleLink {
         const characteristicUUID = String(payload.characteristicUUID ?? '').toLowerCase();
         if (characteristicUUID !== HOP_BLE_ACK_UUID) return;
         const hex = String(payload.value ?? '');
-        try {
-          const messageId = new TextDecoder().decode(hexToBytes(hex));
-          const pending = this.pendingAcks.get(messageId);
-          if (pending) {
-            this.pendingAcks.delete(messageId);
-            pending();
-          }
-        } catch {
-          /* ignore malformed ack */
-        }
+        void this.handleAckNotify(hex);
       }),
     );
     this.subscriptions.push(
@@ -513,7 +526,7 @@ export class HopBleEngine implements BleLink {
       lastSeenAt: Date.now(),
     };
     if (this.processed.has(envelope.message_id)) {
-      await this.notifyAck(native, envelope.message_id);
+      await this.notifyAck(native, envelope);
       return;
     }
 
@@ -530,7 +543,7 @@ export class HopBleEngine implements BleLink {
       }
       if (!accepted) return;
       this.processed.remember(envelope.message_id);
-      await this.notifyAck(native, envelope.message_id);
+      await this.notifyAck(native, envelope);
       return;
     }
 
@@ -548,7 +561,7 @@ export class HopBleEngine implements BleLink {
     const forwarded = await this.send(nextDeviceId, decision.envelope);
     if (!forwarded.ok) return;
     this.processed.remember(envelope.message_id);
-    await this.notifyAck(native, envelope.message_id);
+    await this.notifyAck(native, envelope);
   }
 
   private neighborUserIds(): string[] {
@@ -566,14 +579,38 @@ export class HopBleEngine implements BleLink {
     return null;
   }
 
-  private async notifyAck(native: NativeBle, messageId: string): Promise<void> {
-    try {
-      await native.updateCharacteristicValue?.(
-        HOP_BLE_SERVICE_UUID,
-        HOP_BLE_ACK_UUID,
-        bytesToHex(new TextEncoder().encode(messageId)),
-        true,
+  private async handleAckNotify(hex: string): Promise<void> {
+    const identity = this.session?.ackIdentity;
+    if (!identity) return;
+    if (isUnauthenticatedBleAck(hex)) return;
+    for (const [messageId, pending] of this.pendingAcks) {
+      const ok = await verifyAuthenticatedBleAck(
+        hex,
+        { message_id: messageId, from: pending.from },
+        identity,
+        pending.peerPublicKey,
       );
+      if (!ok) continue;
+      this.pendingAcks.delete(messageId);
+      pending.resolve();
+      return;
+    }
+  }
+
+  private async notifyAck(native: NativeBle, envelope: EncryptedEnvelope): Promise<void> {
+    const identity = this.session?.ackIdentity;
+    const selfId = this.session?.userId;
+    const peerPk = parseCryptoBoxPayload(envelope.encrypted_payload)?.sender_pk;
+    if (!identity || !selfId || !peerPk) return;
+    if (envelope.sender_id && !this.tofu.canEncryptTo(envelope.sender_id, peerPk)) return;
+    try {
+      const hex = await encodeAuthenticatedBleAck({
+        message_id: envelope.message_id,
+        from: selfId,
+        local: identity,
+        peerPublicKey: peerPk,
+      });
+      await native.updateCharacteristicValue?.(HOP_BLE_SERVICE_UUID, HOP_BLE_ACK_UUID, hex, true);
     } catch {
       /* ack notify is best-effort */
     }

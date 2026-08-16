@@ -213,6 +213,22 @@ def test_identity_public_key_cannot_change(client: TestClient) -> None:
     assert second.status_code == 409
 
 
+def test_identity_put_rejects_secret_key_field(client: TestClient) -> None:
+    token, _ = _auth(client, "nosecret")
+    headers = {"Authorization": f"Bearer {token}"}
+    pk = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    leaked = client.put(
+        "/users/me/identity",
+        json={"public_key": pk, "secret_key": "must-never-be-accepted"},
+        headers=headers,
+    )
+    assert leaked.status_code == 422
+    published = client.put("/users/me/identity", json={"public_key": pk}, headers=headers)
+    assert published.status_code == 200
+    assert published.json()["identity_public_key"] == pk
+    assert "must-never-be-accepted" not in published.text
+
+
 def test_get_user_by_id_returns_identity_key(client: TestClient) -> None:
     token_a, id_a = _auth(client, "lookupa")
     token_b, _ = _auth(client, "lookupb")

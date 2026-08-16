@@ -56,7 +56,7 @@ function shortTime(): string {
 
 export function BleProvider({ children }: { children: ReactNode }) {
   const { user, token } = useAuth();
-  const { store, service, manager } = useOffline();
+  const { store, service, manager, tofu } = useOffline();
   const engineRef = useRef(new HopBleEngine());
   const [status, setStatus] = useState<BleLinkStatus>(engineRef.current.status());
   const [peers, setPeers] = useState<BlePeer[]>([]);
@@ -75,6 +75,12 @@ export function BleProvider({ children }: { children: ReactNode }) {
   const tokenRef = useRef(token);
   tokenRef.current = token;
   const identityRef = useRef<IdentityKeyPair | null>(null);
+  const tofuRef = useRef(tofu);
+  tofuRef.current = tofu;
+
+  useEffect(() => {
+    if (tofu) engineRef.current.setTofu(tofu);
+  }, [tofu]);
 
   useEffect(() => {
     if (!user) {
@@ -122,8 +128,22 @@ export function BleProvider({ children }: { children: ReactNode }) {
           },
         );
         if (plain.kind === 'delivery_ack') {
-          if (plain.ack_of) {
-            await serviceRef.current?.applyDeliveryAck(plain.ack_of);
+          const svc = serviceRef.current;
+          if (svc) {
+            await svc.acceptInbound({
+              message_id: envelope.message_id,
+              conversation_id: envelope.conversation_id,
+              sender_id: envelope.sender_id,
+              recipient_id: envelope.recipient_id,
+              text: null,
+              encrypted_payload: envelope.encrypted_payload,
+              status: 'SENT',
+              transport: 'bluetooth',
+              created_at: envelope.created_at,
+              expires_at: envelope.expires_at,
+              ttl: envelope.ttl,
+              hop_count: envelope.hop_count,
+            });
           }
           appendLog(`Delivery acknowledgment for ${plain.ack_of ?? envelope.message_id}.`);
           return true;
@@ -206,6 +226,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
         username: me.username,
         scanMode: 'balanced',
         identityPublicKey: identity.publicKey,
+        ackIdentity: identity,
         relayConsent: consent,
         resolveServerPublicKey: tokenRef.current
           ? async (userId) => {
@@ -246,10 +267,19 @@ export function BleProvider({ children }: { children: ReactNode }) {
           const convos = await sqlite.listConversations();
           const match = convos.find((row) => row.peer_id === peer.userId);
           if (match) {
+            const trust = tofuRef.current ?? engineRef.current.tofu;
+            let peerKey = match.peer_public_key;
+            if (peer.publicKey && peer.userId) {
+              const state = trust.observe(peer.userId, peer.publicKey);
+              if (state === 'KEY_CHANGED') {
+                throw new Error('Peer identity key changed; re-verify before sending');
+              }
+              peerKey = peer.publicKey;
+            }
             await sqlite.saveConversation({
               ...match,
               peer_username: peer.displayName || match.peer_username,
-              peer_public_key: peer.publicKey ?? match.peer_public_key,
+              peer_public_key: peerKey,
             });
           }
         }

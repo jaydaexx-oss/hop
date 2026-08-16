@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class EnvelopeIn(BaseModel):
@@ -65,6 +65,7 @@ class TextMessageIn(BaseModel):
 
 
 class IdentityIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     public_key: str = Field(min_length=32, max_length=128)
 
 

@@ -1,3 +1,10 @@
+import {
+  readWithSecretPolicy,
+  shouldFailClosedSecretStore,
+  writeWithSecretPolicy,
+  type SecretBackend,
+} from '@hop/protocol';
+
 const memory = new Map<string, string>();
 
 async function nativeStore(): Promise<typeof import('expo-secure-store') | null> {
@@ -10,30 +17,44 @@ async function nativeStore(): Promise<typeof import('expo-secure-store') | null>
   return null;
 }
 
-/** Persist secrets in SecureStore/Keychain only. Never localStorage. */
-export async function readSecret(key: string): Promise<string | null> {
+function failClosed(): boolean {
+  const isDev = typeof __DEV__ === 'undefined' ? process.env.NODE_ENV !== 'production' : __DEV__;
+  return shouldFailClosedSecretStore({
+    isDev,
+    nodeEnv: process.env.NODE_ENV,
+  });
+}
+
+async function nativeBackend(): Promise<SecretBackend | null> {
   const store = await nativeStore();
-  if (store) {
-    try {
-      const value = await store.getItemAsync(key);
-      if (value) return value;
-    } catch {
-      /* fall through to memory */
-    }
-  }
-  return memory.get(key) ?? null;
+  if (!store) return null;
+  return {
+    async read(key) {
+      return store.getItemAsync(key);
+    },
+    async write(key, value) {
+      if (value) await store.setItemAsync(key, value);
+      else await store.deleteItemAsync(key);
+    },
+  };
+}
+
+/** Persist secrets in SecureStore/Keychain only. Production fails closed — never volatile memory. */
+export async function readSecret(key: string): Promise<string | null> {
+  return readWithSecretPolicy({
+    backend: await nativeBackend(),
+    memory,
+    key,
+    failClosed: failClosed(),
+  });
 }
 
 export async function writeSecret(key: string, value: string | null): Promise<void> {
-  const store = await nativeStore();
-  if (store) {
-    try {
-      if (value) await store.setItemAsync(key, value);
-      else await store.deleteItemAsync(key);
-    } catch {
-      /* memory-only fallback */
-    }
-  }
-  if (value) memory.set(key, value);
-  else memory.delete(key);
+  await writeWithSecretPolicy({
+    backend: await nativeBackend(),
+    memory,
+    key,
+    value,
+    failClosed: failClosed(),
+  });
 }

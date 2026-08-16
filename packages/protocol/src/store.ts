@@ -1,3 +1,5 @@
+import type { PeerTrustRecord } from "./tofu.js";
+
 /** Durable store is ciphertext + optional local_seal. Do not persist decrypted voice. */
 export const SCHEMA_SQL = `
 CREATE TABLE IF NOT EXISTS messages (
@@ -39,6 +41,14 @@ CREATE TABLE IF NOT EXISTS conversations (
 CREATE TABLE IF NOT EXISTS sync_state (
   key TEXT PRIMARY KEY,
   value TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS peer_identities (
+  user_id TEXT PRIMARY KEY,
+  public_key TEXT NOT NULL,
+  state TEXT NOT NULL,
+  pending_public_key TEXT,
+  updated_at TEXT NOT NULL
 );
 `;
 
@@ -243,5 +253,41 @@ export class HopSqliteStore {
   async getSyncValue(key: string): Promise<string | null> {
     const rows = await this.db.query<{ value: string }>("SELECT value FROM sync_state WHERE key = ?", [key]);
     return rows[0]?.value ?? null;
+  }
+
+  async listPeerIdentities(): Promise<PeerTrustRecord[]> {
+    const rows = await this.db.query<{
+      user_id: string;
+      public_key: string;
+      state: string;
+      pending_public_key: string | null;
+    }>("SELECT user_id, public_key, state, pending_public_key FROM peer_identities");
+    return rows
+      .filter((row) => row.state === "TOFU_TRUSTED" || row.state === "VERIFIED" || row.state === "KEY_CHANGED")
+      .map((row) => ({
+        userId: row.user_id,
+        publicKey: row.public_key,
+        state: row.state as PeerTrustRecord["state"],
+        pendingPublicKey: row.pending_public_key ?? undefined,
+      }));
+  }
+
+  async savePeerIdentity(record: PeerTrustRecord): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO peer_identities (user_id, public_key, state, pending_public_key, updated_at)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(user_id) DO UPDATE SET
+         public_key=excluded.public_key,
+         state=excluded.state,
+         pending_public_key=excluded.pending_public_key,
+         updated_at=excluded.updated_at`,
+      [
+        record.userId,
+        record.publicKey,
+        record.state,
+        record.pendingPublicKey ?? null,
+        new Date().toISOString(),
+      ],
+    );
   }
 }

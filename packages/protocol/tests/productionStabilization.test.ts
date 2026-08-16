@@ -69,7 +69,7 @@ function mockWorld() {
         return {
           ok: true,
           status: 200,
-          data: { message_id: body.message_id, encrypted_payload: body.encrypted_payload, status: "SENT" },
+          data: { message_id: body.message_id, encrypted_payload: body.encrypted_payload, status: "DELIVERED" },
         };
       }
       if (path.endsWith("/messages")) {

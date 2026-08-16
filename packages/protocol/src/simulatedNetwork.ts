@@ -295,6 +295,7 @@ export class SimulatedNetwork {
           hop_count: 0,
           kind: "delivery_ack",
           ack_of: ofMessageId,
+          ack_status: "DELIVERED",
         },
         this.publicKey(original.sender_id),
         dest.keys,

@@ -22,7 +22,7 @@ import { Text, View } from '@/components/Themed';
 import { VoiceMessageBubble } from '@/components/VoiceMessageBubble';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { api, type ChatMessage } from '@/src/api/hop';
+import { type ChatMessage } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
 import { sendChatText, sendChatVoice } from '@/src/chat/sendChat';
@@ -104,19 +104,7 @@ export default function ChatScreen() {
       const match = convos.find((row) => row.id === id);
       if (match?.peer_id) setRecipientId(match.peer_id);
     }
-    if (token && service) {
-      const rows = await service.listMessages(id);
-      for (const row of rows) {
-        if (row.recipient_id === user?.id && row.status !== 'READ') {
-          try {
-            await api.ack(token, row.message_id, 'READ');
-          } catch {
-            /* ignore while offline */
-          }
-        }
-      }
-    }
-  }, [id, service, store, syncNow, token, user?.id, recipientId]);
+  }, [id, service, store, syncNow, recipientId]);
 
   useEffect(() => {
     load().catch((err) => setError(err instanceof Error ? err.message : 'Could not load messages'));
@@ -155,9 +143,6 @@ export default function ChatScreen() {
       .then(() => service.listMessages(id))
       .then((rows) => setMessages(rows.map(storedToChat)))
       .catch(() => undefined);
-    if (token && incoming.recipient_id === user?.id && incoming.status !== 'READ') {
-      api.ack(token, incoming.message_id, 'READ').catch(() => undefined);
-    }
   });
 
   if (!user) return <Redirect href="/login" />;

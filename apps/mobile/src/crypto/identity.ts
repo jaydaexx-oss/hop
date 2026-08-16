@@ -1,19 +1,28 @@
 import {
-  generateIdentityKeyPair,
+  IdentityError,
+  assertPublishedIdentityMatches,
+  identityPublishBody,
+  loadOrCreateIdentity as loadStoredIdentity,
+  replaceIdentityExplicit as rotateStoredIdentity,
   type IdentityKeyPair,
+  type SecretBackend,
 } from '@hop/protocol';
 
 import { readSecret, writeSecret } from '@/src/crypto/secretStore';
 
-const PREFIX = 'hop.box.';
+const backend: SecretBackend = {
+  read: (key) => readSecret(key),
+  write: (key, value) => writeSecret(key, value),
+};
+
+export { IdentityError, assertPublishedIdentityMatches, identityPublishBody };
+export type { IdentityKeyPair };
 
 export async function loadOrCreateIdentity(userId: string): Promise<IdentityKeyPair> {
-  const stored = await readSecret(`${PREFIX}${userId}`);
-  if (stored) {
-    const parsed = JSON.parse(stored) as IdentityKeyPair;
-    if (parsed.publicKey && parsed.secretKey) return parsed;
-  }
-  const pair = await generateIdentityKeyPair();
-  await writeSecret(`${PREFIX}${userId}`, JSON.stringify(pair));
-  return pair;
+  return loadStoredIdentity(userId, backend);
+}
+
+/** Explicit user action only. Does not upload the secret key. Server PUT will 409 if a key was already published. */
+export async function replaceIdentityExplicit(userId: string): Promise<IdentityKeyPair> {
+  return rotateStoredIdentity(userId, backend);
 }

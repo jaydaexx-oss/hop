@@ -1,5 +1,5 @@
 import type { ApplicationPlaintext, DecryptOptions } from "./cryptoBox.js";
-import { isCryptoBoxPayload } from "./cryptoBox.js";
+import { isCryptoBoxPayload, parseCryptoBoxPayload } from "./cryptoBox.js";
 import type { HopHttpClient } from "./http.js";
 import { createMessageId } from "./ids.js";
 import { DEFAULT_TTL_MS, MessageStatus, isExpired } from "./message.js";
@@ -7,6 +7,7 @@ import { DEFAULT_RETRY_POLICY, nextBackoffMs, type RetryPolicy } from "./retry.j
 import { requirePeerRecipient } from "./sendGuards.js";
 import { canTransition, transition } from "./stateMachine.js";
 import type { HopSqliteStore, StoredMessage } from "./store.js";
+import type { PublicKeyTofu } from "./tofu.js";
 import type { EncryptedEnvelope, NetworkStatus, TransportId } from "./transport.js";
 import type { TransportManager } from "./transportManager.js";
 import {
@@ -59,6 +60,7 @@ export class MessageService {
     private readonly http: HopHttpClient,
     private readonly getToken: () => string | null,
     private readonly crypto?: MessageCrypto,
+    private readonly tofu?: PublicKeyTofu,
     private readonly retry: RetryPolicy = DEFAULT_RETRY_POLICY,
   ) {}
 
@@ -174,7 +176,9 @@ export class MessageService {
     const rows = await this.store.listMessages(conversationId);
     const out: StoredMessage[] = [];
     for (const row of rows) {
-      out.push(await this.materializePlaintext(row));
+      const materialized = await this.materializePlaintext(row);
+      if (materialized.kind === "delivery_ack") continue;
+      out.push(materialized);
     }
     return out;
   }
@@ -232,23 +236,34 @@ export class MessageService {
   async acceptInbound(message: StoredMessage, now = new Date()): Promise<boolean> {
     if (isExpired(message, now)) return false;
     const opened = await this.openInbound(message);
+    if (opened.plain?.kind === "delivery_ack") {
+      return this.acceptCryptoDeliveryAck(message, opened.plain, now);
+    }
     const existing = await this.store.getMessage(message.message_id);
     if (existing) {
-      const merged = this.advanceToward(
-        {
-          ...existing,
-          text: null,
-          encrypted_payload: opened.encrypted_payload || existing.encrypted_payload,
-          transport: message.transport || existing.transport,
-        },
-        message.status,
-      );
+      const merged = {
+        ...existing,
+        text: null,
+        encrypted_payload: opened.record.encrypted_payload || existing.encrypted_payload,
+        transport: message.transport || existing.transport,
+        status: cryptographicStatusFromServer(existing.status, message.status),
+      };
       await this.persistMessage(merged);
+      return false;
+    }
+    if (isCryptoBoxPayload(message.encrypted_payload) && this.crypto && !opened.plain) {
       return false;
     }
     const fresh = await this.store.rememberProcessed(message.message_id, now);
     if (!fresh) return false;
-    await this.persistMessage({ ...opened, text: null });
+    await this.persistMessage({
+      ...opened.record,
+      text: null,
+      status: opened.plain ? MessageStatus.DELIVERED : message.status,
+    });
+    if (opened.plain) {
+      void this.sendDeliveryAck(opened.plain, now).catch(() => undefined);
+    }
     return true;
   }
 
@@ -297,11 +312,91 @@ export class MessageService {
   }
 
   async applyDeliveryAck(ackOf: string): Promise<boolean> {
-    const existing = await this.store.getMessage(ackOf);
+    return this.applyValidatedDeliveryAck({
+      kind: "delivery_ack",
+      ack_of: ackOf,
+      ack_status: "DELIVERED",
+    });
+  }
+
+  async applyValidatedDeliveryAck(
+    plain: Pick<ApplicationPlaintext, "kind" | "ack_of"> &
+      Partial<Pick<ApplicationPlaintext, "ack_status" | "sender_id" | "recipient_id" | "conversation_id">>,
+    senderPk?: string,
+  ): Promise<boolean> {
+    if (plain.kind !== "delivery_ack" || !plain.ack_of) return false;
+    if (plain.ack_status && plain.ack_status !== "DELIVERED" && plain.ack_status !== "READ") return false;
+    const existing = await this.store.getMessage(plain.ack_of);
     if (!existing) return false;
-    const next = this.advanceToward(existing, MessageStatus.DELIVERED);
+    if (plain.conversation_id && plain.conversation_id !== existing.conversation_id) return false;
+    if (plain.sender_id && plain.sender_id !== existing.recipient_id) return false;
+    if (plain.recipient_id && plain.recipient_id !== existing.sender_id) return false;
+    if (senderPk) {
+      const trusted = await this.store.peerPublicKey(existing.recipient_id);
+      if (trusted && trusted !== senderPk) return false;
+      if (this.tofu && !this.tofu.bind(existing.recipient_id, senderPk)) return false;
+    }
+    const target = plain.ack_status === "READ" ? MessageStatus.READ : MessageStatus.DELIVERED;
+    const next = this.advanceToward(existing, target);
     await this.persistMessage(next);
     return next.status === MessageStatus.DELIVERED || next.status === MessageStatus.READ;
+  }
+
+  private async acceptCryptoDeliveryAck(
+    message: StoredMessage,
+    plain: ApplicationPlaintext,
+    now: Date,
+  ): Promise<boolean> {
+    const fresh = await this.store.rememberProcessed(message.message_id, now);
+    if (!fresh) return false;
+    const senderPk = parseCryptoBoxPayload(message.encrypted_payload)?.sender_pk;
+    const applied = await this.applyValidatedDeliveryAck(plain, senderPk);
+    await this.persistMessage({ ...message, text: null, status: MessageStatus.SENT });
+    return applied;
+  }
+
+  private async sendDeliveryAck(original: ApplicationPlaintext, now: Date): Promise<void> {
+    if (!this.crypto || original.kind === "delivery_ack") return;
+    const ack_id = createMessageId();
+    const plain: ApplicationPlaintext = {
+      message_id: ack_id,
+      sender_id: original.recipient_id,
+      recipient_id: original.sender_id,
+      conversation_id: original.conversation_id,
+      text: "",
+      created_at: now.toISOString(),
+      expires_at: new Date(now.getTime() + DEFAULT_TTL_MS).toISOString(),
+      ttl: DEFAULT_TTL_MS,
+      hop_count: 0,
+      kind: "delivery_ack",
+      ack_of: original.message_id,
+      ack_status: "DELIVERED",
+    };
+    const encrypted_payload = await this.crypto.encrypt(plain);
+    if (!isCryptoBoxPayload(encrypted_payload)) {
+      throw new Error("encrypt() must return a libsodium crypto_box payload");
+    }
+    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
+    let record: StoredMessage = {
+      message_id: ack_id,
+      conversation_id: original.conversation_id,
+      sender_id: plain.sender_id,
+      recipient_id: plain.recipient_id,
+      text: null,
+      encrypted_payload,
+      local_seal,
+      status: MessageStatus.CREATED,
+      transport: "local",
+      created_at: plain.created_at,
+      expires_at: plain.expires_at,
+      ttl: DEFAULT_TTL_MS,
+      hop_count: 0,
+    };
+    record = this.withStatus(record, MessageStatus.ENCRYPTED);
+    record = this.withStatus(record, MessageStatus.QUEUED);
+    await this.persistMessage(record);
+    await this.store.enqueue(record.message_id, 0, now.getTime());
+    await this.flushOne(record, now, true);
   }
 
   private async pullConversation(conversationId: string): Promise<void> {
@@ -318,6 +413,7 @@ export class MessageService {
     for (const row of result.data as Array<Record<string, unknown>>) {
       const message_id = String(row.message_id ?? "");
       if (!message_id) continue;
+      const existing = await this.store.getMessage(message_id);
       const stored: StoredMessage = {
         message_id,
         conversation_id: String(row.conversation_id ?? conversationId),
@@ -325,7 +421,7 @@ export class MessageService {
         recipient_id: String(row.recipient_id ?? ""),
         text: typeof row.text === "string" ? row.text : null,
         encrypted_payload: String(row.encrypted_payload ?? ""),
-        status: String(row.status ?? MessageStatus.DELIVERED),
+        status: cryptographicStatusFromServer(existing?.status, String(row.status ?? MessageStatus.SENT)),
         transport: String(row.transport ?? "internet"),
         created_at: String(row.created_at ?? new Date().toISOString()),
         expires_at: String(row.expires_at ?? new Date().toISOString()),
@@ -347,6 +443,7 @@ export class MessageService {
       try {
         const plain = await this.crypto.decrypt(message.local_seal, undefined, message.message_id, {
           expectedSenderId: message.sender_id,
+          tofu: this.tofu,
         });
         return withDecryptedPlain(message, plain);
       } catch {
@@ -360,6 +457,7 @@ export class MessageService {
       const plain = await this.crypto.decrypt(message.encrypted_payload, undefined, message.message_id, {
         expectedSenderId: message.sender_id,
         expectedRecipientId: message.recipient_id,
+        tofu: this.tofu,
       });
       return withDecryptedPlain(message, plain);
     } catch {
@@ -386,18 +484,21 @@ export class MessageService {
     await this.store.saveMessage(stored);
   }
 
-  private async openInbound(message: StoredMessage): Promise<StoredMessage> {
+  private async openInbound(
+    message: StoredMessage,
+  ): Promise<{ record: StoredMessage; plain: ApplicationPlaintext | null }> {
     if (!isCryptoBoxPayload(message.encrypted_payload) || !this.crypto) {
-      return { ...message, text: message.text ?? null };
+      return { record: { ...message, text: message.text ?? null }, plain: null };
     }
     try {
       const plain = await this.crypto.decrypt(message.encrypted_payload, undefined, message.message_id, {
         expectedSenderId: message.sender_id,
         expectedRecipientId: message.recipient_id,
+        tofu: this.tofu,
       });
-      return withDecryptedPlain(message, plain);
+      return { record: withDecryptedPlain(message, plain), plain };
     } catch {
-      return { ...message, text: message.text ?? null };
+      return { record: { ...message, text: message.text ?? null }, plain: null };
     }
   }
 
@@ -446,6 +547,17 @@ export class MessageService {
     const next = transition(hop, status);
     return { ...message, status: next.status };
   }
+}
+
+/** Server/HTTP status is not a cryptographic ACK. Never advance past SENT from the API alone. */
+function cryptographicStatusFromServer(localStatus: string | undefined, serverStatus: string): string {
+  if (localStatus === MessageStatus.DELIVERED || localStatus === MessageStatus.READ) {
+    return localStatus;
+  }
+  if (serverStatus === MessageStatus.DELIVERED || serverStatus === MessageStatus.READ) {
+    return localStatus ?? MessageStatus.SENT;
+  }
+  return localStatus ?? serverStatus;
 }
 
 function toStoredEnvelope(message: StoredMessage): EncryptedEnvelope {

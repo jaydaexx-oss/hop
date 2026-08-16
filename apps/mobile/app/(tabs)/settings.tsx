@@ -1,4 +1,4 @@
-import { Pressable, StyleSheet } from 'react-native';
+import { Alert, Pressable, StyleSheet } from 'react-native';
 
 import { Text, View } from '@/components/Themed';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -6,12 +6,35 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
+import { replaceIdentityExplicit } from '@/src/crypto/identity';
+import { useOffline } from '@/src/offline/OfflineProvider';
 
 export default function SettingsScreen() {
   const { user, logout } = useAuth();
   const { relayConsent, setRelayConsent } = useBle();
+  const { identityError } = useOffline();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
+
+  function confirmReplaceIdentity() {
+    if (!user) return;
+    Alert.alert(
+      'Replace local identity keys?',
+      'This creates a new key pair on this device only. Private keys are never backed up to the cloud. The server will reject publishing a second key (409). You must re-verify with every contact. There is no QR safety-number UX yet.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Replace keys',
+          style: 'destructive',
+          onPress: () => {
+            replaceIdentityExplicit(user.id).catch((err) => {
+              Alert.alert('Could not replace identity', err instanceof Error ? err.message : 'Unknown error');
+            });
+          },
+        },
+      ],
+    );
+  }
 
   return (
     <View style={styles.wrap}>
@@ -41,6 +64,12 @@ export default function SettingsScreen() {
         Chat chooses internet or Nearby BLE automatically. Controlled peer-relay is simulated in
         protocol tests; real-world mesh is not complete.
       </Text>
+      {identityError ? (
+        <Text style={{ color: '#DC2626', marginTop: 16 }}>{identityError}</Text>
+      ) : null}
+      <Pressable onPress={confirmReplaceIdentity} style={[styles.button, { borderColor: '#DC2626' }]}>
+        <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Replace local identity keys</Text>
+      </Pressable>
       <Pressable onPress={logout} style={[styles.button, { borderColor: colors.tint }]}>
         <Text style={[styles.buttonLabel, { color: colors.tint }]}>Log out</Text>
       </Pressable>

@@ -1,3 +1,4 @@
+import type { IdentityKeyPair } from "./cryptoBox.js";
 import type { EncryptedEnvelope, SendResult } from "./transport.js";
 
 export type BleScanMode = "lowPower" | "balanced" | "lowLatency";
@@ -32,6 +33,11 @@ export interface BleSessionOptions {
   relayConsent?: boolean;
   /** Resolve a peer's server-published identity key for BLE handshake attestation. */
   resolveServerPublicKey?: (userId: string) => Promise<string | null | undefined>;
+  /**
+   * Local identity used to MAC BLE GATT ACKs. Handshake still publishes only the public key.
+   * Secret key must never be written to a GATT characteristic.
+   */
+  ackIdentity?: IdentityKeyPair;
 }
 
 export interface BleLink {

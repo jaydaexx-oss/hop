@@ -15,14 +15,16 @@ function labelFor(status: NetworkStatus, queuedCount: number): NetworkStatus {
 export function StatusBanner() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
-  const { status, queuedCount } = useOffline();
-  const label = labelFor(status, queuedCount);
-  const active = label === 'Online' || label === 'Nearby';
+  const { status, queuedCount, identityError } = useOffline();
+  const label = identityError ? 'Identity error' : labelFor(status, queuedCount);
+  const active = !identityError && (label === 'Online' || label === 'Nearby');
 
   return (
     <View style={[styles.banner, { backgroundColor: colors.card }]}>
-      <View style={[styles.dot, { backgroundColor: active ? colors.tint : colors.muted }]} />
-      <Text style={[styles.label, { color: active ? colors.text : colors.muted }]}>{label}</Text>
+      <View style={[styles.dot, { backgroundColor: active ? colors.tint : identityError ? '#DC2626' : colors.muted }]} />
+      <Text style={[styles.label, { color: identityError ? '#DC2626' : active ? colors.text : colors.muted }]}>
+        {identityError ? 'Identity needs attention' : label}
+      </Text>
     </View>
   );
 }

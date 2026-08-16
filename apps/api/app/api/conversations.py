@@ -193,7 +193,9 @@ async def send_message(
         if existing.sender_id != user.id or existing.conversation_id != conversation_id:
             raise HTTPException(status_code=409, detail="message_id already used")
         return _message_out(existing)
-    status = "DELIVERED" if hub.is_connected(peer.id) else "SENT"
+    # Transport/HTTP success is SENT. Cryptographic DELIVERED is a client-decrypted
+    # delivery_ack; the server cannot fabricate that from websocket presence.
+    status = "SENT"
     row = Message(
         id=message_id,
         conversation_id=conversation_id,
@@ -226,6 +228,7 @@ async def ack_message(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> MessageOut:
+    """Non-cryptographic server bookkeeping. Clients must not treat this as DELIVERED."""
     status = body.status.upper()
     if status not in {"DELIVERED", "READ"}:
         raise HTTPException(status_code=400, detail="status must be DELIVERED or READ")

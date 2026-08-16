@@ -92,7 +92,29 @@ export {
   voiceAudioB64,
   withDecryptedPlain,
 } from "./voice.js";
-export { PublicKeyTofu } from "./tofu.js";
+export { PublicKeyTofu, sqlitePeerTrustPersistence, type PeerTrustPersistence, type PeerTrustRecord, type PeerTrustState } from "./tofu.js";
+export {
+  IdentityError,
+  assertIdentityPublishHasNoSecret,
+  assertPublishedIdentityMatches,
+  identityPublishBody,
+  loadOrCreateIdentity,
+  replaceIdentityExplicit,
+  type IdentityErrorCode,
+  type SecretBackend,
+} from "./identityLifecycle.js";
+export {
+  readWithSecretPolicy,
+  shouldFailClosedSecretStore,
+  writeWithSecretPolicy,
+} from "./secretPolicy.js";
+export {
+  encodeAuthenticatedBleAck,
+  isUnauthenticatedBleAck,
+  verifyAuthenticatedBleAck,
+  type BleAckExpectation,
+  type BleLinkAck,
+} from "./bleAck.js";
 export {
   CRYPTO_BOX_ALG,
   decryptApplicationMessage,

@@ -24,6 +24,8 @@ export interface ApplicationPlaintext {
   hop_count: number;
   kind?: ApplicationKind;
   ack_of?: string;
+  /** Cryptographic delivery/read receipt. Absent on normal messages. */
+  ack_status?: "DELIVERED" | "READ";
   /** Base64 audio for kind=voice. Canonical field for this and future chunked PTT. */
   audio_b64?: string;
   /** Alias accepted on encrypt/decrypt so a later chunked slice can rename without a format break. */
@@ -80,7 +82,14 @@ export async function encryptApplicationMessage(
     if (!voiceAudioValue(plain)) {
       throw new Error("Refusing to encrypt voice with no audio");
     }
-  } else if (plain.kind !== "delivery_ack" && !plain.text.trim()) {
+  } else if (plain.kind === "delivery_ack") {
+    if (!plain.ack_of) {
+      throw new Error("delivery_ack requires ack_of");
+    }
+    if (plain.ack_status && plain.ack_status !== "DELIVERED" && plain.ack_status !== "READ") {
+      throw new Error("delivery_ack status must be DELIVERED or READ");
+    }
+  } else if (!plain.text.trim()) {
     throw new Error("Refusing to encrypt empty plaintext");
   }
   const s = await readySodium();

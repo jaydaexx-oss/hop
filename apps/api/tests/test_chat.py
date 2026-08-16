@@ -89,7 +89,7 @@ def test_websocket_delivers_in_realtime(client: TestClient) -> None:
             headers=headers_a,
         )
         assert sent.status_code == 200
-        assert sent.json()["status"] == "DELIVERED"
+        assert sent.json()["status"] == "SENT"
         event = ws.receive_json()
         assert event["type"] == "message"
         assert event["message"]["text"] is None

@@ -60,6 +60,15 @@ export interface StoredMessage {
   expires_at: string;
   ttl: number;
   hop_count: number;
+  /** In-memory only after decrypt. Never written to the SQLite text column. */
+  kind?: "message" | "delivery_ack" | "voice";
+  duration_ms?: number;
+  mime?: string;
+  audio_b64?: string;
+  codec?: string;
+  seq?: number;
+  total?: number;
+  part_of?: string;
 }
 
 export interface OutboundRow {

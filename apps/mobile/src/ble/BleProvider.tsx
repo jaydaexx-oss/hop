@@ -131,13 +131,17 @@ export function BleProvider({ children }: { children: ReactNode }) {
           appendLog(`Delivery acknowledgment for ${plain.ack_of ?? envelope.message_id}.`);
           return true;
         }
-        appendLog(`Received encrypted message from ${from.displayName}.`);
+        appendLog(
+          plain.kind === 'voice'
+            ? `Received encrypted voice message from ${from.displayName}.`
+            : `Received encrypted message from ${from.displayName}.`,
+        );
         const stored = {
           message_id: plain.message_id,
           conversation_id: plain.conversation_id,
           sender_id: plain.sender_id,
           recipient_id: plain.recipient_id,
-          text: plain.text,
+          text: null,
           encrypted_payload: envelope.encrypted_payload,
           status: 'DELIVERED' as const,
           transport: 'bluetooth' as const,

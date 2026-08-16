@@ -9,18 +9,34 @@ export interface IdentityKeyPair {
   secretKey: string;
 }
 
+export type ApplicationKind = "message" | "delivery_ack" | "voice";
+
 export interface ApplicationPlaintext {
   message_id: string;
   sender_id: string;
   recipient_id: string;
   conversation_id: string;
+  /** Caption for voice; body for text. Decrypt requires a string. */
   text: string;
   created_at: string;
   expires_at: string;
   ttl: number;
   hop_count: number;
-  kind?: "message" | "delivery_ack";
+  kind?: ApplicationKind;
   ack_of?: string;
+  /** Base64 audio for kind=voice. Canonical field for this and future chunked PTT. */
+  audio_b64?: string;
+  /** Alias accepted on encrypt/decrypt so a later chunked slice can rename without a format break. */
+  audio?: string;
+  duration_ms?: number;
+  mime?: string;
+  codec?: string;
+  /** Future chunk index. First slice sends a single clip as seq=0. */
+  seq?: number;
+  /** Future chunk count. First slice sends a single clip as total=1. */
+  total?: number;
+  /** Future stream/session id for multi-chunk PTT. Omitted on a complete single clip. */
+  part_of?: string;
 }
 
 export interface CryptoBoxPayload {
@@ -50,12 +66,21 @@ export async function generateIdentityKeyPair(): Promise<IdentityKeyPair> {
   };
 }
 
+function voiceAudioValue(plain: ApplicationPlaintext): string {
+  const value = plain.audio_b64 ?? plain.audio ?? "";
+  return typeof value === "string" ? value : "";
+}
+
 export async function encryptApplicationMessage(
   plain: ApplicationPlaintext,
   recipientPublicKey: string,
   sender: IdentityKeyPair,
 ): Promise<string> {
-  if (plain.kind !== "delivery_ack" && !plain.text.trim()) {
+  if (plain.kind === "voice") {
+    if (!voiceAudioValue(plain)) {
+      throw new Error("Refusing to encrypt voice with no audio");
+    }
+  } else if (plain.kind !== "delivery_ack" && !plain.text.trim()) {
     throw new Error("Refusing to encrypt empty plaintext");
   }
   const s = await readySodium();

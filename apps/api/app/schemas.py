@@ -58,6 +58,8 @@ class ConversationOut(BaseModel):
 
 
 class TextMessageIn(BaseModel):
+    # Opaque libsodium crypto_box JSON only. Voice uses the same envelope as text;
+    # clients cap clips at ~8 seconds so boxed payloads fit. Plaintext audio is never stored.
     encrypted_payload: str = Field(min_length=32, max_length=65536)
     message_id: Optional[str] = None
 

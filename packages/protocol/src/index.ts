@@ -4,6 +4,7 @@ export {
   MAX_HOPS,
   MessageStatus,
   createMessage,
+  formatMessageStatus,
   isExpired,
   shouldStopForwarding,
   type CreateMessageInput,
@@ -60,7 +61,20 @@ export {
   type StoredConversation,
   type StoredMessage,
 } from "./store.js";
-export { MessageService, type MessageCrypto, type SendTextInput } from "./messageService.js";
+export { MessageService, type MessageCrypto, type SendTextInput, type SendVoiceInput } from "./messageService.js";
+export {
+  DEFAULT_VOICE_CAPTION,
+  DEFAULT_VOICE_CODEC,
+  DEFAULT_VOICE_MIME,
+  MAX_ENCRYPTED_PAYLOAD_BYTES,
+  MAX_VOICE_AUDIO_B64_CHARS,
+  MAX_VOICE_DURATION_MS,
+  assertEncryptedPayloadSize,
+  assertVoiceFitsBudget,
+  estimateBoxedPayloadBytes,
+  voiceAudioB64,
+  withDecryptedPlain,
+} from "./voice.js";
 export { PublicKeyTofu } from "./tofu.js";
 export { encodeUnencryptedText, decodeUnencryptedText } from "./payload.js";
 export {
@@ -71,6 +85,7 @@ export {
   isCryptoBoxPayload,
   parseCryptoBoxPayload,
   readySodium,
+  type ApplicationKind,
   type ApplicationPlaintext,
   type CryptoBoxPayload,
   type DecryptOptions,

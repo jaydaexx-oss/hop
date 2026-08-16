@@ -63,6 +63,23 @@ export function createMessage(input: CreateMessageInput): HopMessage {
   };
 }
 
+const MESSAGE_STATUS_LABEL: Record<string, string> = {
+  [MessageStatus.CREATED]: "Created",
+  [MessageStatus.ENCRYPTED]: "Encrypted",
+  [MessageStatus.QUEUED]: "Queued",
+  [MessageStatus.SENDING]: "Sending",
+  [MessageStatus.SENT]: "Sent",
+  [MessageStatus.RELAYING]: "Relaying",
+  [MessageStatus.DELIVERED]: "Delivered",
+  [MessageStatus.READ]: "Read",
+  [MessageStatus.FAILED]: "Failed",
+  [MessageStatus.EXPIRED]: "Expired",
+};
+
+export function formatMessageStatus(status: string): string {
+  return MESSAGE_STATUS_LABEL[status] ?? status;
+}
+
 export function isExpired(message: Pick<HopMessage, "expires_at">, now = new Date()): boolean {
   return now.getTime() >= Date.parse(message.expires_at);
 }

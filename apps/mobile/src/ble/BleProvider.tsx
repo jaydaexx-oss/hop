@@ -128,6 +128,9 @@ export function BleProvider({ children }: { children: ReactNode }) {
           },
         );
         if (plain.kind === 'delivery_ack') {
+          if (plain.ack_of) {
+            await serviceRef.current?.applyDeliveryAck(plain.ack_of);
+          }
           appendLog(`Delivery acknowledgment for ${plain.ack_of ?? envelope.message_id}.`);
           return true;
         }
@@ -267,6 +270,18 @@ export function BleProvider({ children }: { children: ReactNode }) {
       try {
         const peer = await engineRef.current.connect(deviceId, 15_000);
         setConnectedId(peer.deviceId);
+        const sqlite = storeRef.current;
+        if (sqlite && peer.userId) {
+          const convos = await sqlite.listConversations();
+          const match = convos.find((row) => row.peer_id === peer.userId);
+          if (match) {
+            await sqlite.saveConversation({
+              ...match,
+              peer_username: peer.displayName || match.peer_username,
+              peer_public_key: peer.publicKey ?? match.peer_public_key,
+            });
+          }
+        }
         appendLog(
           peer.sessionEstablished
             ? `Secure session established with ${peer.displayName}.`

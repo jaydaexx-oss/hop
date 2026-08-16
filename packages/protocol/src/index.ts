@@ -49,8 +49,25 @@ export {
   encodeEnvelope,
   encodeHandshake,
   hexToBytes,
+  looksLikeHardwareId,
+  safeNearbyDisplayName,
   type BleHandshake,
 } from "./bleCodec.js";
+export {
+  authenticatedNearbyPeer,
+  conversationTransportStatus,
+  formatMessageStatus,
+  internetStatusAvailable,
+  isFailedMessageStatus,
+  localDirectConversationId,
+  nearbyPeerLabel,
+  nearbyPeerPresence,
+  rssiSignalBars,
+  type ConversationRoute,
+  type ConversationTransportInput,
+  type ConversationTransportView,
+  type NearbyPeerSnapshot,
+} from "./conversationTransport.js";
 export { TransportManager, defaultTransportManager, LIVE_TRANSPORT_PRIORITY, type QueueItem } from "./transportManager.js";
 export {
   HopSqliteStore,

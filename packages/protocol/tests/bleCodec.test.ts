@@ -35,6 +35,8 @@ describe("BLE codec", () => {
     expect(decodeHandshake(hex)).toEqual({ v: 2, user_id: "user-1", username: "alex", pk: "pk-b64" });
     expect(advertiseLocalName("alex")).toBe("HOP:alex");
     expect(displayNameFromAdvertisement("HOP:alex", "AA:BB:CC:DD:EE:FF")).toBe("alex");
+    expect(displayNameFromAdvertisement(null, "AA:BB:CC:DD:EE:FF")).toBe("HOP user");
+    expect(displayNameFromAdvertisement("00:11:22:33:44:55", null)).toBe("HOP user");
     expect(hexToBytes(hex).length).toBeGreaterThan(0);
   });
 });

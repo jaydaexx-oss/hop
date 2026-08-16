@@ -180,10 +180,16 @@ export class MessageService {
       return message;
     }
 
-    const envelope = toStoredEnvelope(message);
+    let current = message;
+    if (current.status === MessageStatus.QUEUED) {
+      current = this.advanceToward(current, MessageStatus.SENDING);
+      await this.persistMessage(current);
+    }
+
+    const envelope = toStoredEnvelope(current);
     const result = await this.manager.send(envelope);
     if (result.ok) {
-      let sent = this.advanceToward(message, MessageStatus.SENT);
+      let sent = this.advanceToward(current, MessageStatus.SENT);
       sent = { ...sent, transport: result.transport };
       await this.persistMessage(sent);
       await this.store.removeOutbound(sent.message_id);
@@ -194,15 +200,23 @@ export class MessageService {
     const attempts = (queued?.attempts ?? 0) + 1;
     const wait = nextBackoffMs(attempts, this.retry);
     if (wait === null) {
-      const failed = this.withStatus(message, MessageStatus.FAILED);
+      const failed = this.withStatus(current, MessageStatus.FAILED);
       await this.persistMessage(failed);
-      await this.store.removeOutbound(message.message_id);
+      await this.store.removeOutbound(current.message_id);
       return failed;
     }
-    const queuedAgain = { ...this.withStatus(message, MessageStatus.QUEUED), transport: "local" };
+    const queuedAgain = { ...this.withStatus(current, MessageStatus.QUEUED), transport: "local" };
     await this.persistMessage(queuedAgain);
-    await this.store.enqueue(message.message_id, attempts, now.getTime() + wait);
+    await this.store.enqueue(current.message_id, attempts, now.getTime() + wait);
     return queuedAgain;
+  }
+
+  async applyDeliveryAck(ackOf: string): Promise<boolean> {
+    const existing = await this.store.getMessage(ackOf);
+    if (!existing) return false;
+    const next = this.advanceToward(existing, MessageStatus.DELIVERED);
+    await this.persistMessage(next);
+    return next.status === MessageStatus.DELIVERED || next.status === MessageStatus.READ;
   }
 
   private async pullConversation(conversationId: string): Promise<void> {

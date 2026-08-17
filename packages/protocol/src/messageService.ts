@@ -42,6 +42,7 @@ import {
   sortInboxConversations,
   type ChatPageOptions,
 } from "./conversationUi.js";
+import { SafetyError, type SafetyDecision, type SafetyGate } from "./safety.js";
 
 export interface SendTextInput {
   conversation_id: string;
@@ -93,7 +94,22 @@ export class MessageService {
     private readonly crypto?: MessageCrypto,
     private readonly tofu?: PublicKeyTofu,
     private readonly retry: RetryPolicy = DEFAULT_RETRY_POLICY,
+    private safety: SafetyGate | null = null,
   ) {}
+
+  attachSafety(safety: SafetyGate | null): void {
+    this.safety = safety;
+  }
+
+  private async assertOutboundAllowed(recipientId: string, retryMessageId?: string): Promise<SafetyDecision | null> {
+    if (!this.safety) return null;
+    const decision = await this.safety.decideOutbound(recipientId);
+    if (decision.allow) return decision;
+    if (retryMessageId && (await this.store.getMessage(retryMessageId))) {
+      return { allow: true };
+    }
+    throw new SafetyError(decision.code, decision.message);
+  }
 
   private enqueueConversation<T>(conversationId: string, fn: () => Promise<T>): Promise<T> {
     const prev = this.conversationTails.get(conversationId) ?? Promise.resolve();
@@ -130,6 +146,7 @@ export class MessageService {
       throw new Error("Refusing to send without libsodium crypto_box keys");
     }
     const recipient_id = requirePeerRecipient(input.sender_id, input.recipient_id);
+    const outboundDecision = await this.assertOutboundAllowed(recipient_id, input.message_id);
     const text = input.text.trim();
     if (!text) {
       throw new Error("Refusing to encrypt empty plaintext");
@@ -205,6 +222,9 @@ export class MessageService {
       record = this.withStatus(record, MessageStatus.ENCRYPTED);
       await this.persistMessage(record);
       record = this.withStatus(record, MessageStatus.QUEUED);
+      if (this.safety && outboundDecision?.allow && outboundDecision.asRequest) {
+        await this.safety.recordOutboundIntro(recipient_id, record.message_id);
+      }
       return this.persistAndFlush(record, now, text);
     } catch (err) {
       if (local_seal && isCryptoBoxPayload(local_seal)) {
@@ -227,6 +247,7 @@ export class MessageService {
       throw new Error("Refusing to send without libsodium crypto_box keys");
     }
     const recipient_id = requirePeerRecipient(input.sender_id, input.recipient_id);
+    const outboundDecision = await this.assertOutboundAllowed(recipient_id);
     assertVoiceFitsBudget({ audio_b64: input.audio_b64, duration_ms: input.duration_ms });
     const now = input.now ?? new Date();
     const created_at = now.toISOString();
@@ -284,6 +305,9 @@ export class MessageService {
     record = this.withStatus(record, MessageStatus.ENCRYPTED);
     await this.persistMessage(record);
     record = this.withStatus(record, MessageStatus.QUEUED);
+    if (this.safety && outboundDecision?.allow && outboundDecision.asRequest) {
+      await this.safety.recordOutboundIntro(recipient_id, record.message_id);
+    }
     const sent = await this.persistAndFlush(record, now, null);
     return withDecryptedPlain(sent, plain);
   }
@@ -352,6 +376,10 @@ export class MessageService {
     const unreads = await this.unreadCounts(viewerId);
     const items = [];
     for (const convo of convos) {
+      if (this.safety && convo.peer_id) {
+        const visibility = await this.safety.inboxVisibility(convo.peer_id);
+        if (visibility !== "chat") continue;
+      }
       const last = await this.latestVisible(convo.id);
       items.push({
         id: convo.id,
@@ -546,6 +574,15 @@ export class MessageService {
       if (opened.plain && !(await this.inboundParticipantsAllowed(message, opened.plain))) {
         return false;
       }
+      let inboundDecision: SafetyDecision | null = null;
+      if (this.safety) {
+        const selfId = await this.store.getSyncValue("self_user_id");
+        const peerId = opened.plain?.sender_id ?? message.sender_id;
+        if (peerId && peerId !== selfId) {
+          inboundDecision = await this.safety.decideInbound(peerId);
+          if (!inboundDecision.allow) return false;
+        }
+      }
       if (existing) return false;
       if (this.crypto && !isCryptoBoxPayload(message.encrypted_payload)) {
         return false;
@@ -568,6 +605,13 @@ export class MessageService {
       });
       const fresh = await this.store.rememberProcessed(message.message_id, now);
       if (!fresh) return false;
+      if (this.safety && inboundDecision && inboundDecision.allow) {
+        const peerId = opened.plain?.sender_id ?? message.sender_id;
+        if (inboundDecision.mutualAccept) await this.safety.markAccepted(peerId);
+        else if (inboundDecision.asRequest) {
+          await this.safety.recordInboundIntro(peerId, message.message_id);
+        }
+      }
       if (opened.plain) {
         await this.queueAck(opened.plain, AckType.DELIVERED_ACK, now);
         const mapping = await this.store.getOutboundAck(opened.plain.message_id, AckType.DELIVERED_ACK);

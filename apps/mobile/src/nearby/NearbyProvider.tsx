@@ -18,8 +18,8 @@ import { EventModeService, formatEventRemaining } from './EventModeService';
 import { NearbyService } from './NearbyService';
 import { createEphemeralDiscoveryId } from './ephemeralId';
 import { createPersistentKv } from './kvStore';
-import { discoveryProfileFor, isEventModeAllowed, shouldRunNearbyDiscovery } from './nearbyPolicy';
-import { loadPrivacyMode, savePrivacyMode } from './privacyStore';
+import { discoveryProfileFor, isDiscoverable, isEventModeAllowed, shouldRunNearbyDiscovery } from './nearbyPolicy';
+import { loadLastDiscoverableMode, loadPrivacyMode, saveLastDiscoverableMode, savePrivacyMode } from './privacyStore';
 import type { AroundUsPeer, AroundUsScanState, EventModeSnapshot, NearbyPrivacyMode } from './types';
 import { DEFAULT_EVENT_DURATION_MS } from './types';
 
@@ -29,6 +29,8 @@ type NearbyContextValue = {
   scanState: AroundUsScanState;
   privacyMode: NearbyPrivacyMode;
   setPrivacyMode: (mode: NearbyPrivacyMode) => Promise<void>;
+  discoverable: boolean;
+  setDiscoverable: (on: boolean) => Promise<void>;
   eventMode: EventModeSnapshot;
   eventRemainingLabel: string;
   enableEventMode: () => Promise<void>;
@@ -46,7 +48,7 @@ const NearbyContext = createContext<NearbyContextValue | null>(null);
 
 export function NearbyProvider({ children }: { children: ReactNode }) {
   const { user } = useAuth();
-  const { listCachedConversations } = useOffline();
+  const { listCachedConversations, safety } = useOffline();
   const {
     engine,
     status,
@@ -74,6 +76,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
   const discoveryEpochRef = useRef(0);
   const [ready, setReady] = useState(false);
   const [privacyMode, setPrivacyModeState] = useState<NearbyPrivacyMode>('invisible');
+  const [lastDiscoverableMode, setLastDiscoverableMode] = useState<Exclude<NearbyPrivacyMode, 'invisible'>>('everyone');
   const [eventMode, setEventMode] = useState<EventModeSnapshot>({
     enabled: false,
     startedAt: null,
@@ -127,8 +130,12 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     }
     let cancelled = false;
     setReady(false);
-    Promise.all([loadPrivacyMode(kvRef.current, user.id), eventServiceRef.current.load(user.id)])
-      .then(async ([privacy, event]) => {
+    Promise.all([
+      loadPrivacyMode(kvRef.current, user.id),
+      loadLastDiscoverableMode(kvRef.current, user.id),
+      eventServiceRef.current.load(user.id),
+    ])
+      .then(async ([privacy, lastOn, event]) => {
         if (cancelled) return;
         let nextEvent = event;
         if (privacy === 'invisible' && event.enabled) {
@@ -136,6 +143,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
         }
         if (cancelled) return;
         setPrivacyModeState(privacy);
+        setLastDiscoverableMode(lastOn);
         setEventMode(nextEvent);
         setReady(true);
       })
@@ -167,14 +175,19 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
             );
           }
         }
-        service.setContactIds(ids);
-        project();
+        void (async () => {
+          const accepted = safety ? await safety.acceptedPeerIds() : new Set<string>();
+          const blocked = safety ? await safety.blockedPeerIds() : new Set<string>();
+          service.setContactIds(accepted);
+          service.setBlockedIds(blocked);
+          project();
+        })();
       })
       .catch(() => undefined);
     return () => {
       cancelled = true;
     };
-  }, [listCachedConversations, project, user]);
+  }, [listCachedConversations, project, safety, user]);
 
   const startDiscovery = useCallback(
     async (mode: NearbyPrivacyMode, eventEnabled: boolean) => {
@@ -273,6 +286,19 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     });
   }, [eventMode.enabled, setDiscoveryProfile, tick, user]);
 
+  useEffect(() => {
+    if (!safety) return;
+    const off = safety.onChange(() => {
+      void (async () => {
+        const service = nearbyServiceRef.current;
+        service.setContactIds(await safety.acceptedPeerIds());
+        service.setBlockedIds(await safety.blockedPeerIds());
+        project();
+      })();
+    });
+    return off;
+  }, [project, safety]);
+
   const setPrivacyMode = useCallback(
     async (mode: NearbyPrivacyMode) => {
       if (!user) return;
@@ -281,6 +307,10 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
       }
       setPrivacyModeState(mode);
       await savePrivacyMode(kvRef.current, user.id, mode);
+      if (mode === 'contacts' || mode === 'everyone') {
+        setLastDiscoverableMode(mode);
+        await saveLastDiscoverableMode(kvRef.current, user.id, mode);
+      }
       if (mode === 'invisible') {
         discoveryEpochRef.current += 1;
         if (eventMode.enabled) {
@@ -292,6 +322,13 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
       }
     },
     [eventMode.enabled, privacyMode, setDiscoveryProfile, stopNearby, user],
+  );
+
+  const setDiscoverable = useCallback(
+    async (on: boolean) => {
+      await setPrivacyMode(on ? lastDiscoverableMode : 'invisible');
+    },
+    [lastDiscoverableMode, setPrivacyMode],
   );
 
   const enableEventMode = useCallback(async () => {
@@ -318,6 +355,8 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
       scanState,
       privacyMode,
       setPrivacyMode,
+      discoverable: isDiscoverable(privacyMode),
+      setDiscoverable,
       eventMode,
       eventRemainingLabel: formatEventRemaining(eventMode.remainingMs),
       enableEventMode,
@@ -343,6 +382,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
       ready,
       scanState,
       sessionActive,
+      setDiscoverable,
       setPrivacyMode,
       status.detail,
     ],

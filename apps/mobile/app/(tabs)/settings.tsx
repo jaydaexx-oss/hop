@@ -1,4 +1,4 @@
-import { Alert, Pressable, StyleSheet } from 'react-native';
+import { Alert, Pressable, StyleSheet, Switch } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Text, View } from '@/components/Themed';
@@ -17,7 +17,7 @@ const PRIVACY_ORDER: NearbyPrivacyMode[] = ['invisible', 'contacts', 'everyone']
 export default function SettingsScreen() {
   const { user, logout } = useAuth();
   const { relayConsent, setRelayConsent } = useBle();
-  const { privacyMode, setPrivacyMode } = useNearbyPeers();
+  const { privacyMode, setPrivacyMode, discoverable, setDiscoverable } = useNearbyPeers();
   const { identityError } = useOffline();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
@@ -54,10 +54,14 @@ export default function SettingsScreen() {
       <View style={[styles.card, { backgroundColor: colors.card, marginTop: 12 }]}>
         <Text style={styles.cardTitle}>Around Us visibility</Text>
         <Text style={{ color: colors.muted, marginBottom: 10 }}>
-          Invisible until you choose otherwise. Contacts only lists people you already chat with
-          after a handshake. Everyone nearby can discover other HOP users around this phone.
-          Event Mode is turned on from Around Us and expires on its own.
+          Discoverable off is Invisible (the default). Event Mode cannot override Invisible.
+          Contacts only lists people you already chat with after a handshake. Everyone nearby can
+          discover other HOP users around this phone.
         </Text>
+        <View style={styles.discoverRow}>
+          <Text style={{ fontWeight: '700' }}>Discoverable</Text>
+          <Switch value={discoverable} onValueChange={(on) => void setDiscoverable(on)} />
+        </View>
         {PRIVACY_ORDER.map((mode) => (
           <Pressable
             key={mode}
@@ -106,6 +110,22 @@ export default function SettingsScreen() {
           <Text style={[styles.buttonLabel, { color: colors.tint }]}>Device diagnostics</Text>
         </Pressable>
       ) : null}
+      {__DEV__ ? (
+        <Pressable
+          onPress={() => router.push('/ble-debug')}
+          style={[styles.button, { borderColor: colors.tint, marginTop: 12 }]}>
+          <Text style={[styles.buttonLabel, { color: colors.tint }]}>BLE debug</Text>
+        </Pressable>
+      ) : null}
+      <Pressable onPress={() => router.push('/qr')} style={[styles.button, { borderColor: colors.tint }]}>
+        <Text style={[styles.buttonLabel, { color: colors.tint }]}>My HOP QR Code</Text>
+      </Pressable>
+      <Pressable onPress={() => router.push('/scan')} style={[styles.button, { borderColor: colors.tint, marginTop: 12 }]}>
+        <Text style={[styles.buttonLabel, { color: colors.tint }]}>Scan someone’s HOP code</Text>
+      </Pressable>
+      <Pressable onPress={() => router.push('/requests')} style={[styles.button, { borderColor: colors.tint, marginTop: 12 }]}>
+        <Text style={[styles.buttonLabel, { color: colors.tint }]}>Message requests</Text>
+      </Pressable>
       <Pressable onPress={logout} style={[styles.button, { borderColor: colors.tint }]}>
         <Text style={[styles.buttonLabel, { color: colors.tint }]}>Log out</Text>
       </Pressable>
@@ -122,4 +142,5 @@ const styles = StyleSheet.create({
   button: { marginTop: 28, borderWidth: 1.5, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   buttonLabel: { fontWeight: '700', fontSize: 16 },
   privacyRow: { borderWidth: 1.5, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 12, marginBottom: 8 },
+  discoverRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
 });

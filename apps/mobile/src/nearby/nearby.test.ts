@@ -85,6 +85,15 @@ describe('privacy modes', () => {
     expect(isPeerVisible(around({ userId: 'stranger' }), 'everyone', 'me', new Set())).toBe(true);
     expect(isPeerVisible(around({ userId: 'me' }), 'everyone', 'me', new Set())).toBe(false);
   });
+
+  it('hides blocked peers even when Discoverable is on', () => {
+    expect(
+      isPeerVisible(around({ userId: 'blocked' }), 'everyone', 'me', new Set(), new Set(['blocked'])),
+    ).toBe(false);
+    expect(
+      isPeerVisible(around({ userId: 'ok' }), 'everyone', 'me', new Set(), new Set(['blocked'])),
+    ).toBe(true);
+  });
 });
 
 describe('mocked discovery', () => {

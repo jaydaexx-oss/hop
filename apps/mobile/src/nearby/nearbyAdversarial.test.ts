@@ -22,6 +22,16 @@ describe('nearby policy', () => {
     expect(discoveryProfileFor('contacts', false)).toBe('standard');
   });
 
+  it('maps Discoverable OFF to Invisible and keeps Event Mode from overriding it', () => {
+    expect(shouldRunNearbyDiscovery({
+      privacyMode: 'invisible',
+      appActive: true,
+      bluetoothOn: true,
+      permissionGranted: true,
+    })).toBe(false);
+    expect(isEventModeAllowed('invisible')).toBe(false);
+  });
+
   it('stops discovery when Bluetooth is off, permission is revoked, or the app is backgrounded', () => {
     expect(
       shouldRunNearbyDiscovery({

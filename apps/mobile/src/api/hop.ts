@@ -83,6 +83,16 @@ export const api = {
     request<User>('/users/me/identity', { method: 'PUT', token, body: identityPublishBody(publicKey) }),
   blockUser: (token: string, username: string) =>
     request<{ status: string }>('/users/me/blocks', { method: 'POST', token, body: { username } }),
+  unblockUser: (token: string, username: string) =>
+    request<{ status: string }>(`/users/me/blocks/${encodeURIComponent(username)}`, { method: 'DELETE', token }),
+  listBlocks: (token: string) => request<{ usernames: string[] }>('/users/me/blocks', { token }),
+  reportUser: (token: string, username: string, category: string, note?: string) =>
+    request<{ status: string }>('/users/me/reports', {
+      method: 'POST',
+      token,
+      body: { username, category, note: note || undefined },
+    }),
+  userByUsername: (token: string, username: string) => request<User>(`/users/${encodeURIComponent(username)}`, { token }),
   conversations: (token: string) => request<Conversation[]>('/conversations', { token }),
   createConversation: (token: string, username: string) =>
     request<Conversation>('/conversations', { method: 'POST', token, body: { username } }),

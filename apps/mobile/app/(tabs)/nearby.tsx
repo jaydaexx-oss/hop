@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
 import { useRouter } from 'expo-router';
 import { nearbyPeerPresence } from '@hop/protocol';
 
@@ -8,7 +8,7 @@ import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
-import { openOrCreatePeerConversation } from '@/src/chat/openPeerConversation';
+import { chatRoute, openPeerThread } from '@/src/chat/openPeerThread';
 import { SCAN_STATE_COPY } from '@/src/nearby/scanState';
 import type { AroundUsPeer, NearbyPrivacyMode } from '@/src/nearby/types';
 import { PRIVACY_LABELS, PROXIMITY_LABELS } from '@/src/nearby/types';
@@ -33,12 +33,14 @@ export default function NearbyScreen() {
   const colors = Colors[scheme];
   const router = useRouter();
   const { user, token } = useAuth();
-  const { cacheConversation, listCachedConversations } = useOffline();
+  const { cacheConversation, listCachedConversations, safety } = useOffline();
   const {
     peers,
     scanState,
     privacyMode,
     setPrivacyMode,
+    discoverable,
+    setDiscoverable,
     eventMode,
     eventRemainingLabel,
     enableEventMode,
@@ -63,20 +65,40 @@ export default function NearbyScreen() {
       if (!peer.connected) {
         await connectPeer(peer.deviceId);
       }
-      const convo = await openOrCreatePeerConversation({
+      const thread = await openPeerThread({
         token,
         myId: user.id,
         peerUserId: peer.userId,
         peerUsername: peer.displayName,
         peerPublicKey: peer.publicKey,
         cache: { listCached: listCachedConversations, cache: cacheConversation },
+        safety,
       });
-      router.push(`/chat/${convo.id}?peer=${encodeURIComponent(convo.peer.username)}&peerId=${convo.peer.id}`);
+      router.push(chatRoute(thread.conversation));
     } catch (err) {
       setOpenError(err instanceof Error ? err.message : 'Could not open chat');
     } finally {
       setOpeningId(null);
     }
+  }
+
+  function openPeerActions(peer: AroundUsPeer) {
+    Alert.alert(peer.displayName, `${PROXIMITY_LABELS[peer.proximity]} · ${presenceLabel(peer)}`, [
+      {
+        text: 'View profile',
+        onPress: () =>
+          router.push(
+            `/nearby-profile?userId=${encodeURIComponent(peer.userId ?? '')}&name=${encodeURIComponent(peer.displayName)}&proximity=${encodeURIComponent(PROXIMITY_LABELS[peer.proximity])}&publicKey=${encodeURIComponent(peer.publicKey ?? '')}`,
+          ),
+      },
+      {
+        text: peer.canMessage ? 'Message request' : 'Connect first',
+        onPress: () => {
+          if (peer.canMessage) void messagePeer(peer);
+        },
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
   }
 
   async function toggleEventMode() {
@@ -104,8 +126,19 @@ export default function NearbyScreen() {
       <View style={[styles.card, { backgroundColor: colors.card }]}>
         <Text style={styles.cardTitle}>Nearby visibility</Text>
         <Text style={{ color: colors.muted }}>
-          Default is Invisible. Discovery starts only after you choose who can find you.
+          Discoverable off is Invisible — you stop advertising and do not appear to new nearby
+          users. Existing chats and internet messaging stay on. Event Mode cannot override it.
         </Text>
+        <View style={styles.discoverRow}>
+          <Text style={{ fontWeight: '700' }}>Discoverable</Text>
+          <Switch
+            value={discoverable}
+            onValueChange={(on) => {
+              void setDiscoverable(on);
+            }}
+            disabled={busy}
+          />
+        </View>
         <View style={styles.segment}>
           {PRIVACY_ORDER.map((mode) => {
             const active = privacyMode === mode;
@@ -199,7 +232,7 @@ export default function NearbyScreen() {
           const busyPeer = busy || openingId === peer.token;
           return (
             <View key={peer.token} style={[styles.card, { backgroundColor: colors.card }]}>
-              <View style={styles.peerHeader}>
+              <Pressable onPress={() => openPeerActions(peer)} style={styles.peerHeader}>
                 <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
                   <Text style={styles.avatarText}>{peer.avatarInitials}</Text>
                 </View>
@@ -210,7 +243,7 @@ export default function NearbyScreen() {
                     {peer.encrypted ? ' · 🔒' : ''}
                   </Text>
                 </View>
-              </View>
+              </Pressable>
               <View style={styles.row}>
                 {peer.connected ? (
                   <Pressable
@@ -228,7 +261,7 @@ export default function NearbyScreen() {
                   </Pressable>
                 )}
                 <Pressable
-                  onPress={() => messagePeer(peer)}
+                  onPress={() => openPeerActions(peer)}
                   disabled={busyPeer || !peer.canMessage}
                   style={[
                     styles.smallButton,
@@ -263,6 +296,13 @@ const styles = StyleSheet.create({
   lead: { fontSize: 15, lineHeight: 21, marginBottom: 16 },
   card: { borderRadius: 16, padding: 14, marginBottom: 12, gap: 6, backgroundColor: 'transparent' },
   cardTitle: { fontSize: 16, fontWeight: '700' },
+  discoverRow: {
+    marginTop: 8,
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'transparent',
+  },
   section: { fontSize: 18, fontWeight: '700', marginTop: 8, marginBottom: 8 },
   segment: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, backgroundColor: 'transparent' },
   segmentItem: { borderRadius: 12, borderWidth: 1.5, paddingVertical: 8, paddingHorizontal: 10 },

@@ -1,5 +1,6 @@
 import { mergePersistedStatus } from "./acks.js";
 import { compareSenderStream, sortConversationMessages } from "./lifecycle.js";
+import type { LocalReportRecord, PeerRelationship, PeerSafetyRecord, ReportCategory } from "./safety.js";
 import type { PeerTrustRecord } from "./tofu.js";
 
 /** Durable store is ciphertext + optional local_seal. Do not persist decrypted voice. */
@@ -69,6 +70,23 @@ CREATE TABLE IF NOT EXISTS inbound_receipts (
   sender_id TEXT NOT NULL,
   sender_pk TEXT,
   PRIMARY KEY (ack_of, ack_type)
+);
+
+CREATE TABLE IF NOT EXISTS peer_safety (
+  peer_id TEXT PRIMARY KEY,
+  relationship TEXT NOT NULL,
+  muted INTEGER NOT NULL DEFAULT 0,
+  intro_message_id TEXT,
+  pre_block_relationship TEXT,
+  updated_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS local_reports (
+  id TEXT PRIMARY KEY,
+  peer_id TEXT NOT NULL,
+  category TEXT NOT NULL,
+  note TEXT,
+  created_at TEXT NOT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
@@ -169,6 +187,111 @@ export class HopSqliteStore {
     await this.db.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)");
     await this.db.execute("CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status)");
     await this.db.execute("CREATE INDEX IF NOT EXISTS idx_outbound_retry ON outbound_queue(next_retry_at)");
+    await this.db.execute(
+      `CREATE TABLE IF NOT EXISTS peer_safety (
+        peer_id TEXT PRIMARY KEY,
+        relationship TEXT NOT NULL,
+        muted INTEGER NOT NULL DEFAULT 0,
+        intro_message_id TEXT,
+        pre_block_relationship TEXT,
+        updated_at TEXT NOT NULL
+      )`,
+    );
+    await this.db.execute(
+      `CREATE TABLE IF NOT EXISTS local_reports (
+        id TEXT PRIMARY KEY,
+        peer_id TEXT NOT NULL,
+        category TEXT NOT NULL,
+        note TEXT,
+        created_at TEXT NOT NULL
+      )`,
+    );
+  }
+
+  async getPeerSafety(peerId: string): Promise<PeerSafetyRecord | null> {
+    const rows = await this.db.query<{
+      peer_id: string;
+      relationship: string;
+      muted: number;
+      intro_message_id: string | null;
+      pre_block_relationship: string | null;
+      updated_at: string;
+    }>("SELECT * FROM peer_safety WHERE peer_id = ?", [peerId]);
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      peerId: row.peer_id,
+      relationship: row.relationship as PeerRelationship,
+      muted: Boolean(row.muted),
+      introMessageId: row.intro_message_id,
+      preBlockRelationship: (row.pre_block_relationship as PeerRelationship | null) ?? null,
+      updatedAt: row.updated_at,
+    };
+  }
+
+  async listPeerSafety(): Promise<PeerSafetyRecord[]> {
+    const rows = await this.db.query<{
+      peer_id: string;
+      relationship: string;
+      muted: number;
+      intro_message_id: string | null;
+      pre_block_relationship: string | null;
+      updated_at: string;
+    }>("SELECT * FROM peer_safety ORDER BY updated_at DESC");
+    return rows.map((row) => ({
+      peerId: row.peer_id,
+      relationship: row.relationship as PeerRelationship,
+      muted: Boolean(row.muted),
+      introMessageId: row.intro_message_id,
+      preBlockRelationship: (row.pre_block_relationship as PeerRelationship | null) ?? null,
+      updatedAt: row.updated_at,
+    }));
+  }
+
+  async savePeerSafety(record: PeerSafetyRecord): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO peer_safety (
+        peer_id, relationship, muted, intro_message_id, pre_block_relationship, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?)
+      ON CONFLICT(peer_id) DO UPDATE SET
+        relationship=excluded.relationship,
+        muted=excluded.muted,
+        intro_message_id=excluded.intro_message_id,
+        pre_block_relationship=excluded.pre_block_relationship,
+        updated_at=excluded.updated_at`,
+      [
+        record.peerId,
+        record.relationship,
+        record.muted ? 1 : 0,
+        record.introMessageId,
+        record.preBlockRelationship,
+        record.updatedAt,
+      ],
+    );
+  }
+
+  async saveLocalReport(record: LocalReportRecord): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO local_reports (id, peer_id, category, note, created_at) VALUES (?, ?, ?, ?, ?)`,
+      [record.id, record.peerId, record.category, record.note, record.createdAt],
+    );
+  }
+
+  async listLocalReports(): Promise<LocalReportRecord[]> {
+    const rows = await this.db.query<{
+      id: string;
+      peer_id: string;
+      category: string;
+      note: string | null;
+      created_at: string;
+    }>("SELECT * FROM local_reports ORDER BY created_at DESC");
+    return rows.map((row) => ({
+      id: row.id,
+      peerId: row.peer_id,
+      category: row.category as ReportCategory,
+      note: row.note,
+      createdAt: row.created_at,
+    }));
   }
 
   async saveMessage(message: StoredMessage): Promise<void> {

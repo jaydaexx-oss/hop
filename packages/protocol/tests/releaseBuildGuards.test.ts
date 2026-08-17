@@ -61,6 +61,11 @@ describe("mobile production send path source", () => {
     const settings = readRepo("apps/mobile/app/(tabs)/settings.tsx");
     expect(settings).toMatch(/\{__DEV__ \? \(/);
     expect(settings).toContain("Device diagnostics");
+    expect(settings).toContain("BLE debug");
+    const bleDebug = readRepo("apps/mobile/app/ble-debug.tsx");
+    expect(bleDebug).toContain("isBleDebugEnabled(__DEV__)");
+    expect(bleDebug).not.toMatch(/connectedId/);
+    expect(bleDebug).not.toMatch(/deviceId/);
     const secrets = readRepo("apps/mobile/src/crypto/secretStore.ts");
     expect(secrets).toContain("shouldFailClosedSecretStore");
     expect(secrets).toMatch(/__DEV__/);

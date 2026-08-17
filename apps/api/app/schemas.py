@@ -79,6 +79,13 @@ class BlockIn(BaseModel):
     username: str
 
 
+class ReportIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str
+    category: str = Field(min_length=3, max_length=32)
+    note: Optional[str] = Field(default=None, max_length=200)
+
+
 class AckIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     status: str = Field(min_length=1, max_length=16)

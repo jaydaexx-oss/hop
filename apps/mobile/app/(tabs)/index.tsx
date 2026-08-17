@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, StyleSheet } from 'react-native';
+import { FlatList, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
   conversationTransportStatus,
@@ -76,7 +76,7 @@ function fromConversation(
 
 export default function ChatsScreen() {
   const { token, user } = useAuth();
-  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount, service } = useOffline();
+  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount, service, safety } = useOffline();
   const { peers, connectedId } = useBle();
   const router = useRouter();
   const scheme = useColorScheme() ?? 'light';
@@ -132,13 +132,21 @@ export default function ChatsScreen() {
       for (const row of next) {
         if (!merged.some((item) => item.id === row.id)) merged.push(row);
       }
-      setItems(sortInboxConversations(merged));
+      const visible: InboxRow[] = [];
+      for (const row of sortInboxConversations(merged)) {
+        if (safety && row.conversation.peer.id) {
+          const vis = await safety.inboxVisibility(row.conversation.peer.id);
+          if (vis !== 'chat') continue;
+        }
+        visible.push(row);
+      }
+      setItems(visible);
       setError(null);
     } catch (err) {
       if (local.length === 0) setError(userFacingLoadError(err));
       else setError(null);
     }
-  }, [token, cacheConversation, syncNow, loadLocal]);
+  }, [token, cacheConversation, syncNow, loadLocal, safety]);
 
   useEffect(() => {
     refresh();
@@ -152,6 +160,9 @@ export default function ChatsScreen() {
     <View style={styles.wrap}>
       <StatusBanner />
       {error ? <Text style={styles.error}>{error}</Text> : null}
+      <Pressable onPress={() => router.push('/requests')} style={styles.requestsLink}>
+        <Text style={{ color: colors.tint, fontWeight: '700' }}>Message requests</Text>
+      </Pressable>
       <FlatList
         data={items}
         keyExtractor={(item) => item.id}
@@ -198,6 +209,7 @@ export default function ChatsScreen() {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
+  requestsLink: { marginBottom: 10 },
   emptyBox: { flexGrow: 1, justifyContent: 'center' },
   error: { color: '#DC2626', marginBottom: 8 },
 });

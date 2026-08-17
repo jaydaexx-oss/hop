@@ -121,6 +121,36 @@ def test_blocked_user_cannot_create_or_send(client: TestClient) -> None:
     assert reverse.status_code == 403
 
 
+def test_unblock_and_report_are_independent(client: TestClient) -> None:
+    token_a, _ = _auth(client, "mutemate")
+    token_b, _ = _auth(client, "reportme")
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    blocked = client.post("/users/me/blocks", json={"username": "reportme"}, headers=headers_a)
+    assert blocked.status_code == 200
+    listed = client.get("/users/me/blocks", headers=headers_a)
+    assert listed.status_code == 200
+    assert "reportme" in listed.json()["usernames"]
+    reported = client.post(
+        "/users/me/reports",
+        json={"username": "reportme", "category": "spam"},
+        headers=headers_a,
+    )
+    assert reported.status_code == 200
+    unblocked = client.delete("/users/me/blocks/reportme", headers=headers_a)
+    assert unblocked.status_code == 200
+    convo = client.post("/conversations", json={"username": "reportme"}, headers=headers_a)
+    assert convo.status_code == 200
+    listed_after = client.get("/users/me/blocks", headers=headers_a)
+    assert "reportme" not in listed_after.json()["usernames"]
+    with_note = client.post(
+        "/users/me/reports",
+        json={"username": "reportme", "category": "harassment", "note": "unsolicited"},
+        headers=headers_a,
+    )
+    assert with_note.status_code == 200
+    assert "hello hop plaintext" not in with_note.text
+
+
 def test_deleted_user_cannot_login_or_websocket(client: TestClient) -> None:
     token, _ = _auth(client, "goneuser")
     with Session(get_engine()) as session:

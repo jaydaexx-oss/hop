@@ -10,6 +10,7 @@ import { MessageStatus } from "./message.js";
 import { categorizeTransportFailure } from "./transportErrors.js";
 import { formatMessageStatus, type ConversationRoute } from "./conversationTransport.js";
 import { redactString } from "./redact.js";
+import { isSafetyError } from "./safety.js";
 import type { StoredMessage } from "./store.js";
 
 /** Visible history window. Do not load an unbounded conversation into the chat list. */
@@ -111,8 +112,9 @@ export function sortInboxConversations<T extends InboxSortItem>(items: T[]): T[]
 
 export function isComposerSendable(
   text: string,
-  options: { sending?: boolean; maxChars?: number } = {},
+  options: { sending?: boolean; maxChars?: number; locked?: boolean } = {},
 ): boolean {
+  if (options.locked) return false;
   const trimmed = text.trim();
   if (!trimmed) return false;
   if (options.sending) return false;
@@ -199,11 +201,24 @@ const INTERNAL_ERROR =
   /sql|sqlite|crypto_box|ciphertext|stack|typeerror|referenceerror|libsodium|nonce|secret|database|constraint|uuid|message_id|encrypted_payload|local_seal/i;
 
 export function userFacingSendError(error: unknown): string {
+  if (isSafetyError(error)) return error.message;
   const raw = error instanceof Error ? error.message : typeof error === "string" ? error : "";
   const redacted = redactString(raw);
   const category = categorizeTransportFailure(raw);
   if (/cannot send without a real recipient/i.test(raw)) {
     return "Cannot send without a real recipient";
+  }
+  if (/already sent an introduction/i.test(raw)) {
+    return "You already sent an introduction. Wait until they accept.";
+  }
+  if (/this person is blocked/i.test(raw)) {
+    return "This person is blocked.";
+  }
+  if (/declined your request/i.test(raw)) {
+    return "This person declined your request.";
+  }
+  if (/accept this request/i.test(raw)) {
+    return "Accept this request before sending messages.";
   }
   if (/key changed|re-verify/i.test(raw)) {
     return "Recipient identity changed. Re-verify before sending.";

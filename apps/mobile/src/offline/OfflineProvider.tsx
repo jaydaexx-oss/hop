@@ -14,6 +14,7 @@ import {
   IdentityError,
   MessageService,
   PublicKeyTofu,
+  SafetyService,
   decryptApplicationMessage,
   encryptApplicationMessage,
   publishIdentityIfAllowed,
@@ -39,6 +40,7 @@ type OfflineState = {
   store: HopSqliteStore | null;
   manager: TransportManager | null;
   tofu: PublicKeyTofu | null;
+  safety: SafetyService | null;
   identityError: string | null;
   syncNow: () => Promise<void>;
   cacheConversation: (convo: Conversation) => Promise<void>;
@@ -94,10 +96,12 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
   const [store, setStore] = useState<HopSqliteStore | null>(null);
   const [manager, setManager] = useState<TransportManager | null>(null);
   const [tofu, setTofu] = useState<PublicKeyTofu | null>(null);
+  const [safety, setSafety] = useState<SafetyService | null>(null);
   const [identityError, setIdentityError] = useState<string | null>(null);
   const serviceRef = useRef<MessageService | null>(null);
   const storeRef = useRef<HopSqliteStore | null>(null);
   const tofuRef = useRef<PublicKeyTofu | null>(null);
+  const safetyRef = useRef<SafetyService | null>(null);
 
   const refresh = useCallback(async () => {
     const svc = serviceRef.current;
@@ -121,10 +125,12 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
         serviceRef.current = null;
         storeRef.current = null;
         tofuRef.current = null;
+        safetyRef.current = null;
         setService(null);
         setStore(null);
         setManager(null);
         setTofu(null);
+        setSafety(null);
         setIdentityError(null);
         setReady(true);
         setStatus('Offline');
@@ -170,14 +176,19 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
         createAppCrypto(identity, sqlite, peerTrust),
         peerTrust,
       );
+      const safetyService = new SafetyService(sqlite);
+      await safetyService.hydrate(user.id);
+      svc.attachSafety(safetyService);
       if (cancelled) return;
       serviceRef.current = svc;
       storeRef.current = sqlite;
       tofuRef.current = peerTrust;
+      safetyRef.current = safetyService;
       setStore(sqlite);
       setService(svc);
       setManager(transports);
       setTofu(peerTrust);
+      setSafety(safetyService);
       setReady(true);
       await svc.sync();
       if (!cancelled) await refresh();
@@ -250,13 +261,14 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       store,
       manager,
       tofu,
+      safety,
       identityError,
       syncNow,
       cacheConversation,
       listCachedConversations,
       conversationPreview,
     }),
-    [ready, status, queuedCount, service, store, manager, tofu, identityError, syncNow, cacheConversation, listCachedConversations, conversationPreview],
+    [ready, status, queuedCount, service, store, manager, tofu, safety, identityError, syncNow, cacheConversation, listCachedConversations, conversationPreview],
   );
 
   return <OfflineContext.Provider value={value}>{children}</OfflineContext.Provider>;

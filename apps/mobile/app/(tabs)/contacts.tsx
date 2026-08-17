@@ -8,11 +8,12 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { chatRoute, openPeerThread } from '@/src/chat/openPeerThread';
 import { useOffline } from '@/src/offline/OfflineProvider';
 
 export default function ContactsScreen() {
-  const { token } = useAuth();
-  const { cacheConversation } = useOffline();
+  const { token, user } = useAuth();
+  const { cacheConversation, listCachedConversations, safety } = useOffline();
   const router = useRouter();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
@@ -21,13 +22,22 @@ export default function ContactsScreen() {
   const [busy, setBusy] = useState(false);
 
   async function startChat() {
-    if (!token) return;
+    if (!token || !user) return;
     setBusy(true);
     setError(null);
     try {
       const convo = await api.createConversation(token, username.trim());
       await cacheConversation(convo);
-      router.push(`/chat/${convo.id}?peer=${convo.peer.username}&peerId=${convo.peer.id}`);
+      const thread = await openPeerThread({
+        token,
+        myId: user.id,
+        peerUserId: convo.peer.id,
+        peerUsername: convo.peer.username,
+        peerPublicKey: convo.peer.identity_public_key,
+        cache: { listCached: listCachedConversations, cache: cacheConversation },
+        safety,
+      });
+      router.push(chatRoute(thread.conversation));
       setUsername('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not start chat');
@@ -41,7 +51,8 @@ export default function ContactsScreen() {
       <StatusBanner />
       <Text style={styles.title}>Start a chat</Text>
       <Text style={{ color: colors.muted, marginBottom: 12 }}>
-        Enter a HOP username. Contacts are never uploaded from your address book.
+        Enter a HOP username. Contacts are never uploaded from your address book. Unknown people
+        open as a message request.
       </Text>
       <TextInput
         autoCapitalize="none"

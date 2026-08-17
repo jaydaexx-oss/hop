@@ -129,9 +129,11 @@ export function isPeerVisible(
   privacyMode: NearbyPrivacyMode,
   selfUserId: string | null,
   contactIds: Set<string>,
+  blockedIds: Set<string> = new Set(),
 ): boolean {
   if (privacyMode === 'invisible') return false;
   if (peer.userId && selfUserId && peer.userId === selfUserId) return false;
+  if (peer.userId && blockedIds.has(peer.userId)) return false;
   if (privacyMode === 'everyone') return true;
   if (peer.userId && contactIds.has(peer.userId)) return true;
   if (!peer.userId) return true;
@@ -147,12 +149,19 @@ export function projectNearbyPeers(input: {
   identities: Map<string, NearbyIdentity>;
   now: number;
   staleMs?: number;
+  blockedIds?: Set<string>;
 }): AroundUsPeer[] {
   const unique = dedupePeersByDeviceId(input.peers);
   const live = pruneStalePeers(unique, input.now, input.staleMs, input.connectedId);
   const mapped = live.map((peer) => toAroundUsPeer(peer, input.connectedId, input.identities));
   const visible = mapped.filter((peer) =>
-    isPeerVisible(peer, input.privacyMode, input.selfUserId, input.contactIds),
+    isPeerVisible(
+      peer,
+      input.privacyMode,
+      input.selfUserId,
+      input.contactIds,
+      input.blockedIds ?? new Set(),
+    ),
   );
   return sortAroundUsPeers(visible);
 }

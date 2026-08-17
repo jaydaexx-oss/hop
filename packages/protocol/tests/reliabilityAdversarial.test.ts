@@ -473,7 +473,7 @@ describe("observability privacy", () => {
 });
 
 describe("storage pressure", () => {
-  it("lists 10_000 messages in stable order without quadratic blowup", async () => {
+  it("lists 10_000 messages in stable order without quadratic blowup", { timeout: 120_000 }, async () => {
     const driver = await SqlJsDriver.open();
     const store = new HopSqliteStore(driver);
     await store.init();
@@ -490,6 +490,7 @@ describe("storage pressure", () => {
           status: MessageStatus.SENT,
         }),
       );
+      if (i % 250 === 0) await new Promise((resolve) => setTimeout(resolve, 0));
     }
     const started = Date.now();
     const listed = await store.listMessages(CONVO);

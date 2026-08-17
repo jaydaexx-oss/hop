@@ -1,6 +1,7 @@
 import { useFocusEffect, useLocalSearchParams, useNavigation, Redirect } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
+  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -14,6 +15,7 @@ import {
   CHAT_PAGE_SIZE,
   DEFAULT_TTL_MS,
   MAX_APPLICATION_TEXT_CHARS,
+  REPORT_CATEGORIES,
   applyOptimisticSendFailure,
   conversationTransportStatus,
   formatNetworkStatus,
@@ -27,6 +29,8 @@ import {
   shouldMarkConversationRead,
   userFacingLoadError,
   userFacingSendError,
+  type PeerSafetyRecord,
+  type ReportCategory,
   type StoredMessage,
 } from '@hop/protocol';
 
@@ -35,7 +39,7 @@ import { PTTButton, type VoiceClip } from '@/components/PTTButton';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
-import { type ChatMessage } from '@/src/api/hop';
+import { type ChatMessage, api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
 import { sendChatText, sendChatVoice } from '@/src/chat/sendChat';
@@ -46,7 +50,7 @@ import { useHopSocket } from '@/src/ws';
 export default function ChatScreen() {
   const { id, peer, peerId } = useLocalSearchParams<{ id: string; peer?: string; peerId?: string }>();
   const { token, user } = useAuth();
-  const { service, store, syncNow, ready: offlineReady, status, queuedCount } = useOffline();
+  const { service, store, syncNow, ready: offlineReady, status, queuedCount, safety } = useOffline();
   const { peers, connectedId } = useBle();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -61,6 +65,7 @@ export default function ChatScreen() {
   const [sending, setSending] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [newIncoming, setNewIncoming] = useState(0);
+  const [safetyRecord, setSafetyRecord] = useState<PeerSafetyRecord | null>(null);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const pinnedToLatest = useRef(true);
   const sendLock = useRef(false);
@@ -89,12 +94,24 @@ export default function ChatScreen() {
     lastOutboundStatus: lastOutbound?.status,
     relaying: lastOutbound?.status === 'RELAYING',
   });
-  const canSend = isComposerSendable(draft, { sending: sendLock.current || sending });
+  const canSend = isComposerSendable(draft, {
+    sending: sendLock.current || sending,
+    locked:
+      safetyRecord?.relationship === 'outgoing_request' ||
+      safetyRecord?.relationship === 'incoming_request' ||
+      safetyRecord?.relationship === 'blocked' ||
+      safetyRecord?.relationship === 'declined',
+  });
   const invertedData = useMemo(() => [...messages].reverse(), [messages]);
 
   const mergeRows = useCallback((incoming: ChatMessage[]) => {
     setMessages((current) => mergeChatWindow(current, incoming));
   }, []);
+
+  const refreshSafety = useCallback(async () => {
+    if (!safety || !recipientId) return;
+    setSafetyRecord(await safety.get(recipientId));
+  }, [recipientId, safety]);
 
   const markReadIfActive = useCallback(async () => {
     if (!id || !service || !userIdRef.current) return;
@@ -106,8 +123,59 @@ export default function ChatScreen() {
     ) {
       return;
     }
+    if (safety && recipientId) {
+      const record = await safety.get(recipientId);
+      if (record?.relationship === 'incoming_request' || record?.relationship === 'blocked') return;
+    }
     await service.markConversationRead(id, userIdRef.current).catch(() => undefined);
-  }, [id, service]);
+  }, [id, recipientId, safety, service]);
+
+  const runPeerAction = useCallback(
+    async (action: 'block' | 'unblock' | 'mute' | 'unmute' | 'accept' | 'decline' | 'report', category?: ReportCategory) => {
+      if (!safety || !recipientId) return;
+      if (action === 'block') {
+        await safety.block(recipientId);
+        if (token && peer) await api.blockUser(token, String(peer)).catch(() => undefined);
+      } else if (action === 'unblock') {
+        await safety.unblock(recipientId);
+        if (token && peer) await api.unblockUser(token, String(peer)).catch(() => undefined);
+      } else if (action === 'mute') await safety.setMuted(recipientId, true);
+      else if (action === 'unmute') await safety.setMuted(recipientId, false);
+      else if (action === 'accept') await safety.markAccepted(recipientId);
+      else if (action === 'decline') await safety.decline(recipientId);
+      else if (action === 'report' && category) {
+        await safety.report(recipientId, category);
+        if (token && peer) await api.reportUser(token, String(peer), category).catch(() => undefined);
+      }
+      await refreshSafety();
+    },
+    [peer, recipientId, refreshSafety, safety, token],
+  );
+
+  function openSafetyMenu() {
+    const blocked = safetyRecord?.relationship === 'blocked';
+    const muted = Boolean(safetyRecord?.muted);
+    Alert.alert(peer || 'Chat', undefined, [
+      blocked
+        ? { text: 'Unblock', onPress: () => void runPeerAction('unblock') }
+        : { text: 'Block', style: 'destructive', onPress: () => void runPeerAction('block') },
+      muted
+        ? { text: 'Unmute', onPress: () => void runPeerAction('unmute') }
+        : { text: 'Mute', onPress: () => void runPeerAction('mute') },
+      {
+        text: 'Report',
+        onPress: () =>
+          Alert.alert('Report', 'Choose a category. The transcript is not attached.', [
+            ...REPORT_CATEGORIES.map((category) => ({
+              text: category,
+              onPress: () => void runPeerAction('report', category),
+            })),
+            { text: 'Cancel', style: 'cancel' as const },
+          ]),
+      },
+      { text: 'Cancel', style: 'cancel' },
+    ]);
+  }
 
   useLayoutEffect(() => {
     navigation.setOptions({
@@ -121,8 +189,13 @@ export default function ChatScreen() {
           </Text>
         </View>
       ),
+      headerRight: () => (
+        <Pressable onPress={openSafetyMenu} accessibilityLabel="Chat options" style={styles.headerMenu}>
+          <Text style={{ color: colors.tint, fontWeight: '700' }}>More</Text>
+        </Pressable>
+      ),
     });
-  }, [navigation, peer, transportView.line, colors.muted]);
+  }, [navigation, peer, transportView.line, colors.muted, colors.tint, safetyRecord]);
 
   useEffect(() => {
     return () => {
@@ -141,6 +214,14 @@ export default function ChatScreen() {
       if (match?.peer_id) setRecipientId(match.peer_id);
     }
   }, [id, service, store, recipientId]);
+
+  useEffect(() => {
+    refreshSafety().catch(() => undefined);
+    if (!safety) return;
+    return safety.onChange(() => {
+      refreshSafety().catch(() => undefined);
+    });
+  }, [refreshSafety, safety]);
 
   useEffect(() => {
     loadLatest()
@@ -211,7 +292,7 @@ export default function ChatScreen() {
           setNewIncoming(0);
           listRef.current?.scrollToOffset({ offset: 0, animated: true });
         } else if (!fromSelf) {
-          setNewIncoming((count) => count + 1);
+          if (!safetyRecord?.muted) setNewIncoming((count) => count + 1);
         }
       })
       .catch(() => undefined);
@@ -315,6 +396,13 @@ export default function ChatScreen() {
   }
 
   async function sendVoice(clip: VoiceClip) {
+    if (safetyRecord?.relationship === 'outgoing_request' ||
+        safetyRecord?.relationship === 'incoming_request' ||
+        safetyRecord?.relationship === 'blocked' ||
+        safetyRecord?.relationship === 'declined') {
+      setError(userFacingSendError(new Error('Accept this request before sending messages.')));
+      return;
+    }
     if (!id || !service || sendLock.current) return;
     if (!recipientId || recipientId === me.id) {
       setError('Cannot send without a real recipient');
@@ -367,6 +455,41 @@ export default function ChatScreen() {
         <Text style={[styles.hint, { color: colors.muted }]} accessibilityLiveRegion="polite">
           {queuedHint}
         </Text>
+      ) : null}
+      {safetyRecord?.relationship === 'incoming_request' ? (
+        <View style={[styles.requestBanner, { backgroundColor: colors.card }]}>
+          <Text style={{ color: colors.text }}>
+            Message request. Accept to chat. They cannot send another introduction.
+          </Text>
+          <View style={styles.requestRow}>
+            <Pressable
+              onPress={() => void runPeerAction('accept')}
+              style={[styles.requestBtn, { backgroundColor: colors.tint }]}>
+              <Text style={styles.sendLabel}>Accept</Text>
+            </Pressable>
+            <Pressable
+              onPress={() => void runPeerAction('decline')}
+              style={[styles.requestBtn, { borderWidth: 1.5, borderColor: colors.tint }]}>
+              <Text style={{ color: colors.tint, fontWeight: '700' }}>Decline</Text>
+            </Pressable>
+          </View>
+        </View>
+      ) : null}
+      {safetyRecord?.relationship === 'outgoing_request' ? (
+        <Text style={[styles.hint, { color: colors.muted }]}>
+          Waiting for them to accept. You already sent an introduction.
+        </Text>
+      ) : null}
+      {safetyRecord?.relationship === 'none' ? (
+        <Text style={[styles.hint, { color: colors.muted }]}>
+          Unknown people start as a message request. One introduction until they accept.
+        </Text>
+      ) : null}
+      {safetyRecord?.relationship === 'blocked' ? (
+        <Text style={[styles.hint, { color: '#DC2626' }]}>This person is blocked.</Text>
+      ) : null}
+      {safetyRecord?.muted && safetyRecord.relationship === 'accepted' ? (
+        <Text style={[styles.hint, { color: colors.muted }]}>Muted — messages still arrive, notifications off.</Text>
       ) : null}
       <View style={styles.listWrap}>
         <FlatList
@@ -472,6 +595,10 @@ const styles = StyleSheet.create({
   headerTitle: { alignItems: 'center', backgroundColor: 'transparent', maxWidth: 240 },
   headerName: { fontSize: 17, fontWeight: '700' },
   headerStatus: { fontSize: 12, marginTop: 1 },
+  headerMenu: { paddingHorizontal: 8, paddingVertical: 4 },
+  requestBanner: { marginHorizontal: 12, marginTop: 8, borderRadius: 12, padding: 12, gap: 8 },
+  requestRow: { flexDirection: 'row', gap: 8, backgroundColor: 'transparent' },
+  requestBtn: { flex: 1, borderRadius: 10, paddingVertical: 10, alignItems: 'center' },
   listWrap: { flex: 1, backgroundColor: 'transparent' },
   list: { padding: 16, gap: 10 },
   composer: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 12, alignItems: 'flex-end' },

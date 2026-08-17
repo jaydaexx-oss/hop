@@ -14,6 +14,7 @@ import { DEFAULT_PEER_STALE_MS } from './types';
 export class NearbyService {
   privacyMode: NearbyPrivacyMode = 'invisible';
   contactIds = new Set<string>();
+  blockedIds = new Set<string>();
   selfUserId: string | null = null;
   connectedId: string | null = null;
   connectionError: string | null = null;
@@ -33,6 +34,10 @@ export class NearbyService {
 
   setContactIds(ids: Iterable<string>): void {
     this.contactIds = new Set(ids);
+  }
+
+  setBlockedIds(ids: Iterable<string>): void {
+    this.blockedIds = new Set(ids);
   }
 
   setSelfUserId(id: string | null): void {
@@ -93,6 +98,7 @@ export class NearbyService {
       identities: this.identities,
       now: this.now(),
       staleMs: this.staleMs,
+      blockedIds: this.blockedIds,
     });
   }
 

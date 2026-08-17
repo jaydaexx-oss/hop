@@ -218,4 +218,13 @@ describe("conversation UI helpers", () => {
     );
     expect(mergePersistedStatus(MessageStatus.READ, MessageStatus.FAILED)).toBe(MessageStatus.READ);
   });
+
+  it("locks the composer for pending requests and surfaces safety errors", () => {
+    expect(isComposerSendable("hello", { locked: true })).toBe(false);
+    expect(isComposerSendable("hello")).toBe(true);
+    expect(userFacingSendError(new Error("You already sent an introduction. Wait until they accept."))).toContain(
+      "introduction",
+    );
+    expect(userFacingSendError(new Error("This person is blocked."))).toBe("This person is blocked.");
+  });
 });

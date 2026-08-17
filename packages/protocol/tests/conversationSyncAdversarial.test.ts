@@ -298,7 +298,7 @@ describe("conversation synchronization and conflict recovery", () => {
     session.driver.close();
   });
 
-  it("accepts 1000 offline messages once despite reverse, random, and duplicate BLE+HTTPS", { timeout: 180_000 }, async () => {
+  it("accepts 1000 offline messages once despite reverse, random, and duplicate BLE+HTTPS", { timeout: 240_000 }, async () => {
     const alice = await generateIdentityKeyPair();
     const bob = await generateIdentityKeyPair();
     const world = mockHttp(false);

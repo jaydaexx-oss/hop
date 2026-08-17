@@ -5,8 +5,10 @@ from collections.abc import Mapping
 from functools import lru_cache
 from typing import Optional
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+from app.db_url import normalize_database_url
 
 PLACEHOLDER = "CHANGE_ME"
 DEFAULT_DATABASE_URL = "postgresql+psycopg://hop@localhost:5432/hop"
@@ -26,6 +28,14 @@ class Settings(BaseSettings):
         default=DEFAULT_DATABASE_URL,
         validation_alias="DATABASE_URL",
     )
+
+    @field_validator("database_url", mode="before")
+    @classmethod
+    def _normalize_database_url(cls, value: object) -> str:
+        if value is None:
+            raise ValueError("DATABASE_URL is empty")
+        return normalize_database_url(str(value), allow_sqlite=True)
+
     redis_url: str = Field(default="redis://localhost:6379/0", validation_alias="REDIS_URL")
 
     api_host: str = Field(default="0.0.0.0", validation_alias="API_HOST")

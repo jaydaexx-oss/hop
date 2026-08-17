@@ -60,6 +60,23 @@ def test_production_accepts_explicit_secrets(monkeypatch) -> None:
     assert_production_config(settings)
 
 
+def test_production_accepts_fly_postgres_scheme(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example.com")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgres://hop:fake-pass@hop-db.internal:5432/hop?sslmode=require",
+    )
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setenv("API_PUBLIC_URL", "https://api.example.com")
+    settings = Settings()
+    assert (
+        settings.database_url
+        == "postgresql+psycopg://hop:fake-pass@hop-db.internal:5432/hop?sslmode=require"
+    )
+    assert_production_config(settings)
+
+
 def test_development_allows_local_defaults() -> None:
     settings = Settings()
     assert settings.is_production is False

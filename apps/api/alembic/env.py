@@ -7,13 +7,21 @@ from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
 from app.config import get_settings
+from app.db_url import normalize_database_url
 from app.models import tables  # noqa: F401
 
 config = context.config
 if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
-config.set_main_option("sqlalchemy.url", get_settings().database_url.replace("%", "%%"))
+_settings = get_settings()
+config.set_main_option(
+    "sqlalchemy.url",
+    normalize_database_url(
+        _settings.database_url,
+        allow_sqlite=not _settings.is_production,
+    ).replace("%", "%%"),
+)
 target_metadata = SQLModel.metadata
 
 

@@ -8,13 +8,18 @@ from sqlalchemy.pool import StaticPool
 from sqlmodel import Session, SQLModel, create_engine
 
 from app.config import get_settings
+from app.db_url import normalize_database_url
 
 logger = logging.getLogger(__name__)
 
 
 @lru_cache
 def get_engine():
-    url = get_settings().database_url
+    settings = get_settings()
+    url = normalize_database_url(
+        settings.database_url,
+        allow_sqlite=not settings.is_production,
+    )
     if url.startswith("sqlite"):
         return create_engine(
             url,

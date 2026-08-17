@@ -158,6 +158,19 @@ export function eventEnabledAfterPrivacyChange(
   return eventEnabled && eventModeMayRun(privacyMode);
 }
 
+/**
+ * Last tap wins. A delayed Event enable must not persist after a later
+ * Invisible (or any newer mode request) has already been applied.
+ */
+export function mayCommitEventEnable(input: {
+  requestId: number;
+  latestRequestId: number;
+  privacyMode: string;
+}): boolean {
+  if (input.requestId !== input.latestRequestId) return false;
+  return eventModeMayRun(input.privacyMode);
+}
+
 /** Event expiry returns Around Us whenever Discoverable is still on. */
 export function operatingModeAfterEventExpiry(privacyMode: string): NearbyOperatingMode {
   return isDiscoverableMode(privacyMode) ? "around_us" : "invisible";

@@ -17,6 +17,7 @@ import {
   EVENT_ENTRY_COPY,
   INVISIBLE_RADAR_COPY,
   OPERATING_MODE_HINTS,
+  canCommitEventEnable,
   discoveryProfileFor,
   isEventModeAllowed,
   operatingModeFor,
@@ -126,6 +127,90 @@ describe('operatingMode persistence with Event Mode', () => {
     expect(loaded.enabled).toBe(false);
     expect(await loadPrivacyMode(store, USER)).toBe('contacts');
     expect(operatingModeFor('contacts', loaded.enabled)).toBe('around_us');
+  });
+
+  it('a delayed Event enable is rolled back when Invisible was requested later', async () => {
+    const store = new MemoryKvStore();
+    const events = new EventModeService(store, () => 50_000);
+    await savePrivacyMode(store, USER, 'everyone');
+    let latestRequestId = 0;
+    let privacy = await loadPrivacyMode(store, USER);
+
+    const staleEvent = (async () => {
+      const requestId = ++latestRequestId;
+      const plan = planNearbyOperatingMode({
+        target: 'event',
+        privacyMode: privacy,
+        lastDiscoverableMode: 'everyone',
+        eventEnabled: false,
+        audience: 'everyone',
+      });
+      privacy = plan.nextPrivacyMode;
+      await savePrivacyMode(store, USER, privacy);
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const enabled = await events.enable(USER);
+      if (!canCommitEventEnable(requestId, latestRequestId, privacy)) {
+        await events.disable(USER);
+        return;
+      }
+      expect(enabled.enabled).toBe(true);
+    })();
+
+    const laterInvisible = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      latestRequestId += 1;
+      const plan = planNearbyOperatingMode({
+        target: 'invisible',
+        privacyMode: privacy,
+        lastDiscoverableMode: 'everyone',
+        eventEnabled: true,
+      });
+      privacy = plan.nextPrivacyMode;
+      await savePrivacyMode(store, USER, privacy);
+      await events.disable(USER);
+    })();
+
+    await Promise.all([staleEvent, laterInvisible]);
+    expect(privacy).toBe('invisible');
+    expect((await events.load(USER)).enabled).toBe(false);
+    expect(operatingModeFor(privacy, (await events.load(USER)).enabled)).toBe('invisible');
+    expect(
+      shouldRunNearbyDiscovery({
+        privacyMode: privacy,
+        appActive: true,
+        bluetoothOn: true,
+        permissionGranted: true,
+      }),
+    ).toBe(false);
+  });
+
+  it('a stale Discoverable persist cannot overwrite a later Invisible write', async () => {
+    const store = new MemoryKvStore();
+    await savePrivacyMode(store, USER, 'everyone');
+    let latestRequestId = 0;
+    let privacy = await loadPrivacyMode(store, USER);
+
+    const staleEveryone = (async () => {
+      const requestId = ++latestRequestId;
+      privacy = 'everyone';
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      await savePrivacyMode(store, USER, 'everyone');
+      if (requestId !== latestRequestId) {
+        await savePrivacyMode(store, USER, privacy);
+      }
+    })();
+
+    const laterInvisible = (async () => {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      latestRequestId += 1;
+      privacy = 'invisible';
+      await savePrivacyMode(store, USER, 'invisible');
+    })();
+
+    await Promise.all([staleEveryone, laterInvisible]);
+    expect(privacy).toBe('invisible');
+    expect(await loadPrivacyMode(store, USER)).toBe('invisible');
+    expect(operatingModeFor(await loadPrivacyMode(store, USER), false)).toBe('invisible');
   });
 
   it('Invisible on disk kills a leftover Event session on load', async () => {

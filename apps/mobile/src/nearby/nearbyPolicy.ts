@@ -3,6 +3,7 @@ import {
   eventEnabledAfterPrivacyChange,
   eventModeMayRun,
   isDiscoverableMode,
+  mayCommitEventEnable,
   operatingModeAfterEventExpiry,
   planOperatingMode,
   privacyModeForDiscoverable,
@@ -68,6 +69,14 @@ export function survivingEventEnabled(
   eventEnabled: boolean,
 ): boolean {
   return eventEnabledAfterPrivacyChange(privacyMode, eventEnabled);
+}
+
+export function canCommitEventEnable(
+  requestId: number,
+  latestRequestId: number,
+  privacyMode: NearbyPrivacyMode,
+): boolean {
+  return mayCommitEventEnable({ requestId, latestRequestId, privacyMode });
 }
 
 export function operatingModeAfterExpiry(privacyMode: NearbyPrivacyMode): NearbyOperatingMode {

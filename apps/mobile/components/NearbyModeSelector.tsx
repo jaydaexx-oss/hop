@@ -58,6 +58,9 @@ export function NearbyModeSelector({
                 selected && { backgroundColor: selectedBg },
               ]}>
               <Text
+                numberOfLines={1}
+                adjustsFontSizeToFit
+                minimumFontScale={0.85}
                 style={[
                   styles.segmentLabel,
                   { color: selected ? '#042f2e' : text },

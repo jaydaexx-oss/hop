@@ -192,6 +192,7 @@ export {
   deriveOperatingMode,
   eventEnabledAfterPrivacyChange,
   eventModeMayRun,
+  mayCommitEventEnable,
   inboxVisibilityFor,
   inferRelationshipFromHistory,
   isBleDebugEnabled,

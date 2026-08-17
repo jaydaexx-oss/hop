@@ -1,8 +1,17 @@
 import { useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
+import { Dimensions, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
 import { useRouter } from 'expo-router';
-import { nearbyPeerPresence } from '@hop/protocol';
+import * as Haptics from 'expo-haptics';
+import {
+  bluetoothStatusLabel,
+  nearbyPeerPresence,
+  nearbyPeerSheetActions,
+  rssiSignalBars,
+  type NearbySheetActionId,
+} from '@hop/protocol';
 
+import { ActionSheet, type SheetAction } from '@/components/ActionSheet';
+import { NearbyRadar } from '@/components/NearbyRadar';
 import { StatusBanner } from '@/components/StatusBanner';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
@@ -14,8 +23,11 @@ import type { AroundUsPeer, NearbyPrivacyMode } from '@/src/nearby/types';
 import { PRIVACY_LABELS, PROXIMITY_LABELS } from '@/src/nearby/types';
 import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { useOffline } from '@/src/offline/OfflineProvider';
+import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
+import { avatarInitialsFromName } from '@/components/Avatar';
 
 const PRIVACY_ORDER: NearbyPrivacyMode[] = ['invisible', 'contacts', 'everyone'];
+const RADAR_SIZE = Math.min(Dimensions.get('window').width * 0.88, 336);
 
 function presenceLabel(peer: AroundUsPeer): string {
   const presence = nearbyPeerPresence({
@@ -28,11 +40,21 @@ function presenceLabel(peer: AroundUsPeer): string {
   return 'Discovered';
 }
 
+function sheetLabel(id: NearbySheetActionId, peer: AroundUsPeer): string {
+  if (id === 'view_profile') return 'View profile';
+  if (id === 'message_request') return 'Message request';
+  if (id === 'connect') return 'Connect';
+  if (id === 'disconnect') return 'Disconnect';
+  if (id === 'block') return `Block ${peer.displayName}`;
+  return id;
+}
+
 export default function NearbyScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const router = useRouter();
   const { user, token } = useAuth();
+  const { color: selfColor } = useLocalAvatarColor(user?.id);
   const { cacheConversation, listCachedConversations, safety } = useOffline();
   const {
     peers,
@@ -56,6 +78,7 @@ export default function NearbyScreen() {
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
   const [eventError, setEventError] = useState<string | null>(null);
+  const [sheetPeer, setSheetPeer] = useState<AroundUsPeer | null>(null);
 
   async function messagePeer(peer: AroundUsPeer) {
     if (!user || !peer.userId) return;
@@ -82,24 +105,36 @@ export default function NearbyScreen() {
     }
   }
 
-  function openPeerActions(peer: AroundUsPeer) {
-    Alert.alert(peer.displayName, `${PROXIMITY_LABELS[peer.proximity]} · ${presenceLabel(peer)}`, [
-      {
-        text: 'View profile',
-        onPress: () =>
-          router.push(
-            `/nearby-profile?userId=${encodeURIComponent(peer.userId ?? '')}&name=${encodeURIComponent(peer.displayName)}&proximity=${encodeURIComponent(PROXIMITY_LABELS[peer.proximity])}&publicKey=${encodeURIComponent(peer.publicKey ?? '')}`,
-          ),
-      },
-      {
-        text: peer.canMessage ? 'Message request' : 'Connect first',
-        onPress: () => {
-          if (peer.canMessage) void messagePeer(peer);
-        },
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+  function openPeerProfile(peer: AroundUsPeer) {
+    router.push(
+      `/nearby-profile?userId=${encodeURIComponent(peer.userId ?? '')}&name=${encodeURIComponent(peer.displayName)}&proximity=${encodeURIComponent(PROXIMITY_LABELS[peer.proximity])}&publicKey=${encodeURIComponent(peer.publicKey ?? '')}`,
+    );
   }
+
+  async function blockPeer(peer: AroundUsPeer) {
+    if (!peer.userId || !safety) return;
+    await safety.block(peer.userId);
+  }
+
+  function runSheetAction(peer: AroundUsPeer, action: NearbySheetActionId) {
+    if (action === 'view_profile') openPeerProfile(peer);
+    else if (action === 'message_request') void messagePeer(peer);
+    else if (action === 'connect') void connectPeer(peer.deviceId);
+    else if (action === 'disconnect') void disconnectPeer();
+    else if (action === 'block') void blockPeer(peer);
+  }
+
+  const sheetActions: SheetAction[] = sheetPeer
+    ? nearbyPeerSheetActions({
+        canMessage: sheetPeer.canMessage,
+        connected: sheetPeer.connected,
+        userId: sheetPeer.userId,
+      }).map((id) => ({
+        label: sheetLabel(id, sheetPeer),
+        destructive: id === 'block',
+        onPress: () => runSheetAction(sheetPeer, id),
+      }))
+    : [];
 
   async function toggleEventMode() {
     setEventError(null);
@@ -111,17 +146,40 @@ export default function NearbyScreen() {
     }
   }
 
-  const emptyCopy = SCAN_STATE_COPY[scanState];
+  const emptyCopy = SCAN_STATE_COPY[scanState] || 'Nobody nearby right now.';
   const eventLocked = privacyMode === 'invisible';
+  const scanning = scanState === 'searching' || scanState === 'peers_found';
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={styles.wrap}>
       <StatusBanner />
+      <View style={styles.header}>
+        <Text style={[styles.brand, { color: colors.tint }]}>HOP</Text>
+        <Text style={[styles.scanBadge, { color: colors.muted }]}>
+          {bluetoothStatusLabel(scanState)}
+          {nearbyCount > 0 ? ` · ${nearbyCount}` : ''}
+        </Text>
+      </View>
       <Text style={styles.title}>Around Us</Text>
       <Text style={[styles.lead, { color: colors.muted }]}>
-        See HOP users near this phone over Bluetooth. Chat still picks Bluetooth or internet
-        automatically. Approximate proximity only — never meters, GPS, or hardware IDs.
+        Real people this phone can see over Bluetooth. Tap a dot for profile, connect, or a
+        message request — never an automatic chat. Approximate proximity only.
       </Text>
+
+      <NearbyRadar
+        peers={peers}
+        size={RADAR_SIZE}
+        tint={colors.tint}
+        border={colors.border}
+        scanning={scanning}
+        selfName={user?.username ?? 'You'}
+        selfColor={selfColor}
+        emptyCopy={emptyCopy}
+        onPressPeer={(peer) => {
+          void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
+          setSheetPeer(peer);
+        }}
+      />
 
       <View style={[styles.card, { backgroundColor: colors.card }]}>
         <Text style={styles.cardTitle}>Nearby visibility</Text>
@@ -172,11 +230,6 @@ export default function NearbyScreen() {
               {nearbyCount} HOP {nearbyCount === 1 ? 'user' : 'users'} nearby. Discovery is more active for
               this session only. Encryption is unchanged.
             </Text>
-            {eventMode.sessionId ? (
-              <Text style={{ color: colors.muted, fontSize: 12 }}>
-                Session ready for a future event code. Not a location.
-              </Text>
-            ) : null}
           </>
         ) : (
           <Text style={{ color: colors.muted }}>
@@ -210,15 +263,18 @@ export default function NearbyScreen() {
 
       <View style={[styles.card, { backgroundColor: colors.card }]}>
         <Text style={styles.cardTitle}>This phone</Text>
-        <Text style={{ color: colors.muted }}>
-          {privacyMode === 'invisible'
-            ? 'Invisible — not advertising or scanning'
-            : sessionActive
+        <Text style={{ color: colors.muted }}>{bluetoothStatusLabel(scanState)}</Text>
+        {privacyMode === 'invisible' ? (
+          <Text style={{ color: colors.muted }}>Invisible — not advertising or scanning</Text>
+        ) : (
+          <Text style={{ color: colors.muted }}>
+            {sessionActive
               ? eventMode.enabled
                 ? 'Event Mode scanning'
                 : 'Looking around'
               : 'Nearby is idle'}
-        </Text>
+          </Text>
+        )}
         {statusDetail ? <Text style={{ color: colors.muted }}>{statusDetail}</Text> : null}
         {error ? <Text style={styles.error}>{error}</Text> : null}
         {openError ? <Text style={styles.error}>{openError}</Text> : null}
@@ -231,8 +287,11 @@ export default function NearbyScreen() {
         peers.map((peer) => {
           const busyPeer = busy || openingId === peer.token;
           return (
-            <View key={peer.token} style={[styles.card, { backgroundColor: colors.card }]}>
-              <Pressable onPress={() => openPeerActions(peer)} style={styles.peerHeader}>
+            <Pressable
+              key={peer.token}
+              onPress={() => setSheetPeer(peer)}
+              style={[styles.card, { backgroundColor: colors.card }]}>
+              <View style={styles.peerHeader}>
                 <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
                   <Text style={styles.avatarText}>{peer.avatarInitials}</Text>
                 </View>
@@ -241,41 +300,14 @@ export default function NearbyScreen() {
                   <Text style={{ color: colors.muted }}>
                     {PROXIMITY_LABELS[peer.proximity]} · {presenceLabel(peer)}
                     {peer.encrypted ? ' · 🔒' : ''}
+                    {peer.rssi != null ? ` · ${'•'.repeat(rssiSignalBars(peer.rssi))}` : ''}
                   </Text>
                 </View>
-              </Pressable>
-              <View style={styles.row}>
-                {peer.connected ? (
-                  <Pressable
-                    onPress={() => disconnectPeer()}
-                    disabled={busyPeer}
-                    style={[styles.smallButton, { borderColor: colors.tint, borderWidth: 1.5 }]}>
-                    <Text style={{ color: colors.tint, fontWeight: '700' }}>Disconnect</Text>
-                  </Pressable>
-                ) : (
-                  <Pressable
-                    onPress={() => connectPeer(peer.deviceId)}
-                    disabled={busyPeer}
-                    style={[styles.smallButton, { borderColor: colors.tint, borderWidth: 1.5 }]}>
-                    <Text style={{ color: colors.tint, fontWeight: '700' }}>Connect</Text>
-                  </Pressable>
-                )}
-                <Pressable
-                  onPress={() => openPeerActions(peer)}
-                  disabled={busyPeer || !peer.canMessage}
-                  style={[
-                    styles.smallButton,
-                    { backgroundColor: colors.tint, opacity: busyPeer || !peer.canMessage ? 0.45 : 1 },
-                  ]}>
-                  <Text style={styles.buttonLabel}>{openingId === peer.token ? 'Opening…' : 'Message'}</Text>
-                </Pressable>
               </View>
-              {!peer.canMessage ? (
-                <Text style={{ color: colors.muted, fontSize: 12 }}>
-                  Connect first to authenticate this HOP user.
-                </Text>
-              ) : null}
-            </View>
+              <Text style={{ color: colors.muted, fontSize: 12 }}>
+                {busyPeer ? 'Working…' : 'Tap for profile, connect, or a message request'}
+              </Text>
+            </Pressable>
           );
         })
       )}
@@ -286,12 +318,35 @@ export default function NearbyScreen() {
         addresses, phone numbers, email, GPS, or permanent device IDs. Physical two-phone BLE
         delivery is still pending verification.
       </Text>
+
+      <ActionSheet
+        visible={sheetPeer != null}
+        onDismiss={() => setSheetPeer(null)}
+        title={sheetPeer?.displayName ?? ''}
+        subtitle={
+          sheetPeer
+            ? `${PROXIMITY_LABELS[sheetPeer.proximity]} · ${presenceLabel(sheetPeer)}`
+            : undefined
+        }
+        avatarInitials={sheetPeer ? avatarInitialsFromName(sheetPeer.displayName) : '?'}
+        avatarColor={colors.tint}
+        actions={sheetActions}
+      />
     </ScrollView>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: { padding: 20, paddingBottom: 40 },
+  header: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+    backgroundColor: 'transparent',
+    marginBottom: 4,
+  },
+  brand: { fontSize: 18, fontWeight: '800', letterSpacing: 1.4 },
+  scanBadge: { fontSize: 12, fontWeight: '600' },
   title: { fontSize: 28, fontWeight: '700', marginBottom: 8 },
   lead: { fontSize: 15, lineHeight: 21, marginBottom: 16 },
   card: { borderRadius: 16, padding: 14, marginBottom: 12, gap: 6, backgroundColor: 'transparent' },
@@ -322,9 +377,6 @@ const styles = StyleSheet.create({
   avatarText: { color: '#042f2e', fontWeight: '800', fontSize: 13 },
   peerMeta: { flex: 1, backgroundColor: 'transparent', gap: 2 },
   peerName: { fontSize: 18, fontWeight: '700' },
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, backgroundColor: 'transparent' },
   button: { marginTop: 10, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
-  smallButton: { borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, alignItems: 'center' },
-  buttonLabel: { color: '#042f2e', fontWeight: '700' },
   error: { color: '#DC2626' },
 });

@@ -1,8 +1,10 @@
 import { useMemo, useState } from 'react';
-import { Alert, Pressable, StyleSheet } from 'react-native';
+import { Pressable, StyleSheet } from 'react-native';
 import { useLocalSearchParams, useRouter } from 'expo-router';
-import { REPORT_CATEGORIES, SafetyError, type ReportCategory } from '@hop/protocol';
+import { REPORT_CATEGORIES, type ReportCategory } from '@hop/protocol';
 
+import { ActionSheet } from '@/components/ActionSheet';
+import { Avatar } from '@/components/Avatar';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -10,6 +12,7 @@ import { api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { chatRoute, openPeerThread } from '@/src/chat/openPeerThread';
 import { useOffline } from '@/src/offline/OfflineProvider';
+import { defaultLocalAvatarColor } from '@/src/profile/avatarAppearance';
 
 export default function NearbyPublicProfileScreen() {
   const { userId, name, proximity, publicKey } = useLocalSearchParams<{
@@ -24,8 +27,10 @@ export default function NearbyPublicProfileScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const [busy, setBusy] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const displayName = name && name !== 'HOP user' ? name : 'HOP user';
   const title = useMemo(() => displayName, [displayName]);
+  const avatarColor = defaultLocalAvatarColor(userId || displayName);
 
   async function message() {
     if (!user || !userId) return;
@@ -41,8 +46,8 @@ export default function NearbyPublicProfileScreen() {
         safety,
       });
       router.push(chatRoute(thread.conversation));
-    } catch (err) {
-      Alert.alert('Could not message', err instanceof SafetyError ? err.message : 'Try again');
+    } catch {
+      setBusy(false);
     } finally {
       setBusy(false);
     }
@@ -54,7 +59,6 @@ export default function NearbyPublicProfileScreen() {
     if (token && displayName !== 'HOP user') {
       await api.blockUser(token, displayName).catch(() => undefined);
     }
-    Alert.alert('Blocked', 'They will not appear around you or in requests.');
     router.back();
   }
 
@@ -62,18 +66,6 @@ export default function NearbyPublicProfileScreen() {
     if (!userId || !safety) return;
     const muted = await safety.isMuted(userId);
     await safety.setMuted(userId, !muted);
-    Alert.alert(muted ? 'Unmuted' : 'Muted', muted ? 'Notifications are on again.' : 'Messages still arrive. Notifications are off.');
-  }
-
-  function report() {
-    if (!userId || !safety) return;
-    Alert.alert('Report', 'Choose a category. HOP does not attach the conversation transcript.', [
-      ...REPORT_CATEGORIES.map((category) => ({
-        text: category,
-        onPress: () => void submitReport(category),
-      })),
-      { text: 'Cancel', style: 'cancel' as const },
-    ]);
   }
 
   async function submitReport(category: ReportCategory) {
@@ -82,14 +74,11 @@ export default function NearbyPublicProfileScreen() {
     if (token && displayName !== 'HOP user') {
       await api.reportUser(token, displayName, category).catch(() => undefined);
     }
-    Alert.alert('Reported', 'Thanks. Report is separate from Block.');
   }
 
   return (
     <View style={styles.wrap}>
-      <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
-        <Text style={styles.avatarText}>{title.slice(0, 2).toUpperCase()}</Text>
-      </View>
+      <Avatar username={title} color={avatarColor} size={88} borderColor={colors.tint} borderWidth={2} />
       <Text style={styles.name}>{title}</Text>
       <Text style={{ color: colors.muted, textAlign: 'center' }}>
         {proximity ? `${proximity} · Nearby HOP user` : 'Nearby HOP user'}
@@ -103,23 +92,31 @@ export default function NearbyPublicProfileScreen() {
         style={[styles.button, { backgroundColor: colors.tint, opacity: userId ? 1 : 0.45 }]}>
         <Text style={styles.primary}>{busy ? 'Opening…' : 'Message request'}</Text>
       </Pressable>
-      <Pressable onPress={mute} style={[styles.outline, { borderColor: colors.tint }]}>
+      <Pressable onPress={() => void mute()} style={[styles.outline, { borderColor: colors.tint }]}>
         <Text style={{ color: colors.tint, fontWeight: '700' }}>Mute / Unmute</Text>
       </Pressable>
-      <Pressable onPress={report} style={[styles.outline, { borderColor: colors.tint }]}>
+      <Pressable onPress={() => setReportOpen(true)} style={[styles.outline, { borderColor: colors.tint }]}>
         <Text style={{ color: colors.tint, fontWeight: '700' }}>Report</Text>
       </Pressable>
-      <Pressable onPress={block} style={[styles.outline, { borderColor: '#DC2626' }]}>
-        <Text style={{ color: '#DC2626', fontWeight: '700' }}>Block</Text>
+      <Pressable onPress={() => void block()} style={[styles.outline, { borderColor: colors.destructive }]}>
+        <Text style={{ color: colors.destructive, fontWeight: '700' }}>Block</Text>
       </Pressable>
+      <ActionSheet
+        visible={reportOpen}
+        onDismiss={() => setReportOpen(false)}
+        title="Report"
+        subtitle="HOP does not attach the conversation transcript."
+        actions={REPORT_CATEGORIES.map((category) => ({
+          label: category,
+          onPress: () => void submitReport(category),
+        }))}
+      />
     </View>
   );
 }
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 24, alignItems: 'center', gap: 10 },
-  avatar: { width: 72, height: 72, borderRadius: 36, alignItems: 'center', justifyContent: 'center', marginTop: 12 },
-  avatarText: { color: '#042f2e', fontWeight: '800', fontSize: 22 },
   name: { fontSize: 28, fontWeight: '700' },
   privacy: { fontSize: 13, textAlign: 'center', marginVertical: 8 },
   button: { width: '100%', borderRadius: 12, paddingVertical: 14, alignItems: 'center', marginTop: 8 },

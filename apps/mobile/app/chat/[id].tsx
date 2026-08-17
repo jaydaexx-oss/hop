@@ -1,7 +1,6 @@
 import { useFocusEffect, useLocalSearchParams, useNavigation, Redirect } from 'expo-router';
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
-  Alert,
   FlatList,
   KeyboardAvoidingView,
   Platform,
@@ -36,6 +35,7 @@ import {
 
 import { MessageBubble } from '@/components/MessageBubble';
 import { PTTButton, type VoiceClip } from '@/components/PTTButton';
+import { ActionSheet } from '@/components/ActionSheet';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -66,6 +66,8 @@ export default function ChatScreen() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [newIncoming, setNewIncoming] = useState(0);
   const [safetyRecord, setSafetyRecord] = useState<PeerSafetyRecord | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const [reportOpen, setReportOpen] = useState(false);
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const pinnedToLatest = useRef(true);
   const sendLock = useRef(false);
@@ -153,28 +155,7 @@ export default function ChatScreen() {
   );
 
   function openSafetyMenu() {
-    const blocked = safetyRecord?.relationship === 'blocked';
-    const muted = Boolean(safetyRecord?.muted);
-    Alert.alert(peer || 'Chat', undefined, [
-      blocked
-        ? { text: 'Unblock', onPress: () => void runPeerAction('unblock') }
-        : { text: 'Block', style: 'destructive', onPress: () => void runPeerAction('block') },
-      muted
-        ? { text: 'Unmute', onPress: () => void runPeerAction('unmute') }
-        : { text: 'Mute', onPress: () => void runPeerAction('mute') },
-      {
-        text: 'Report',
-        onPress: () =>
-          Alert.alert('Report', 'Choose a category. The transcript is not attached.', [
-            ...REPORT_CATEGORIES.map((category) => ({
-              text: category,
-              onPress: () => void runPeerAction('report', category),
-            })),
-            { text: 'Cancel', style: 'cancel' as const },
-          ]),
-      },
-      { text: 'Cancel', style: 'cancel' },
-    ]);
+    setSheetOpen(true);
   }
 
   useLayoutEffect(() => {
@@ -587,6 +568,31 @@ export default function ChatScreen() {
           </>
         )}
       </View>
+      <ActionSheet
+        visible={sheetOpen}
+        onDismiss={() => setSheetOpen(false)}
+        title={peer || 'Chat'}
+        subtitle={transportView.line}
+        actions={[
+          safetyRecord?.relationship === 'blocked'
+            ? { label: 'Unblock', onPress: () => void runPeerAction('unblock') }
+            : { label: 'Block', destructive: true, onPress: () => void runPeerAction('block') },
+          safetyRecord?.muted
+            ? { label: 'Unmute', onPress: () => void runPeerAction('unmute') }
+            : { label: 'Mute', onPress: () => void runPeerAction('mute') },
+          { label: 'Report', onPress: () => setReportOpen(true) },
+        ]}
+      />
+      <ActionSheet
+        visible={reportOpen}
+        onDismiss={() => setReportOpen(false)}
+        title="Report"
+        subtitle="Choose a category. The transcript is not attached."
+        actions={REPORT_CATEGORIES.map((category) => ({
+          label: category,
+          onPress: () => void runPeerAction('report', category),
+        }))}
+      />
     </KeyboardAvoidingView>
   );
 }

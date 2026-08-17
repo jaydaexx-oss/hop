@@ -21,13 +21,13 @@ export default function ScanHopCodeScreen() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  async function openCode() {
+  async function openCode(value = raw) {
     setError(null);
-    if (hopQrContainsSecrets(raw)) {
+    if (hopQrContainsSecrets(value)) {
       setError('That code is not a HOP username.');
       return;
     }
-    const payload = decodeHopQrPayload(raw);
+    const payload = decodeHopQrPayload(value);
     if (!payload) {
       setError('Enter a HOP username or hop:// code.');
       return;
@@ -68,11 +68,32 @@ export default function ScanHopCodeScreen() {
 
   return (
     <View style={styles.wrap}>
-      <Text style={styles.title}>Scan someone’s HOP code</Text>
+      <Text style={styles.title}>Scan HOP Code</Text>
       <Text style={[styles.lead, { color: colors.muted }]}>
-        Camera scanning ships with a later native build. Paste a hop:// code or type their HOP
-        username. Unknown people open as a message request — not a normal chat.
+        Aim at a HOP QR, or paste a hop:// code / username. Unknown people open as a message
+        request — not a normal chat.
       </Text>
+
+      <View style={[styles.viewfinder, { borderColor: colors.tint }]}>
+        {(['tl', 'tr', 'bl', 'br'] as const).map((pos) => (
+          <View
+            key={pos}
+            style={[
+              styles.corner,
+              { borderColor: colors.tint },
+              pos === 'tl' && { top: -2, left: -2 },
+              pos === 'tr' && { top: -2, right: -2, transform: [{ scaleX: -1 }] },
+              pos === 'bl' && { bottom: -2, left: -2, transform: [{ scaleY: -1 }] },
+              pos === 'br' && { bottom: -2, right: -2, transform: [{ scaleX: -1 }, { scaleY: -1 }] },
+            ]}
+          />
+        ))}
+        <Text style={[styles.cameraNote, { color: colors.muted }]}>
+          Camera scanning needs a later Xcode native build. expo-camera is not in this app yet —
+          paste a code below.
+        </Text>
+      </View>
+
       <TextInput
         autoCapitalize="none"
         autoCorrect={false}
@@ -84,7 +105,7 @@ export default function ScanHopCodeScreen() {
       />
       {error ? <Text style={styles.error}>{error}</Text> : null}
       <Pressable
-        onPress={openCode}
+        onPress={() => void openCode()}
         disabled={busy || raw.trim().length < 3}
         style={[styles.button, { backgroundColor: colors.tint, opacity: busy ? 0.6 : 1 }]}>
         <Text style={styles.buttonLabel}>{busy ? 'Opening…' : 'Open as message request'}</Text>
@@ -97,6 +118,27 @@ const styles = StyleSheet.create({
   wrap: { flex: 1, padding: 20, gap: 10 },
   title: { fontSize: 28, fontWeight: '700' },
   lead: { fontSize: 15, lineHeight: 21, marginBottom: 8 },
+  viewfinder: {
+    alignSelf: 'center',
+    width: 240,
+    height: 240,
+    borderRadius: 20,
+    borderWidth: 1,
+    marginVertical: 8,
+    alignItems: 'center',
+    justifyContent: 'center',
+    padding: 24,
+    backgroundColor: '#070B12',
+  },
+  corner: {
+    position: 'absolute',
+    width: 28,
+    height: 28,
+    borderTopWidth: 3,
+    borderLeftWidth: 3,
+    borderTopLeftRadius: 6,
+  },
+  cameraNote: { textAlign: 'center', fontSize: 13, lineHeight: 18 },
   input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
   button: { marginTop: 8, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   buttonLabel: { color: '#042f2e', fontWeight: '700' },

@@ -159,6 +159,26 @@ export {
   type ChatPageOptions,
   type InboxSortItem,
 } from "./conversationUi.js";
+export {
+  LOCAL_AVATAR_COLORS,
+  bluetoothStatusLabel,
+  conversationHasUndeliveredOutbox,
+  inboxThreadClearPolicy,
+  isHardcodedActiveBluetoothLabel,
+  messagesTabBadgeCount,
+  messagesTabBadgeLabel,
+  nearbyPeerSheetActions,
+  nearbySheetOpensPeerThread,
+  nearbySheetSendsMessage,
+  nearbySheetUsesSafetyService,
+  requestCardActionUsesSafetyService,
+  requestCardActions,
+  requestCardCopy,
+  rssiPercentForDisplay,
+  type InboxClearMode,
+  type NearbySheetActionId,
+  type RequestCardActionId,
+} from "./uxPresentation.js";
 export { isBoxedEnvelopePayload, refuseUnencryptedPayloadError, requirePeerRecipient } from "./sendGuards.js";
 export {
   REPORT_CATEGORIES,

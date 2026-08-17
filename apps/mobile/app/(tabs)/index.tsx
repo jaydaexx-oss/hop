@@ -2,12 +2,18 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
+  REPORT_CATEGORIES,
+  conversationHasUndeliveredOutbox,
   conversationTransportStatus,
+  formatUnreadBadge,
+  inboxThreadClearPolicy,
   internetStatusAvailable,
   sortInboxConversations,
   userFacingLoadError,
+  type ReportCategory,
 } from '@hop/protocol';
 
+import { ActionSheet } from '@/components/ActionSheet';
 import { ConversationRow, inboxTimestamp } from '@/components/ConversationRow';
 import { Text, View } from '@/components/Themed';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -16,8 +22,13 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { api, type Conversation } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
+import { hideInboxConversation, loadHiddenInboxIds, restoreInboxConversation } from '@/src/chat/inboxHide';
+import { createPersistentKv } from '@/src/nearby/kvStore';
 import { useOffline } from '@/src/offline/OfflineProvider';
+import { defaultLocalAvatarColor } from '@/src/profile/avatarAppearance';
 import { useHopSocket } from '@/src/ws';
+
+const hideKv = createPersistentKv();
 
 type InboxRow = {
   id: string;
@@ -30,6 +41,7 @@ type InboxRow = {
   lastSenderId: string | null;
   lastSendSeq: number | null;
   lastMessageId: string | null;
+  muted: boolean;
   last?: {
     message_id: string;
     sender_id: string;
@@ -43,6 +55,7 @@ function fromConversation(
   local?: {
     preview: string;
     unread: number;
+    muted?: boolean;
     last: {
       message_id: string;
       sender_id: string;
@@ -58,6 +71,7 @@ function fromConversation(
     conversation: convo,
     preview: local?.preview ?? 'No messages yet',
     unread: local?.unread ?? 0,
+    muted: Boolean(local?.muted),
     lastActivityAt: local?.last?.created_at ?? convo.created_at,
     lastStatus: local?.last?.status ?? null,
     lastSenderId: local?.last?.sender_id ?? null,
@@ -76,13 +90,19 @@ function fromConversation(
 
 export default function ChatsScreen() {
   const { token, user } = useAuth();
-  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount, service, safety } = useOffline();
+  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount, service, safety, store } =
+    useOffline();
   const { peers, connectedId } = useBle();
   const router = useRouter();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const [items, setItems] = useState<InboxRow[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [requestCount, setRequestCount] = useState(0);
+  const [sheetRow, setSheetRow] = useState<InboxRow | null>(null);
+  const [reportRow, setReportRow] = useState<InboxRow | null>(null);
+  const [undoId, setUndoId] = useState<string | null>(null);
+  const [undoNote, setUndoNote] = useState<string | null>(null);
 
   const nearbyPeers = useMemo(
     () =>
@@ -95,6 +115,7 @@ export default function ChatsScreen() {
   );
 
   const loadLocal = useCallback(async (): Promise<InboxRow[]> => {
+    const mutedIds = safety ? await safety.mutedPeerIds() : new Set<string>();
     if (service && user?.id) {
       const inbox = await service.listInbox(user.id);
       return inbox.map((row) =>
@@ -108,17 +129,34 @@ export default function ChatsScreen() {
               identity_public_key: row.peer_public_key ?? '',
             },
           },
-          { preview: row.preview, unread: row.unread, last: row.last },
+          {
+            preview: row.preview,
+            unread: row.unread,
+            muted: Boolean(row.peer_id && mutedIds.has(row.peer_id)),
+            last: row.last,
+          },
         ),
       );
     }
     const cached = await listCachedConversations();
-    return cached.map((convo) => fromConversation(convo));
-  }, [service, user?.id, listCachedConversations]);
+    return cached.map((convo) =>
+      fromConversation(convo, {
+        preview: 'No messages yet',
+        unread: 0,
+        muted: Boolean(convo.peer.id && mutedIds.has(convo.peer.id)),
+        last: null,
+      }),
+    );
+  }, [service, user?.id, listCachedConversations, safety]);
 
   const refresh = useCallback(async () => {
-    const local = await loadLocal();
+    const hidden = user ? new Set(await loadHiddenInboxIds(hideKv, user.id)) : new Set<string>();
+    const local = (await loadLocal()).filter((row) => !hidden.has(row.id));
     if (local.length > 0) setItems(sortInboxConversations(local));
+    if (safety) {
+      const requests = await safety.listRequests();
+      setRequestCount(requests.filter((row) => row.relationship === 'incoming_request').length);
+    }
     if (!token) return;
     try {
       const remote = await api.conversations(token);
@@ -126,7 +164,7 @@ export default function ChatsScreen() {
         await cacheConversation(convo);
       }
       await syncNow();
-      const next = await loadLocal();
+      const next = (await loadLocal()).filter((row) => !hidden.has(row.id));
       const byId = new Map(next.map((row) => [row.id, row]));
       const merged = remote.map((convo) => byId.get(convo.id) ?? fromConversation(convo));
       for (const row of next) {
@@ -134,6 +172,7 @@ export default function ChatsScreen() {
       }
       const visible: InboxRow[] = [];
       for (const row of sortInboxConversations(merged)) {
+        if (hidden.has(row.id)) continue;
         if (safety && row.conversation.peer.id) {
           const vis = await safety.inboxVisibility(row.conversation.peer.id);
           if (vis !== 'chat') continue;
@@ -146,22 +185,92 @@ export default function ChatsScreen() {
       if (local.length === 0) setError(userFacingLoadError(err));
       else setError(null);
     }
-  }, [token, cacheConversation, syncNow, loadLocal, safety]);
+  }, [token, cacheConversation, syncNow, loadLocal, safety, user]);
 
   useEffect(() => {
     refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    if (!safety) return;
+    return safety.onChange(() => {
+      refresh().catch(() => undefined);
+    });
+  }, [refresh, safety]);
+
   useHopSocket(token, (event) => {
     if (event.type === 'message') refresh();
   });
+
+  async function hideRow(row: InboxRow) {
+    if (!user) return;
+    let hasOutbox = false;
+    if (store) {
+      const messages = await store.listMessages(row.id);
+      hasOutbox = conversationHasUndeliveredOutbox(
+        messages.map((item) => ({ senderId: item.sender_id, status: item.status })),
+        user.id,
+      );
+    }
+    const policy = inboxThreadClearPolicy({ hasUndeliveredOutbox: hasOutbox });
+    await hideInboxConversation(hideKv, user.id, row.id);
+    setUndoId(row.id);
+    setUndoNote(
+      policy.preservesOutbox && hasOutbox
+        ? 'Chat hidden. Queued messages will still send.'
+        : 'Chat hidden.',
+    );
+    await refresh();
+  }
+
+  async function undoHide() {
+    if (!user || !undoId) return;
+    await restoreInboxConversation(hideKv, user.id, undoId);
+    setUndoId(null);
+    setUndoNote(null);
+    await refresh();
+  }
+
+  async function runInboxAction(row: InboxRow, action: 'mute' | 'unmute' | 'block' | 'report' | 'hide', category?: ReportCategory) {
+    const peerId = row.conversation.peer.id;
+    const name = row.conversation.peer.username;
+    if (action === 'hide') {
+      await hideRow(row);
+      return;
+    }
+    if (!safety || !peerId) return;
+    if (action === 'mute') await safety.setMuted(peerId, true);
+    else if (action === 'unmute') await safety.setMuted(peerId, false);
+    else if (action === 'block') {
+      await safety.block(peerId);
+      if (token && name) await api.blockUser(token, name).catch(() => undefined);
+    } else if (action === 'report' && category) {
+      await safety.report(peerId, category);
+      if (token && name) await api.reportUser(token, name, category).catch(() => undefined);
+    }
+    await refresh();
+  }
+
+  const requestBadge = formatUnreadBadge(requestCount);
 
   return (
     <View style={styles.wrap}>
       <StatusBanner />
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Pressable onPress={() => router.push('/requests')} style={styles.requestsLink}>
-        <Text style={{ color: colors.tint, fontWeight: '700' }}>Message requests</Text>
+      <Pressable
+        onPress={() => router.push('/requests')}
+        style={[styles.requestsBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
+        <View style={styles.requestsText}>
+          <Text style={{ color: colors.text, fontWeight: '700' }}>Message requests</Text>
+          <Text style={{ color: colors.muted, fontSize: 13 }}>
+            {requestCount === 0 ? 'No pending introductions' : 'Unknown people wait here until you accept'}
+          </Text>
+        </View>
+        {requestBadge ? (
+          <View style={[styles.reqBadge, { backgroundColor: colors.tint }]}>
+            <Text style={styles.reqBadgeLabel}>{requestBadge}</Text>
+          </View>
+        ) : null}
       </Pressable>
       <FlatList
         data={items}
@@ -187,6 +296,7 @@ export default function ChatsScreen() {
               preview={item.preview}
               timestamp={inboxTimestamp(item.lastActivityAt)}
               unread={item.unread}
+              isMuted={item.muted}
               route={transport.route}
               lastOutboundStatus={item.lastSenderId === user?.id ? item.lastStatus : null}
               lastFromSelf={item.lastSenderId === user?.id}
@@ -199,9 +309,58 @@ export default function ChatsScreen() {
                   `/chat/${item.conversation.id}?peer=${encodeURIComponent(item.conversation.peer.username)}&peerId=${item.conversation.peer.id}`,
                 )
               }
+              onLongPress={() => setSheetRow(item)}
             />
           );
         }}
+      />
+      {undoNote ? (
+        <Pressable onPress={() => void undoHide()} style={[styles.undo, { backgroundColor: colors.card }]}>
+          <Text style={{ color: colors.text, flex: 1 }}>{undoNote}</Text>
+          <Text style={{ color: colors.tint, fontWeight: '800' }}>Undo</Text>
+        </Pressable>
+      ) : null}
+      <ActionSheet
+        visible={sheetRow != null}
+        onDismiss={() => setSheetRow(null)}
+        title={sheetRow?.conversation.peer.username || 'Chat'}
+        subtitle="Mute, block, or hide locally"
+        avatarColor={defaultLocalAvatarColor(sheetRow?.conversation.peer.id || 'hop')}
+        actions={
+          sheetRow
+            ? [
+                {
+                  label: sheetRow.muted ? 'Unmute' : 'Mute',
+                  onPress: () => void runInboxAction(sheetRow, sheetRow.muted ? 'unmute' : 'mute'),
+                },
+                {
+                  label: 'Hide chat',
+                  onPress: () => void runInboxAction(sheetRow, 'hide'),
+                },
+                {
+                  label: 'Report',
+                  onPress: () => setReportRow(sheetRow),
+                },
+                {
+                  label: 'Block',
+                  destructive: true,
+                  onPress: () => void runInboxAction(sheetRow, 'block'),
+                },
+              ]
+            : []
+        }
+      />
+      <ActionSheet
+        visible={reportRow != null}
+        onDismiss={() => setReportRow(null)}
+        title="Report"
+        subtitle="HOP does not attach the conversation transcript."
+        actions={REPORT_CATEGORIES.map((category) => ({
+          label: category,
+          onPress: () => {
+            if (reportRow) void runInboxAction(reportRow, 'report', category);
+          },
+        }))}
       />
     </View>
   );
@@ -209,7 +368,33 @@ export default function ChatsScreen() {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
-  requestsLink: { marginBottom: 10 },
+  requestsBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderRadius: 16,
+    borderWidth: StyleSheet.hairlineWidth,
+    padding: 14,
+    marginBottom: 12,
+    gap: 10,
+  },
+  requestsText: { flex: 1, backgroundColor: 'transparent', gap: 2 },
+  reqBadge: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  reqBadgeLabel: { color: '#042f2e', fontWeight: '800', fontSize: 12 },
   emptyBox: { flexGrow: 1, justifyContent: 'center' },
   error: { color: '#DC2626', marginBottom: 8 },
+  undo: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    borderRadius: 14,
+    padding: 12,
+    marginBottom: 12,
+  },
 });

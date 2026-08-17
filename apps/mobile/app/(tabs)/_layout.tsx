@@ -5,10 +5,13 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { useMessagesTabBadge } from '@/src/chat/useMessagesTabBadge';
+import { formatUnreadBadge } from '@hop/protocol';
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
   const { ready, user } = useAuth();
+  const messagesBadge = useMessagesTabBadge();
 
   if (!ready) return null;
   if (!user) return <Redirect href="/login" />;
@@ -23,6 +26,7 @@ export default function TabLayout() {
         name="index"
         options={{
           title: 'Chats',
+          tabBarBadge: formatUnreadBadge(messagesBadge) ?? undefined,
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{ ios: 'bubble.left.and.bubble.right.fill', android: 'chat', web: 'chat' }}

@@ -1,12 +1,19 @@
 import { describe, expect, it } from 'vitest';
 import {
+  bluetoothStatusLabel,
   decodeHopQrPayload,
   encodeHopQrPayload,
   hopQrContainsSecrets,
   hopQrUri,
   isBleDebugEnabled,
   isDiscoverableMode,
+  nearbyPeerSheetActions,
+  nearbySheetOpensPeerThread,
+  nearbySheetSendsMessage,
+  nearbySheetUsesSafetyService,
   privacyModeForDiscoverable,
+  requestCardActionUsesSafetyService,
+  requestCardActions,
 } from '@hop/protocol';
 
 import { discoverablePrivacyMode, isDiscoverable, isEventModeAllowed } from '@/src/nearby/nearbyPolicy';
@@ -80,5 +87,29 @@ describe('HOP QR and BLE debug gates', () => {
   it('BLE debug is __DEV__ only', () => {
     expect(isBleDebugEnabled(true)).toBe(true);
     expect(isBleDebugEnabled(false)).toBe(false);
+  });
+});
+
+describe('Replit-quality safety UX mappings', () => {
+  it('Discoverable still maps to Invisible and Bluetooth copy is not hardcoded Active', () => {
+    expect(isDiscoverable('invisible')).toBe(false);
+    expect(discoverablePrivacyMode(false, 'everyone')).toBe('invisible');
+    expect(bluetoothStatusLabel('invisible')).toBe('Invisible — not advertising');
+    expect(bluetoothStatusLabel('searching')).not.toMatch(/^Active$/i);
+  });
+
+  it('request cards accept, decline, and block through SafetyService', () => {
+    expect(requestCardActions('incoming_request')).toEqual(['accept', 'decline', 'block']);
+    expect(requestCardActionUsesSafetyService('accept')).toBe(true);
+    expect(requestCardActionUsesSafetyService('decline')).toBe(true);
+    expect(requestCardActionUsesSafetyService('block')).toBe(true);
+  });
+
+  it('ActionSheet nearby actions call SafetyService / openPeerThread, never auto-DM', () => {
+    const actions = nearbyPeerSheetActions({ canMessage: true, connected: false, userId: 'peer' });
+    expect(actions).toEqual(['view_profile', 'connect', 'message_request', 'block']);
+    expect(nearbySheetSendsMessage('message_request')).toBe(false);
+    expect(nearbySheetOpensPeerThread('message_request')).toBe(true);
+    expect(nearbySheetUsesSafetyService('block')).toBe(true);
   });
 });

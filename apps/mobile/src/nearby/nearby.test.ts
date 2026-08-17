@@ -22,6 +22,7 @@ function around(overrides: Partial<AroundUsPeer>): AroundUsPeer {
     displayName: 'HOP user',
     avatarInitials: '?',
     proximity: 'nearby',
+    rssi: null,
     lastSeenAt: 1_000,
     discovered: true,
     encrypted: false,

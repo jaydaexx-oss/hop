@@ -28,6 +28,8 @@ export type AroundUsPeer = {
   userId?: string;
   publicKey?: string;
   proximity: ProximityBand;
+  /** Real advertised RSSI when the OS provided one. Never invented. */
+  rssi: number | null;
   lastSeenAt: number;
   discovered: boolean;
   encrypted: boolean;

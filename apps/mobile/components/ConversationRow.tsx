@@ -18,11 +18,13 @@ export type ConversationRowProps = {
   route: ConversationRoute;
   lastOutboundStatus?: string | null;
   lastFromSelf?: boolean;
+  isMuted?: boolean;
   tint: string;
   muted: string;
   card: string;
   textColor: string;
   onPress: () => void;
+  onLongPress?: () => void;
 };
 
 function initials(name: string): string {
@@ -40,11 +42,13 @@ function ConversationRowInner({
   route,
   lastOutboundStatus,
   lastFromSelf,
+  isMuted,
   tint,
   muted,
   card,
   textColor,
   onPress,
+  onLongPress,
 }: ConversationRowProps) {
   const presence = conversationPresenceLabel(route);
   const nearbyOrOnline = route === 'nearby' || route === 'online';
@@ -57,6 +61,7 @@ function ConversationRowInner({
     preview,
     timestamp,
     badge ? `${unread} unread` : null,
+    isMuted ? 'muted' : null,
     outboundLabel,
   ]
     .filter(Boolean)
@@ -65,6 +70,7 @@ function ConversationRowInner({
   return (
     <Pressable
       onPress={onPress}
+      onLongPress={onLongPress}
       accessibilityRole="button"
       accessibilityLabel={accessibilityLabel}
       style={[styles.row, { backgroundColor: card }]}>
@@ -86,7 +92,14 @@ function ConversationRowInner({
           <Text style={[styles.name, { color: textColor }]} numberOfLines={1}>
             {name}
           </Text>
-          <Text style={[styles.time, { color: muted }]}>{timestamp}</Text>
+          <View style={styles.topRight}>
+            {isMuted ? (
+              <Text accessibilityLabel="Muted" style={[styles.muteIcon, { color: muted }]}>
+                🔕
+              </Text>
+            ) : null}
+            <Text style={[styles.time, { color: muted }]}>{timestamp}</Text>
+          </View>
         </View>
         <View style={styles.bottomLine}>
           <Text style={[styles.preview, { color: muted }]} numberOfLines={1}>
@@ -141,6 +154,8 @@ const styles = StyleSheet.create({
     backgroundColor: 'transparent',
   },
   name: { fontSize: 17, fontWeight: '700', flex: 1 },
+  topRight: { flexDirection: 'row', alignItems: 'center', gap: 4, backgroundColor: 'transparent' },
+  muteIcon: { fontSize: 12 },
   time: { fontSize: 12, fontWeight: '600' },
   bottomLine: {
     flexDirection: 'row',

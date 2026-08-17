@@ -10,6 +10,8 @@ export default {
     tabIconDefault: '#9CA3AF',
     tabIconSelected: tintLight,
     card: '#FFFFFF',
+    border: '#E5E7EB',
+    destructive: '#DC2626',
   },
   dark: {
     text: '#F9FAFB',
@@ -19,5 +21,7 @@ export default {
     tabIconDefault: '#6B7280',
     tabIconSelected: tintDark,
     card: '#111827',
+    border: '#1F2937',
+    destructive: '#F87171',
   },
 };

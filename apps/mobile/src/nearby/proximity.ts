@@ -116,6 +116,7 @@ export function toAroundUsPeer(
     userId: encrypted ? peer.userId : undefined,
     publicKey: encrypted ? (peer.publicKey ?? identities.get(peer.userId ?? '')?.publicKey) : undefined,
     proximity: rssiToProximity(peer.rssi),
+    rssi: typeof peer.rssi === 'number' && Number.isFinite(peer.rssi) ? peer.rssi : null,
     lastSeenAt,
     discovered: true,
     encrypted,

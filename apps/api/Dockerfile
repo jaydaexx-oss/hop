@@ -4,6 +4,8 @@ WORKDIR /app
 
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
+# Alembic is a console script, so cwd is not on sys.path. Package lives at /app/app.
+ENV PYTHONPATH=/app
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends curl \

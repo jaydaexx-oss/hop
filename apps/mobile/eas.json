@@ -7,8 +7,12 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "env": {
+        "EXPO_PUBLIC_API_URL": "https://hop-uokqmg.fly.dev"
+      },
       "ios": {
-        "simulator": false
+        "simulator": false,
+        "image": "sdk-57"
       }
     },
     "preview": {

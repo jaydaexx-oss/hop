@@ -4,9 +4,9 @@ This is the install path for **this repo state** (`integration/production-stabil
 
 Do **not** use Expo Go. `munim-bluetooth` and the GATT peripheral path are native modules; Expo Go cannot load them.
 
-Generated `apps/mobile/ios/` is gitignored (Expo CNG). `app.json` is the source of truth.
+Generated `apps/mobile/ios/` is gitignored (Expo CNG). `app.json` is the source of truth. Do **not** run `expo prebuild` locally unless you are on the USB/Xcode path below — EAS cloud runs prebuild when `ios/` is absent.
 
-There is **no EAS `projectId`** in `app.json`. Skip TestFlight / `eas build` unless you later add an Expo project and a paid Apple team. Use the USB development-client path below.
+There is **no EAS `projectId`** in `app.json` (do not invent one). Cloud iOS development builds need `npx eas-cli login` then `npx eas-cli init` on an Expo account before `eas build`. Skip TestFlight / `preview` / `production` store profiles until a paid Apple team is connected. USB development-client path is still valid if you have Xcode.
 
 ## iPhone 16 Pro — copy-paste (production API)
 
@@ -114,15 +114,18 @@ The installed HOP development client loads JS from Metro. Do not scan the Expo G
 
 ## EAS alternative (no local Xcode compile)
 
-Requires an Expo account and an Apple team connected to EAS:
+Requires an Expo account. Internal-distribution signing on a physical iPhone usually needs a **paid** Apple Developer team connected to EAS (a free Apple ID is typically USB/Xcode only). BLE still requires this development client — not Expo Go.
+
+`eas.json` `development` is `developmentClient: true`, `distribution: internal`, `ios.simulator: false` (device, not Simulator). Cloud env sets `EXPO_PUBLIC_API_URL=https://hop-uokqmg.fly.dev` (public origin, not a secret). `ios/` is gitignored, so EAS runs CNG prebuild on the cloud.
 
 ```bash
-cd apps/mobile
+cd /Users/jaydae/hop/apps/mobile
 npx eas-cli login
+npx eas-cli init
 npx eas-cli build --profile development --platform ios
 ```
 
-`eas.json` `development` is `developmentClient: true` and `ios.simulator: false`. Install the IPA, then start Metro as above. Set `EXPO_PUBLIC_API_URL` **before** bundling JS (`.env` or EAS env). A cloud-built binary still needs a reachable API.
+`eas init` writes `extra.eas.projectId` — do not invent a UUID. After the IPA installs, start Metro (`npx expo start --dev-client`) and open the **HOP** app, not Expo Go. JS still inlines `EXPO_PUBLIC_API_URL` at Metro bundle time from `apps/mobile/.env` if you override the Fly origin.
 
 ## Device diagnostics (`__DEV__` only)
 

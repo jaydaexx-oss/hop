@@ -7,6 +7,7 @@ import 'react-native-reanimated';
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider, useAuth } from '@/src/auth/AuthProvider';
 import { BleProvider } from '@/src/ble/BleProvider';
+import { NearbyProvider } from '@/src/nearby/NearbyProvider';
 import { OfflineProvider } from '@/src/offline/OfflineProvider';
 import { clearVoicePlaybackTemps } from '@/src/voice/cache';
 
@@ -41,7 +42,9 @@ export default function RootLayout() {
     <AuthProvider>
       <OfflineProvider>
         <BleProvider>
-          <RootLayoutNav />
+          <NearbyProvider>
+            <RootLayoutNav />
+          </NearbyProvider>
         </BleProvider>
       </OfflineProvider>
     </AuthProvider>

@@ -4,15 +4,15 @@
   "version": "0.1.0",
   "dependencies": {
     "@hop/protocol": "file:../../packages/protocol",
-    "expo": "~57.0.12",
+    "expo": "~57.0.13",
     "expo-av": "^16.0.8",
     "expo-constants": "~57.0.10",
-    "expo-dev-client": "~57.0.11",
+    "expo-dev-client": "~57.0.12",
     "expo-file-system": "~57.0.4",
     "expo-font": "~57.0.1",
     "expo-haptics": "~57.0.1",
-    "expo-linking": "~57.0.5",
-    "expo-router": "~57.0.12",
+    "expo-linking": "~57.0.6",
+    "expo-router": "~57.0.13",
     "expo-secure-store": "~57.0.1",
     "expo-splash-screen": "~57.0.6",
     "expo-sqlite": "~57.0.1",
@@ -33,7 +33,8 @@
   },
   "devDependencies": {
     "@types/react": "~19.2.2",
-    "typescript": "~6.0.3"
+    "typescript": "~6.0.3",
+    "vitest": "^3.2.4"
   },
   "scripts": {
     "start": "expo start --dev-client",
@@ -42,7 +43,8 @@
     "ios:device": "expo run:ios --device",
     "prebuild:ios": "expo prebuild --platform ios",
     "web": "expo start --web",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
   },
   "private": true
 }

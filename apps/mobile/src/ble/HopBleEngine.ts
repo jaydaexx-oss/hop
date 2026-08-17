@@ -48,7 +48,12 @@ import { unsubscribe, type NativeBle, type NativeDevice } from './nativeTypes';
 
 const SCAN_ON_MS = 12_000;
 const SCAN_OFF_MS = 8_000;
+const EVENT_SCAN_ON_MS = 8_000;
+const EVENT_SCAN_OFF_MS = 2_000;
 const PEER_STALE_MS = 25_000;
+
+export type BleDiscoveryProfile = 'standard' | 'event';
+
 const ACK_TIMEOUT_MS = 8_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
 
@@ -77,6 +82,9 @@ export class HopBleEngine implements BleLink {
   private scanning = false;
   private advertisingSupported = true;
   private scanMode: BleScanMode = 'lowPower';
+  private discoveryProfile: BleDiscoveryProfile = 'standard';
+  private scanOnMs = SCAN_ON_MS;
+  private scanOffMs = SCAN_OFF_MS;
   private readonly peers = new Map<string, BlePeer>();
   private readonly connected = new Set<string>();
   private readonly inbound = new Set<
@@ -185,6 +193,13 @@ export class HopBleEngine implements BleLink {
     await this.stopSession();
     this.session = options;
     this.scanMode = options.scanMode;
+    if (this.discoveryProfile === 'event') {
+      this.scanOnMs = EVENT_SCAN_ON_MS;
+      this.scanOffMs = EVENT_SCAN_OFF_MS;
+      if (options.scanMode === 'balanced' || options.scanMode === 'lowPower') {
+        this.scanMode = 'lowLatency';
+      }
+    }
     this.bindNativeEvents(native);
     this.handshakeNonce = await newAuthHandshakeNonce();
     this.handshakeTs = Date.now();
@@ -225,7 +240,7 @@ export class HopBleEngine implements BleLink {
     try {
       await native.startAdvertising({
         serviceUUIDs: [HOP_BLE_SERVICE_UUID],
-        localName: advertiseLocalName(options.username),
+        localName: advertiseLocalName(options.discoveryId ?? options.username),
       });
       this.advertising = true;
       this.advertisingSupported = true;
@@ -282,6 +297,25 @@ export class HopBleEngine implements BleLink {
 
   async setScanMode(mode: BleScanMode): Promise<void> {
     this.scanMode = mode;
+    if (!this.session || !this.native) return;
+    this.startDutyCycle(this.native);
+  }
+
+  /**
+   * Faster scan/advertise duty cycle for Event Mode UX only.
+   * Does not change handshake, crypto_box, or TOFU.
+   */
+  setDiscoveryProfile(profile: BleDiscoveryProfile): void {
+    this.discoveryProfile = profile;
+    if (profile === 'event') {
+      this.scanOnMs = EVENT_SCAN_ON_MS;
+      this.scanOffMs = EVENT_SCAN_OFF_MS;
+      this.scanMode = 'lowLatency';
+    } else {
+      this.scanOnMs = SCAN_ON_MS;
+      this.scanOffMs = SCAN_OFF_MS;
+      this.scanMode = 'balanced';
+    }
     if (!this.session || !this.native) return;
     this.startDutyCycle(this.native);
   }
@@ -785,8 +819,8 @@ export class HopBleEngine implements BleLink {
         this.scanning = false;
         this.scanOffTimer = setTimeout(() => {
           pulse().catch(() => undefined);
-        }, SCAN_OFF_MS);
-      }, SCAN_ON_MS);
+        }, this.scanOffMs);
+      }, this.scanOnMs);
     };
     pulse().catch(() => undefined);
   }

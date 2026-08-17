@@ -35,7 +35,7 @@ export default function TabLayout() {
       <Tabs.Screen
         name="nearby"
         options={{
-          title: 'Nearby',
+          title: 'Around Us',
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{ ios: 'dot.radiowaves.left.and.right', android: 'wifi', web: 'wifi' }}

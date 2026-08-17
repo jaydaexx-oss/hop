@@ -8,11 +8,16 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
 import { replaceIdentityExplicit } from '@/src/crypto/identity';
+import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
+import { PRIVACY_LABELS, type NearbyPrivacyMode } from '@/src/nearby/types';
 import { useOffline } from '@/src/offline/OfflineProvider';
+
+const PRIVACY_ORDER: NearbyPrivacyMode[] = ['invisible', 'contacts', 'everyone'];
 
 export default function SettingsScreen() {
   const { user, logout } = useAuth();
   const { relayConsent, setRelayConsent } = useBle();
+  const { privacyMode, setPrivacyMode } = useNearbyPeers();
   const { identityError } = useOffline();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
@@ -45,6 +50,28 @@ export default function SettingsScreen() {
       <View style={[styles.card, { backgroundColor: colors.card }]}>
         <Text style={{ color: colors.muted }}>Username</Text>
         <Text style={styles.username}>{user?.username}</Text>
+      </View>
+      <View style={[styles.card, { backgroundColor: colors.card, marginTop: 12 }]}>
+        <Text style={styles.cardTitle}>Around Us visibility</Text>
+        <Text style={{ color: colors.muted, marginBottom: 10 }}>
+          Invisible until you choose otherwise. Contacts only lists people you already chat with
+          after a handshake. Everyone nearby can discover other HOP users around this phone.
+          Event Mode is turned on from Around Us and expires on its own.
+        </Text>
+        {PRIVACY_ORDER.map((mode) => (
+          <Pressable
+            key={mode}
+            onPress={() => setPrivacyMode(mode)}
+            style={[
+              styles.privacyRow,
+              { borderColor: privacyMode === mode ? colors.tint : colors.tabIconDefault },
+            ]}>
+            <Text style={{ color: privacyMode === mode ? colors.tint : colors.text, fontWeight: '700' }}>
+              {PRIVACY_LABELS[mode]}
+              {privacyMode === mode ? ' · selected' : ''}
+            </Text>
+          </Pressable>
+        ))}
       </View>
       <View style={[styles.card, { backgroundColor: colors.card, marginTop: 12 }]}>
         <Text style={styles.cardTitle}>Relay consent</Text>
@@ -94,4 +121,5 @@ const styles = StyleSheet.create({
   username: { fontSize: 22, fontWeight: '700' },
   button: { marginTop: 28, borderWidth: 1.5, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   buttonLabel: { fontWeight: '700', fontSize: 16 },
+  privacyRow: { borderWidth: 1.5, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 12, marginBottom: 8 },
 });

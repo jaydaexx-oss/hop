@@ -39,6 +39,12 @@ export interface BleSessionOptions {
    * Secret key must never be written to a GATT characteristic.
    */
   ackIdentity?: IdentityKeyPair;
+  /**
+   * Rotating application discovery label for BLE localName (`HOP:<id>`).
+   * Must not be a user UUID, MAC, or other hardware identifier.
+   * Handshake still uses `userId` / `username` over GATT after connect.
+   */
+  discoveryId?: string;
 }
 
 export interface BleLink {

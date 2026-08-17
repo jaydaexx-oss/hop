@@ -15,8 +15,11 @@ import {
   decryptApplicationMessage,
   type BleLinkStatus,
   type BlePeer,
+  type BleScanMode,
   type IdentityKeyPair,
 } from '@hop/protocol';
+
+import type { BleDiscoveryProfile } from '@/src/ble/HopBleEngine';
 
 import { useAuth } from '@/src/auth/AuthProvider';
 import { api } from '@/src/api/hop';
@@ -30,6 +33,12 @@ export type NearbyLog = {
   text: string;
 };
 
+export type StartNearbyOptions = {
+  discoveryId?: string;
+  scanMode?: BleScanMode;
+  discoveryProfile?: BleDiscoveryProfile;
+};
+
 type BleContextValue = {
   engine: HopBleEngine;
   status: BleLinkStatus;
@@ -39,11 +48,12 @@ type BleContextValue = {
   error: string | null;
   log: NearbyLog[];
   sessionActive: boolean;
-  startNearby: () => Promise<void>;
+  startNearby: (options?: StartNearbyOptions) => Promise<void>;
   stopNearby: () => Promise<void>;
   connectPeer: (deviceId: string) => Promise<void>;
   disconnectPeer: () => Promise<void>;
   sendTestPayload: (deviceId: string) => Promise<void>;
+  setDiscoveryProfile: (profile: BleDiscoveryProfile) => void;
   relayConsent: boolean;
   setRelayConsent: (enabled: boolean) => Promise<void>;
 };
@@ -208,7 +218,12 @@ export function BleProvider({ children }: { children: ReactNode }) {
     refresh();
   }, [refresh]);
 
-  const startNearby = useCallback(async () => {
+  const setDiscoveryProfile = useCallback((profile: BleDiscoveryProfile) => {
+    engineRef.current.setDiscoveryProfile(profile);
+    refresh();
+  }, [refresh]);
+
+  const startNearby = useCallback(async (options?: StartNearbyOptions) => {
     const me = userRef.current;
     if (!me) {
       setError('Sign in before using Nearby.');
@@ -221,10 +236,14 @@ export function BleProvider({ children }: { children: ReactNode }) {
       identityRef.current = identity;
       const consent = await loadRelayConsent(me.id);
       setRelayConsentState(consent);
+      if (options?.discoveryProfile) {
+        engineRef.current.setDiscoveryProfile(options.discoveryProfile);
+      }
       await engineRef.current.startSession({
         userId: me.id,
         username: me.username,
-        scanMode: 'balanced',
+        scanMode: options?.scanMode ?? (options?.discoveryProfile === 'event' ? 'lowLatency' : 'balanced'),
+        discoveryId: options?.discoveryId,
         identityPublicKey: identity.publicKey,
         ackIdentity: identity,
         relayConsent: consent,
@@ -392,6 +411,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
       connectPeer,
       disconnectPeer,
       sendTestPayload,
+      setDiscoveryProfile,
       relayConsent,
       setRelayConsent,
     }),
@@ -408,6 +428,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
       connectPeer,
       disconnectPeer,
       sendTestPayload,
+      setDiscoveryProfile,
       relayConsent,
       setRelayConsent,
     ],

@@ -1,47 +1,31 @@
-import { useCallback, useState } from 'react';
+import { useState } from 'react';
 import { Pressable, ScrollView, StyleSheet } from 'react-native';
-import { useFocusEffect, useRouter } from 'expo-router';
-import {
-  nearbyPeerLabel,
-  nearbyPeerPresence,
-  rssiSignalBars,
-  type BlePeer,
-} from '@hop/protocol';
+import { useRouter } from 'expo-router';
+import { nearbyPeerPresence } from '@hop/protocol';
 
 import { StatusBanner } from '@/components/StatusBanner';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
-import { useBle } from '@/src/ble/BleProvider';
 import { openOrCreatePeerConversation } from '@/src/chat/openPeerConversation';
+import { SCAN_STATE_COPY } from '@/src/nearby/scanState';
+import type { AroundUsPeer, NearbyPrivacyMode } from '@/src/nearby/types';
+import { PRIVACY_LABELS, PROXIMITY_LABELS } from '@/src/nearby/types';
+import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { useOffline } from '@/src/offline/OfflineProvider';
 
-function SignalBars({ bars, color }: { bars: number; color: string }) {
-  return (
-    <View style={styles.bars}>
-      {[1, 2, 3, 4].map((level) => (
-        <View
-          key={level}
-          style={[
-            styles.bar,
-            { height: 4 + level * 3, backgroundColor: color, opacity: bars >= level ? 1 : 0.2 },
-          ]}
-        />
-      ))}
-    </View>
-  );
-}
+const PRIVACY_ORDER: NearbyPrivacyMode[] = ['invisible', 'contacts', 'everyone'];
 
-function presenceLabel(peer: BlePeer, connected: boolean): string {
+function presenceLabel(peer: AroundUsPeer): string {
   const presence = nearbyPeerPresence({
     userId: peer.userId,
-    sessionEstablished: peer.sessionEstablished,
-    connected,
+    sessionEstablished: peer.encrypted,
+    connected: peer.connected,
   });
-  if (presence === 'authenticated') return 'Authenticated';
-  if (presence === 'connected') return 'Connected';
-  return 'Available';
+  if (presence === 'authenticated') return 'Online · encrypted';
+  if (presence === 'connected') return 'Online';
+  return 'Discovered';
 }
 
 export default function NearbyScreen() {
@@ -51,56 +35,39 @@ export default function NearbyScreen() {
   const { user, token } = useAuth();
   const { cacheConversation, listCachedConversations } = useOffline();
   const {
-    status,
     peers,
-    connectedId,
+    scanState,
+    privacyMode,
+    setPrivacyMode,
+    eventMode,
+    eventRemainingLabel,
+    enableEventMode,
+    disableEventMode,
+    sessionActive,
     busy,
     error,
-    sessionActive,
-    startNearby,
-    stopNearby,
+    nearbyCount,
     connectPeer,
     disconnectPeer,
-  } = useBle();
+    statusDetail,
+  } = useNearbyPeers();
   const [openingId, setOpeningId] = useState<string | null>(null);
   const [openError, setOpenError] = useState<string | null>(null);
+  const [eventError, setEventError] = useState<string | null>(null);
 
-  useFocusEffect(
-    useCallback(() => {
-      startNearby().catch(() => undefined);
-      return () => {
-        stopNearby().catch(() => undefined);
-      };
-    }, [startNearby, stopNearby]),
-  );
-
-  const scanLabel = !sessionActive
-    ? 'Idle'
-    : status.scanning
-      ? 'Scanning'
-      : 'Scan pause (battery)';
-  const advertiseLabel = status.advertising
-    ? `Visible as ${user?.username ?? 'you'}`
-    : status.advertisingSupported
-      ? 'Not advertising'
-      : 'Advertising unsupported on this OS/hardware';
-  const visiblePeers = peers.filter((peer) => peer.userId !== user?.id);
-
-  async function messagePeer(peer: BlePeer) {
-    // Production CTA: open the 1:1 thread, then ChatScreen sends via MessageService.
+  async function messagePeer(peer: AroundUsPeer) {
     if (!user || !peer.userId) return;
-    setOpeningId(peer.deviceId);
+    setOpeningId(peer.token);
     setOpenError(null);
     try {
-      if (connectedId !== peer.deviceId) {
+      if (!peer.connected) {
         await connectPeer(peer.deviceId);
       }
-      const username = nearbyPeerLabel(peer);
       const convo = await openOrCreatePeerConversation({
         token,
         myId: user.id,
         peerUserId: peer.userId,
-        peerUsername: username,
+        peerUsername: peer.displayName,
         peerPublicKey: peer.publicKey,
         cache: { listCached: listCachedConversations, cache: cacheConversation },
       });
@@ -112,52 +79,140 @@ export default function NearbyScreen() {
     }
   }
 
+  async function toggleEventMode() {
+    setEventError(null);
+    try {
+      if (eventMode.enabled) await disableEventMode();
+      else await enableEventMode();
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : 'Could not update Event Mode');
+    }
+  }
+
+  const emptyCopy = SCAN_STATE_COPY[scanState];
+  const eventLocked = privacyMode === 'invisible';
+
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={styles.wrap}>
       <StatusBanner />
-      <Text style={styles.title}>Nearby</Text>
+      <Text style={styles.title}>Around Us</Text>
       <Text style={[styles.lead, { color: colors.muted }]}>
-        Discover HOP users over Bluetooth. Chat picks Bluetooth or internet automatically — you never
-        choose a transport. If Bluetooth is off or permission is denied, internet chat and the offline
-        queue still work.
+        See HOP users near this phone over Bluetooth. Chat still picks Bluetooth or internet
+        automatically. Approximate proximity only — never meters, GPS, or hardware IDs.
       </Text>
 
       <View style={[styles.card, { backgroundColor: colors.card }]}>
-        <Text style={styles.cardTitle}>This phone</Text>
-        <Text style={{ color: colors.muted }}>{advertiseLabel}</Text>
-        <Text style={{ color: colors.muted }}>{scanLabel}</Text>
-        {status.detail ? <Text style={{ color: colors.muted }}>{status.detail}</Text> : null}
-        {error ? <Text style={styles.error}>{error}</Text> : null}
-        {openError ? <Text style={styles.error}>{openError}</Text> : null}
+        <Text style={styles.cardTitle}>Nearby visibility</Text>
+        <Text style={{ color: colors.muted }}>
+          Default is Invisible. Discovery starts only after you choose who can find you.
+        </Text>
+        <View style={styles.segment}>
+          {PRIVACY_ORDER.map((mode) => {
+            const active = privacyMode === mode;
+            return (
+              <Pressable
+                key={mode}
+                onPress={() => setPrivacyMode(mode)}
+                disabled={busy}
+                style={[
+                  styles.segmentItem,
+                  {
+                    backgroundColor: active ? colors.tint : 'transparent',
+                    borderColor: colors.tint,
+                  },
+                ]}>
+                <Text style={{ color: active ? '#042f2e' : colors.tint, fontWeight: '700', fontSize: 12 }}>
+                  {PRIVACY_LABELS[mode]}
+                </Text>
+              </Pressable>
+            );
+          })}
+        </View>
+      </View>
+
+      <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <Text style={styles.cardTitle}>Event Mode</Text>
+        {eventMode.enabled ? (
+          <>
+            <Text style={{ color: colors.tint, fontWeight: '700' }}>On · {eventRemainingLabel} left</Text>
+            <Text style={{ color: colors.muted }}>
+              {nearbyCount} HOP {nearbyCount === 1 ? 'user' : 'users'} nearby. Discovery is more active for
+              this session only. Encryption is unchanged.
+            </Text>
+            {eventMode.sessionId ? (
+              <Text style={{ color: colors.muted, fontSize: 12 }}>
+                Session ready for a future event code. Not a location.
+              </Text>
+            ) : null}
+          </>
+        ) : (
+          <Text style={{ color: colors.muted }}>
+            Optional 2-hour discovery boost for a gathering. Off until you turn it on. Expires
+            automatically.
+          </Text>
+        )}
+        {eventLocked ? (
+          <Text style={{ color: colors.muted, fontSize: 12 }}>
+            Choose Contacts only or Everyone nearby before turning on Event Mode.
+          </Text>
+        ) : null}
+        {eventError ? <Text style={styles.error}>{eventError}</Text> : null}
         <Pressable
-          onPress={() => (sessionActive ? stopNearby() : startNearby())}
-          disabled={busy}
-          style={[styles.button, { backgroundColor: colors.tint, opacity: busy ? 0.6 : 1 }]}>
-          <Text style={styles.buttonLabel}>{sessionActive ? 'Stop Nearby' : 'Start Nearby'}</Text>
+          onPress={toggleEventMode}
+          disabled={busy || (eventLocked && !eventMode.enabled)}
+          style={[
+            styles.button,
+            {
+              backgroundColor: eventMode.enabled ? 'transparent' : colors.tint,
+              borderWidth: eventMode.enabled ? 1.5 : 0,
+              borderColor: colors.tint,
+              opacity: busy || (eventLocked && !eventMode.enabled) ? 0.45 : 1,
+            },
+          ]}>
+          <Text style={{ color: eventMode.enabled ? colors.tint : '#042f2e', fontWeight: '700' }}>
+            {eventMode.enabled ? 'Turn off Event Mode' : 'Turn on for 2 hours'}
+          </Text>
         </Pressable>
       </View>
 
-      <Text style={styles.section}>Discovered HOP users</Text>
-      {visiblePeers.length === 0 ? (
-        <Text style={{ color: colors.muted, marginBottom: 16 }}>
-          No compatible HOP peers yet. Keep Nearby open on both phones, a few meters apart, with
-          Bluetooth on.
+      <View style={[styles.card, { backgroundColor: colors.card }]}>
+        <Text style={styles.cardTitle}>This phone</Text>
+        <Text style={{ color: colors.muted }}>
+          {privacyMode === 'invisible'
+            ? 'Invisible — not advertising or scanning'
+            : sessionActive
+              ? eventMode.enabled
+                ? 'Event Mode scanning'
+                : 'Looking around'
+              : 'Nearby is idle'}
         </Text>
+        {statusDetail ? <Text style={{ color: colors.muted }}>{statusDetail}</Text> : null}
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+        {openError ? <Text style={styles.error}>{openError}</Text> : null}
+      </View>
+
+      <Text style={styles.section}>People around you</Text>
+      {peers.length === 0 ? (
+        <Text style={{ color: colors.muted, marginBottom: 16 }}>{emptyCopy}</Text>
       ) : (
-        visiblePeers.map((peer) => {
-          const connected = connectedId === peer.deviceId;
-          const canMessage = Boolean(peer.userId && peer.sessionEstablished);
-          const bars = rssiSignalBars(peer.rssi);
-          const busyPeer = busy || openingId === peer.deviceId;
+        peers.map((peer) => {
+          const busyPeer = busy || openingId === peer.token;
           return (
-            <View key={peer.deviceId} style={[styles.card, { backgroundColor: colors.card }]}>
+            <View key={peer.token} style={[styles.card, { backgroundColor: colors.card }]}>
               <View style={styles.peerHeader}>
-                <Text style={styles.peerName}>{nearbyPeerLabel(peer)}</Text>
-                <SignalBars bars={bars} color={colors.tint} />
+                <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
+                  <Text style={styles.avatarText}>{peer.avatarInitials}</Text>
+                </View>
+                <View style={styles.peerMeta}>
+                  <Text style={styles.peerName}>{peer.displayName}</Text>
+                  <Text style={{ color: colors.muted }}>
+                    {PROXIMITY_LABELS[peer.proximity]} · {presenceLabel(peer)}
+                    {peer.encrypted ? ' · 🔒' : ''}
+                  </Text>
+                </View>
               </View>
-              <Text style={{ color: colors.muted }}>{presenceLabel(peer, connected)}</Text>
               <View style={styles.row}>
-                {connected ? (
+                {peer.connected ? (
                   <Pressable
                     onPress={() => disconnectPeer()}
                     disabled={busyPeer}
@@ -174,15 +229,15 @@ export default function NearbyScreen() {
                 )}
                 <Pressable
                   onPress={() => messagePeer(peer)}
-                  disabled={busyPeer || !canMessage}
+                  disabled={busyPeer || !peer.canMessage}
                   style={[
                     styles.smallButton,
-                    { backgroundColor: colors.tint, opacity: busyPeer || !canMessage ? 0.45 : 1 },
+                    { backgroundColor: colors.tint, opacity: busyPeer || !peer.canMessage ? 0.45 : 1 },
                   ]}>
-                  <Text style={styles.buttonLabel}>{openingId === peer.deviceId ? 'Opening…' : 'Message'}</Text>
+                  <Text style={styles.buttonLabel}>{openingId === peer.token ? 'Opening…' : 'Message'}</Text>
                 </Pressable>
               </View>
-              {!canMessage ? (
+              {!peer.canMessage ? (
                 <Text style={{ color: colors.muted, fontSize: 12 }}>
                   Connect first to authenticate this HOP user.
                 </Text>
@@ -194,9 +249,9 @@ export default function NearbyScreen() {
 
       <Text style={styles.section}>Privacy</Text>
       <Text style={[styles.lead, { color: colors.muted }]}>
-        Nearby shows a HOP username from handshake, or “HOP user”. It never shows MAC addresses,
-        phone numbers, email, GPS, or permanent device IDs. Physical two-phone BLE delivery is still
-        pending verification.
+        Around Us shows a HOP name after a secure handshake, or “HOP user”. It never shows MAC
+        addresses, phone numbers, email, GPS, or permanent device IDs. Physical two-phone BLE
+        delivery is still pending verification.
       </Text>
     </ScrollView>
   );
@@ -209,11 +264,25 @@ const styles = StyleSheet.create({
   card: { borderRadius: 16, padding: 14, marginBottom: 12, gap: 6, backgroundColor: 'transparent' },
   cardTitle: { fontSize: 16, fontWeight: '700' },
   section: { fontSize: 18, fontWeight: '700', marginTop: 8, marginBottom: 8 },
-  peerHeader: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', backgroundColor: 'transparent' },
-  peerName: { fontSize: 18, fontWeight: '700', flex: 1, marginRight: 8 },
-  bars: { flexDirection: 'row', alignItems: 'flex-end', gap: 2, backgroundColor: 'transparent' },
-  bar: { width: 4, borderRadius: 1 },
-  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8 },
+  segment: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, backgroundColor: 'transparent' },
+  segmentItem: { borderRadius: 12, borderWidth: 1.5, paddingVertical: 8, paddingHorizontal: 10 },
+  peerHeader: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 12,
+    backgroundColor: 'transparent',
+  },
+  avatar: {
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+  },
+  avatarText: { color: '#042f2e', fontWeight: '800', fontSize: 13 },
+  peerMeta: { flex: 1, backgroundColor: 'transparent', gap: 2 },
+  peerName: { fontSize: 18, fontWeight: '700' },
+  row: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, backgroundColor: 'transparent' },
   button: { marginTop: 10, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
   smallButton: { borderRadius: 12, paddingVertical: 10, paddingHorizontal: 12, alignItems: 'center' },
   buttonLabel: { color: '#042f2e', fontWeight: '700' },

@@ -31,10 +31,11 @@ def test_redact_helpers_strip_secrets_and_ciphertext() -> None:
     dumped = "secretKey " + "C" * 80
     assert "[redacted-b64]" in redact_string(dumped)
     assert looks_like_secret_dump(dumped)
-    voice = redact_value({"voice": "E" * 80, "audio_b64": "F" * 80, "crypto_box": "G" * 80})
+    voice = redact_value({"voice": "E" * 80, "audio_b64": "F" * 80, "crypto_box": "G" * 80, "text": "hello"})
     assert voice["voice"] == "[redacted]"
     assert voice["audio_b64"] == "[redacted]"
     assert voice["crypto_box"] == "[redacted]"
+    assert voice["text"] == "[redacted]"
 
 
 def test_json_formatter_redacts_long_blobs() -> None:

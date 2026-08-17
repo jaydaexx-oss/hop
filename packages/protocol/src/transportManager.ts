@@ -50,6 +50,9 @@ export class TransportManager {
    * @returns false if the envelope must be discarded.
    */
   acceptInbound(envelope: EncryptedEnvelope, now = new Date()): boolean {
+    if (envelope.encrypted_payload.length > 65_536) {
+      return false;
+    }
     if (isExpired(envelope, now)) {
       return false;
     }

@@ -283,7 +283,7 @@ describe("Phase 5 chaos / adversarial (mocked)", () => {
     expect(redactForLog({ encrypted_payload: "AAAA", password: "x", text: "hi" })).toEqual({
       encrypted_payload: "[redacted]",
       password: "[redacted]",
-      text: "hi",
+      text: "[redacted]",
     });
   });
 

@@ -19,6 +19,10 @@ SENSITIVE_KEYS = {
     "voice",
     "authorization",
     "cookie",
+    "text",
+    "plaintext",
+    "local_seal",
+    "nonce",
 }
 
 _LONG_B64 = re.compile(r"[A-Za-z0-9+/]{48,}={0,2}")

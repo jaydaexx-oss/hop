@@ -1,5 +1,11 @@
 import sodium from "libsodium-wrappers";
 import { ACK_PROTOCOL_VERSION, assertAckPlain, compactAckPlaintext, type AckType } from "./acks.js";
+import { MAX_HOPS } from "./message.js";
+
+/** Matches apps/api encrypted_payload max_length / voice.ts MAX_ENCRYPTED_PAYLOAD_BYTES. */
+const MAX_BOX_JSON_CHARS = 65_536;
+const MAX_PLAINTEXT_CHARS = 32_000;
+const MAX_ID_CHARS = 128;
 
 /** libsodium NaCl crypto_box (X25519 + XSalsa20-Poly1305). Not a custom construction. */
 
@@ -135,7 +141,10 @@ export interface DecryptOptions {
   expectedSenderId?: string;
   expectedRecipientId?: string;
   expectedConversationId?: string;
-  tofu?: { bind(userId: string, publicKey: string): boolean };
+  tofu?: {
+    bind(userId: string, publicKey: string): boolean;
+    state?(userId: string): string;
+  };
 }
 
 export async function decryptApplicationMessage(
@@ -160,10 +169,13 @@ export async function decryptApplicationMessage(
     s.from_base64(parsed.sender_pk, variant),
     s.from_base64(recipient.secretKey, variant),
   );
-  const plain = JSON.parse(s.to_string(opened)) as ApplicationPlaintext;
-  if (!plain?.message_id || typeof plain.text !== "string") {
+  let parsedJson: unknown;
+  try {
+    parsedJson = JSON.parse(s.to_string(opened));
+  } catch {
     throw new Error("Decrypted payload is not a HOP application message");
   }
+  const plain = assertApplicationPlaintext(parsedJson);
   if (plain.kind === "delivery_ack") {
     assertAckPlain(plain);
   }
@@ -179,13 +191,24 @@ export async function decryptApplicationMessage(
   if (options?.expectedConversationId && plain.conversation_id !== options.expectedConversationId) {
     throw new Error("Authenticated conversation_id does not match the envelope");
   }
-  if (options?.tofu && !options.tofu.bind(plain.sender_id, parsed.sender_pk)) {
-    throw new Error("Sender public key does not match the bound identity");
+  if (options?.tofu) {
+    if (plain.kind === "delivery_ack") {
+      const state = options.tofu.state?.(plain.sender_id) ?? "UNKNOWN";
+      if (state === "UNKNOWN" || state === "KEY_CHANGED") {
+        throw new Error("Sender public key does not match the bound identity");
+      }
+    }
+    if (!options.tofu.bind(plain.sender_id, parsed.sender_pk)) {
+      throw new Error("Sender public key does not match the bound identity");
+    }
   }
   return plain;
 }
 
 export function parseCryptoBoxPayload(encryptedPayload: string): CryptoBoxPayload | null {
+  if (typeof encryptedPayload !== "string" || encryptedPayload.length > MAX_BOX_JSON_CHARS) {
+    return null;
+  }
   try {
     const data = JSON.parse(encryptedPayload) as Partial<CryptoBoxPayload>;
     if (
@@ -195,6 +218,9 @@ export function parseCryptoBoxPayload(encryptedPayload: string): CryptoBoxPayloa
       typeof data.nonce !== "string" ||
       typeof data.ciphertext !== "string"
     ) {
+      return null;
+    }
+    if (data.sender_pk.length > MAX_ID_CHARS * 2 || data.nonce.length > 128 || data.ciphertext.length > MAX_BOX_JSON_CHARS) {
       return null;
     }
     return {
@@ -211,4 +237,53 @@ export function parseCryptoBoxPayload(encryptedPayload: string): CryptoBoxPayloa
 
 export function isCryptoBoxPayload(encryptedPayload: string): boolean {
   return parseCryptoBoxPayload(encryptedPayload) !== null;
+}
+
+function isId(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= MAX_ID_CHARS && !/[\s\0]/.test(value);
+}
+
+function assertApplicationPlaintext(value: unknown): ApplicationPlaintext {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Decrypted payload is not a HOP application message");
+  }
+  const plain = value as Partial<ApplicationPlaintext>;
+  if (!isId(plain.message_id) || !isId(plain.sender_id) || !isId(plain.recipient_id) || !isId(plain.conversation_id)) {
+    throw new Error("Decrypted payload is not a HOP application message");
+  }
+  if (typeof plain.text !== "string" || plain.text.length > MAX_PLAINTEXT_CHARS) {
+    throw new Error("Decrypted payload is not a HOP application message");
+  }
+  if (typeof plain.created_at !== "string" || typeof plain.expires_at !== "string") {
+    throw new Error("Decrypted payload is not a HOP application message");
+  }
+  const ttl = Number(plain.ttl);
+  const hop = plain.hop_count ?? 0;
+  if (!Number.isFinite(ttl) || ttl < 0) {
+    throw new Error("Decrypted payload is not a HOP application message");
+  }
+  if (!Number.isInteger(hop) || hop < 0 || hop > MAX_HOPS) {
+    throw new Error("Decrypted payload is not a HOP application message");
+  }
+  if (
+    plain.send_seq != null &&
+    (!Number.isInteger(plain.send_seq) || plain.send_seq < 1 || plain.send_seq > 2_147_483_647)
+  ) {
+    throw new Error("Decrypted payload is not a HOP application message");
+  }
+  const out: ApplicationPlaintext = {
+    ...(plain as ApplicationPlaintext),
+    message_id: plain.message_id,
+    sender_id: plain.sender_id,
+    recipient_id: plain.recipient_id,
+    conversation_id: plain.conversation_id,
+    text: plain.text,
+    created_at: plain.created_at,
+    expires_at: plain.expires_at,
+    ttl,
+    hop_count: hop,
+  };
+  if (plain.send_seq != null) out.send_seq = plain.send_seq;
+  else delete out.send_seq;
+  return out;
 }

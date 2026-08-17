@@ -57,8 +57,9 @@ describe("message state machine", () => {
     expect(canTransition(MessageStatus.EXPIRED, MessageStatus.CREATED)).toBe(false);
   });
 
-  it("allows FAILED to DELIVERED when a late crypto ACK arrives", () => {
+  it("allows FAILED to DELIVERED or READ when a late crypto ACK arrives", () => {
     expect(canTransition(MessageStatus.FAILED, MessageStatus.DELIVERED)).toBe(true);
+    expect(canTransition(MessageStatus.FAILED, MessageStatus.READ)).toBe(true);
     let message = createMessage({
       sender_id: "a",
       recipient_id: "b",

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import path from "node:path";
 import initSqlJs, { type Database, type SqlJsStatic } from "sql.js";
@@ -21,6 +21,9 @@ async function loadSql(): Promise<SqlJsStatic> {
 type BindValue = number | string | Uint8Array | null;
 
 export class SqlJsDriver implements SqliteDriver {
+  private txDepth = 0;
+  private txTail: Promise<void> = Promise.resolve();
+
   private constructor(
     private readonly db: Database,
     private readonly filePath?: string,
@@ -37,7 +40,7 @@ export class SqlJsDriver implements SqliteDriver {
 
   async execute(sql: string, params: unknown[] = []): Promise<void> {
     this.db.run(sql, params as BindValue[]);
-    this.persist();
+    if (this.txDepth === 0) this.persist();
   }
 
   async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -53,9 +56,46 @@ export class SqlJsDriver implements SqliteDriver {
     return rows;
   }
 
+  async transaction(fn: () => Promise<void>): Promise<void> {
+    const run = this.txTail.then(
+      () => this.runTransaction(fn),
+      () => this.runTransaction(fn),
+    );
+    this.txTail = run.then(
+      () => undefined,
+      () => undefined,
+    );
+    return run;
+  }
+
+  private async runTransaction(fn: () => Promise<void>): Promise<void> {
+    if (this.txDepth > 0) {
+      await fn();
+      return;
+    }
+    this.txDepth += 1;
+    this.db.run("BEGIN");
+    try {
+      await fn();
+      this.db.run("COMMIT");
+      this.txDepth -= 1;
+      this.persist();
+    } catch (err) {
+      try {
+        this.db.run("ROLLBACK");
+      } catch {
+        /* already rolled back */
+      }
+      this.txDepth -= 1;
+      throw err;
+    }
+  }
+
   persist(): void {
     if (!this.filePath) return;
-    writeFileSync(this.filePath, Buffer.from(this.db.export()));
+    const tmp = `${this.filePath}.tmp`;
+    writeFileSync(tmp, Buffer.from(this.db.export()));
+    renameSync(tmp, this.filePath);
   }
 
   close(): void {

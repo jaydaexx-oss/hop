@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   MessageStatus,
   compareConversationMessages,
+  isExpired,
   mergePersistedStatus,
   sameLogicalIdentity,
   sortConversationMessages,
@@ -90,5 +91,11 @@ describe('mobile conversation convergence helpers', () => {
       row('a2', 'alice', 2, '2026-08-16T00:00:03.000Z'),
     ]);
     expect(mixed.map((item) => item.message_id)).toEqual(['a1', 'b1', 'a2', 'b2']);
+  });
+
+  it('fails closed on invalid expiry and allows a late READ after FAILED', () => {
+    expect(isExpired({ expires_at: 'not-a-date' })).toBe(true);
+    expect(mergePersistedStatus(MessageStatus.FAILED, MessageStatus.READ)).toBe(MessageStatus.READ);
+    expect(mergePersistedStatus(MessageStatus.READ, MessageStatus.QUEUED)).toBe(MessageStatus.READ);
   });
 });

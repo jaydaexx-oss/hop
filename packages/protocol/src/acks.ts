@@ -72,11 +72,13 @@ export function compactAckPlaintext(plain: ApplicationPlaintext, ack: ValidatedA
  */
 export function parseAckPlain(plain: Partial<ApplicationPlaintext> | null | undefined): ValidatedAck | null {
   if (!plain || plain.kind !== "delivery_ack") return null;
-  if (typeof plain.message_id !== "string" || !plain.message_id) return null;
-  if (typeof plain.ack_of !== "string" || !plain.ack_of) return null;
-  if (typeof plain.sender_id !== "string" || !plain.sender_id) return null;
-  if (typeof plain.recipient_id !== "string" || !plain.recipient_id) return null;
-  if (typeof plain.conversation_id !== "string" || !plain.conversation_id) return null;
+  if (typeof plain.ack_of !== "string" || !plain.ack_of || plain.ack_of.length > 128) return null;
+  if (typeof plain.sender_id !== "string" || !plain.sender_id || plain.sender_id.length > 128) return null;
+  if (typeof plain.recipient_id !== "string" || !plain.recipient_id || plain.recipient_id.length > 128) return null;
+  if (typeof plain.conversation_id !== "string" || !plain.conversation_id || plain.conversation_id.length > 128) {
+    return null;
+  }
+  if (typeof plain.message_id !== "string" || !plain.message_id || plain.message_id.length > 128) return null;
   if (plain.ack_of === plain.message_id) return null;
   if (typeof plain.text === "string" && plain.text.trim()) return null;
   if (plain.audio_b64 || plain.audio) return null;

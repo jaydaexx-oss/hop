@@ -70,6 +70,7 @@ export interface MessageCrypto {
 
 export class MessageService {
   private readonly conversationTails = new Map<string, Promise<unknown>>();
+  private readonly flushLocks = new Map<string, Promise<unknown>>();
   private syncTail: Promise<void> = Promise.resolve();
 
   constructor(
@@ -87,6 +88,19 @@ export class MessageService {
     const next = prev.then(fn, fn);
     this.conversationTails.set(
       conversationId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
+  }
+
+  private withFlushLock<T>(messageId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.flushLocks.get(messageId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.flushLocks.set(
+      messageId,
       next.then(
         () => undefined,
         () => undefined,
@@ -236,8 +250,10 @@ export class MessageService {
       await this.persistMessage(failed);
       return displayText ? { ...failed, text: displayText } : failed;
     }
-    await this.persistMessage(record);
-    await this.store.enqueue(record.message_id, 0, now.getTime());
+    await this.store.saveQueuedOutbound(this.storedRecord(record), 0, now.getTime());
+    if (record.kind !== "delivery_ack") {
+      await this.applyPendingInboundReceipts(record.message_id);
+    }
     const flushed = await this.flushOne({ ...record, text: displayText }, now, true);
     return displayText ? { ...flushed, text: displayText } : flushed;
   }
@@ -358,11 +374,19 @@ export class MessageService {
           recovered = this.withStatus(recovered, MessageStatus.QUEUED);
         }
         await this.persistMessage(recovered);
-        const queued = (await this.store.listOutbound()).some((row) => row.message_id === message.message_id);
-        if (!queued && isOutboxStatus(recovered.status)) {
+        const latest = await this.store.getMessage(message.message_id);
+        const queued = await this.store.getOutbound(message.message_id);
+        if (!queued && latest && isOutboxStatus(latest.status)) {
           await this.store.enqueue(message.message_id, 0, now.getTime());
         }
       }
+    }
+    for (const orphan of await this.store.listOrphanOutbox()) {
+      if (!orphan.encrypted_payload) {
+        await this.store.deleteMessage(orphan.message_id);
+        continue;
+      }
+      await this.store.enqueue(orphan.message_id, 0, now.getTime());
     }
     for (const item of await this.store.listOutbound()) {
       const message = await this.store.getMessage(item.message_id);
@@ -421,6 +445,15 @@ export class MessageService {
 
   async acceptInbound(message: StoredMessage, now = new Date()): Promise<boolean> {
     try {
+      if (
+        !message.message_id ||
+        message.message_id.length > 128 ||
+        message.encrypted_payload.length > MAX_ENCRYPTED_PAYLOAD_BYTES ||
+        (typeof message.ttl === "number" && (!Number.isFinite(message.ttl) || message.ttl < 0)) ||
+        (typeof message.hop_count === "number" && (!Number.isInteger(message.hop_count) || message.hop_count < 0))
+      ) {
+        return false;
+      }
       if (isExpired(message, now)) return false;
       const existing = await this.store.getMessage(message.message_id);
       if (existing && existing.kind !== "delivery_ack") {
@@ -500,6 +533,17 @@ export class MessageService {
   }
 
   private async flushOne(message: StoredMessage, now: Date, ignoreBackoff: boolean): Promise<StoredMessage> {
+    return this.withFlushLock(message.message_id, async () => {
+      const latest = await this.store.getMessage(message.message_id);
+      if (!latest) {
+        await this.store.removeOutbound(message.message_id);
+        return message;
+      }
+      return this.flushOneUnlocked(latest, now, ignoreBackoff);
+    });
+  }
+
+  private async flushOneUnlocked(message: StoredMessage, now: Date, ignoreBackoff: boolean): Promise<StoredMessage> {
     if (isExpired(message, now)) {
       const expired = this.withStatus(message, MessageStatus.EXPIRED);
       await this.persistMessage(expired);
@@ -516,7 +560,7 @@ export class MessageService {
       return message;
     }
 
-    const queued = (await this.store.listOutbound()).find((row) => row.message_id === message.message_id);
+    const queued = await this.store.getOutbound(message.message_id);
     if (!ignoreBackoff && queued && queued.next_retry_at > now.getTime()) {
       return message;
     }
@@ -561,8 +605,7 @@ export class MessageService {
       return failed;
     }
     const queuedAgain = { ...this.withStatus(current, MessageStatus.QUEUED), transport: "local" };
-    await this.persistMessage(queuedAgain);
-    await this.store.enqueue(current.message_id, attempts, now.getTime() + wait);
+    await this.store.saveQueuedOutbound(this.storedRecord(queuedAgain), attempts, now.getTime() + wait);
     return queuedAgain;
   }
 
@@ -645,7 +688,14 @@ export class MessageService {
       if (senderPk) {
         const trusted = await this.store.peerPublicKey(existing.recipient_id);
         if (trusted && trusted !== senderPk) return false;
-        if (this.tofu && !this.tofu.bind(existing.recipient_id, senderPk)) return false;
+        if (this.tofu) {
+          const state = this.tofu.state(existing.recipient_id);
+          if (state === "UNKNOWN") {
+            if (!trusted || trusted !== senderPk) return false;
+          } else if (!this.tofu.bind(existing.recipient_id, senderPk)) {
+            return false;
+          }
+        }
       }
       const target = ackStatus === "READ" ? MessageStatus.READ : MessageStatus.DELIVERED;
       const next = this.advanceToward(existing, target);
@@ -751,7 +801,7 @@ export class MessageService {
       const ackRow = await this.store.getMessage(mapping.ack_message_id);
       if (!ackRow) continue;
       if (isTransportAcceptedStatus(ackRow.status) || ackRow.status === MessageStatus.FAILED) continue;
-      const queued = (await this.store.listOutbound()).some((item) => item.message_id === ackRow.message_id);
+      const queued = await this.store.getOutbound(ackRow.message_id);
       if (!queued && isOutboxStatus(ackRow.status)) {
         await this.store.enqueue(ackRow.message_id, 0, now.getTime());
       }
@@ -882,8 +932,8 @@ export class MessageService {
     }
   }
 
-  private async persistMessage(message: StoredMessage): Promise<void> {
-    const stored: StoredMessage = {
+  private storedRecord(message: StoredMessage): StoredMessage {
+    return {
       message_id: message.message_id,
       conversation_id: message.conversation_id,
       sender_id: message.sender_id,
@@ -900,6 +950,10 @@ export class MessageService {
       send_seq: message.send_seq ?? null,
       kind: message.kind ?? null,
     };
+  }
+
+  private async persistMessage(message: StoredMessage): Promise<void> {
+    const stored = this.storedRecord(message);
     await this.store.saveMessage(stored);
     if (stored.kind !== "delivery_ack") {
       await this.applyPendingInboundReceipts(stored.message_id);

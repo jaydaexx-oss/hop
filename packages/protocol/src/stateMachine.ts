@@ -47,7 +47,7 @@ export const ALLOWED_TRANSITIONS: Record<MessageStatus, readonly MessageStatus[]
   ],
   DELIVERED: [MessageStatus.READ],
   READ: [],
-  FAILED: [MessageStatus.QUEUED, MessageStatus.DELIVERED],
+  FAILED: [MessageStatus.QUEUED, MessageStatus.DELIVERED, MessageStatus.READ],
   EXPIRED: [],
 };
 

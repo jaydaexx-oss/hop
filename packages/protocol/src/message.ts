@@ -85,7 +85,9 @@ export function formatMessageStatus(status: string): string {
 }
 
 export function isExpired(message: Pick<HopMessage, "expires_at">, now = new Date()): boolean {
-  return now.getTime() >= Date.parse(message.expires_at);
+  const expires = Date.parse(message.expires_at);
+  if (!Number.isFinite(expires)) return true;
+  return now.getTime() >= expires;
 }
 
 export function shouldStopForwarding(

@@ -1,5 +1,5 @@
 const SENSITIVE_KEY =
-  /^(password|token|secret|secret_key|secretkey|private_key|privatekey|ciphertext|encrypted_payload|crypto_box|audio_b64|audio|voice|authorization|cookie)$/i;
+  /^(password|token|secret|secret_key|secretkey|private_key|privatekey|ciphertext|encrypted_payload|crypto_box|audio_b64|audio|voice|authorization|cookie|text|plaintext|local_seal|nonce|secret_key_b64)$/i;
 
 const LONG_B64 = /[A-Za-z0-9+/]{48,}={0,2}/g;
 

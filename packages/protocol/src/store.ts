@@ -70,11 +70,16 @@ CREATE TABLE IF NOT EXISTS inbound_receipts (
   sender_pk TEXT,
   PRIMARY KEY (ack_of, ack_type)
 );
+
+CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id);
+CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status);
+CREATE INDEX IF NOT EXISTS idx_outbound_retry ON outbound_queue(next_retry_at);
 `;
 
 export interface SqliteDriver {
   execute(sql: string, params?: unknown[]): Promise<void>;
   query<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>;
+  transaction?(fn: () => Promise<void>): Promise<void>;
 }
 
 export interface StoredMessage {
@@ -161,6 +166,9 @@ export class HopSqliteStore {
     } catch {
       /* column already exists on new databases */
     }
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_messages_conversation ON messages(conversation_id)");
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_messages_status ON messages(status)");
+    await this.db.execute("CREATE INDEX IF NOT EXISTS idx_outbound_retry ON outbound_queue(next_retry_at)");
   }
 
   async saveMessage(message: StoredMessage): Promise<void> {
@@ -263,6 +271,7 @@ export class HopSqliteStore {
       fromRows = Number(rows[0]?.m ?? 0);
     }
     const current = Math.max(
+      0,
       Number.isFinite(fromKeyed) ? fromKeyed : 0,
       Number.isFinite(fromLegacy) ? fromLegacy : 0,
       Number.isFinite(fromRows) ? fromRows : 0,
@@ -286,9 +295,9 @@ export class HopSqliteStore {
     await this.db.execute(
       `INSERT INTO conversations (id, peer_id, peer_username, peer_public_key, created_at) VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
-         peer_id=excluded.peer_id,
+         peer_id=COALESCE(conversations.peer_id, excluded.peer_id),
          peer_username=excluded.peer_username,
-         peer_public_key=excluded.peer_public_key`,
+         peer_public_key=COALESCE(conversations.peer_public_key, excluded.peer_public_key)`,
       [
         conversation.id,
         conversation.peer_id,
@@ -323,6 +332,34 @@ export class HopSqliteStore {
       `INSERT INTO outbound_queue (message_id, attempts, next_retry_at) VALUES (?, ?, ?)
        ON CONFLICT(message_id) DO UPDATE SET attempts=excluded.attempts, next_retry_at=excluded.next_retry_at`,
       [messageId, attempts, nextRetryAt],
+    );
+  }
+
+  async saveQueuedOutbound(message: StoredMessage, attempts: number, nextRetryAt: number): Promise<void> {
+    const write = async () => {
+      await this.saveMessage(message);
+      await this.enqueue(message.message_id, attempts, nextRetryAt);
+    };
+    if (this.db.transaction) {
+      await this.db.transaction(write);
+      return;
+    }
+    await write();
+  }
+
+  async getOutbound(messageId: string): Promise<OutboundRow | null> {
+    const rows = await this.db.query<OutboundRow>(
+      "SELECT message_id, attempts, next_retry_at FROM outbound_queue WHERE message_id = ?",
+      [messageId],
+    );
+    return rows[0] ?? null;
+  }
+
+  async listOrphanOutbox(): Promise<StoredMessage[]> {
+    return this.db.query<StoredMessage>(
+      `SELECT m.* FROM messages m
+       WHERE m.status IN ('QUEUED', 'RETRYING')
+         AND NOT EXISTS (SELECT 1 FROM outbound_queue o WHERE o.message_id = m.message_id)`,
     );
   }
 
@@ -483,9 +520,11 @@ export class HopSqliteStore {
       `INSERT INTO inbound_receipts (ack_of, ack_type, conversation_id, sender_id, sender_pk)
        VALUES (?, ?, ?, ?, ?)
        ON CONFLICT(ack_of, ack_type) DO UPDATE SET
-         conversation_id=excluded.conversation_id,
-         sender_id=excluded.sender_id,
-         sender_pk=COALESCE(excluded.sender_pk, inbound_receipts.sender_pk)`,
+         sender_pk=CASE
+           WHEN inbound_receipts.sender_pk IS NULL AND inbound_receipts.sender_id = excluded.sender_id
+           THEN excluded.sender_pk
+           ELSE inbound_receipts.sender_pk
+         END`,
       [row.ack_of, row.ack_type, row.conversation_id, row.sender_id, row.sender_pk],
     );
   }

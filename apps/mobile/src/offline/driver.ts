@@ -16,4 +16,8 @@ export class ExpoSqliteDriver implements SqliteDriver {
   async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
     return this.db.getAllAsync<T>(sql, params as SQLite.SQLiteBindValue[]);
   }
+
+  async transaction(fn: () => Promise<void>): Promise<void> {
+    await this.db.withTransactionAsync(fn);
+  }
 }

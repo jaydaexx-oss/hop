@@ -41,6 +41,8 @@ def test_forwarding_stops() -> None:
 def test_late_ack_after_failed() -> None:
     assert can_transition("FAILED", "DELIVERED") is True
     assert transition("FAILED", "DELIVERED") == "DELIVERED"
+    assert can_transition("FAILED", "READ") is True
+    assert apply_receipt_status("FAILED", "READ") == "READ"
 
 
 def test_receipts_never_regress() -> None:

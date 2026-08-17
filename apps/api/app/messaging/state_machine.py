@@ -29,7 +29,7 @@ ALLOWED_TRANSITIONS: dict[MessageStatus, tuple[MessageStatus, ...]] = {
     "RELAYING": ("DELIVERED", "RELAYING", "FAILED", "EXPIRED"),
     "DELIVERED": ("READ",),
     "READ": (),
-    "FAILED": ("QUEUED", "DELIVERED"),
+    "FAILED": ("QUEUED", "DELIVERED", "READ"),
     "EXPIRED": (),
 }
 

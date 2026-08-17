@@ -47,14 +47,14 @@ describe("encrypted ack protocol helpers", () => {
     expect(parseAckPlain(ackPlain({ ack_v: 99 }))).toBeNull();
     expect(parseAckPlain(ackPlain({ ack_status: "READ", ack_type: AckType.DELIVERED_ACK }))).toBeNull();
     expect(parseAckPlain(ackPlain({ ack_of: "ack-1", message_id: "ack-1" }))).toBeNull();
-    expect(parseAckPlain({ ...ackPlain(), kind: "message" })).toBeNull();
+    expect(parseAckPlain(ackPlain({ ack_of: "x".repeat(10_000) }))).toBeNull();
   });
 
   it("never regresses SENT → DELIVERED → READ", () => {
     expect(mergePersistedStatus(MessageStatus.READ, MessageStatus.DELIVERED)).toBe(MessageStatus.READ);
     expect(mergePersistedStatus(MessageStatus.READ, MessageStatus.SENT)).toBe(MessageStatus.READ);
     expect(mergePersistedStatus(MessageStatus.DELIVERED, MessageStatus.SENT)).toBe(MessageStatus.DELIVERED);
-    expect(mergePersistedStatus(MessageStatus.FAILED, MessageStatus.DELIVERED)).toBe(MessageStatus.DELIVERED);
+    expect(mergePersistedStatus(MessageStatus.FAILED, MessageStatus.READ)).toBe(MessageStatus.READ);
     expect(mergePersistedStatus(MessageStatus.ENCRYPTING, MessageStatus.CREATED)).toBe(MessageStatus.ENCRYPTING);
     expect(mergePersistedStatus(MessageStatus.QUEUED, MessageStatus.ENCRYPTING)).toBe(MessageStatus.QUEUED);
     expect(mergePersistedStatus(MessageStatus.READ, MessageStatus.DELIVERED)).toBe(MessageStatus.READ);

@@ -5,7 +5,7 @@
 # After `fly apps create`, set `app` and [env] API_PUBLIC_URL / CORS_ORIGINS
 # to https://<your-app>.fly.dev (restrictive HTTPS allow-list, not *).
 
-app = "hop-api"
+app = "hop-uokqmg"
 primary_region = "sjc"
 
 [build]
@@ -21,8 +21,8 @@ primary_region = "sjc"
   UVICORN_WORKERS = "2"
   FORWARDED_ALLOW_IPS = "*"
   METRICS_ENABLED = "true"
-  API_PUBLIC_URL = "https://hop-api.fly.dev"
-  CORS_ORIGINS = "https://hop-api.fly.dev"
+  API_PUBLIC_URL = "https://hop-uokqmg.fly.dev"
+  CORS_ORIGINS = "https://hop-uokqmg.fly.dev"
 
 [http_service]
   internal_port = 8000

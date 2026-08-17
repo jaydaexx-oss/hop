@@ -33,6 +33,20 @@ export { createRelayTransport } from "./stubTransports.js";
 export { createBluetoothTransport, BluetoothTransport, type BlePayloadPreparer } from "./bluetoothTransport.js";
 export type { BleLink, BleLinkStatus, BlePeer, BleScanMode, BleSessionOptions } from "./bleLink.js";
 export {
+  createProductionAppTransportManager,
+  assertProductionTransportSet,
+  PRODUCTION_APP_TRANSPORT_IDS,
+  FORBIDDEN_PRODUCTION_TRANSPORT_IDS,
+} from "./appTransports.js";
+export {
+  describeTransportSelection,
+  isSafeDiagnosticsText,
+  type BleDiagnosticsSnapshot,
+  type BleHandshakePhase,
+  type TransportSelectionInfo,
+  type TransportSelectionId,
+} from "./bleDiagnostics.js";
+export {
   BLE_DEFAULT_CHUNK_BYTES,
   BLE_FALLBACK_CHUNK_BYTES,
   BLE_MAX_ASSEMBLED_BYTES,

@@ -1,10 +1,8 @@
 import { API_URL, assertSafeApiUrl } from './api/client';
 import {
-  LocalTransport,
-  TransportManager,
-  createBluetoothTransport,
-  createInternetTransport,
+  createProductionAppTransportManager,
   type HopHttpClient,
+  type TransportManager,
 } from '@hop/protocol';
 
 export function createHopHttp(getToken?: () => string | null): HopHttpClient {
@@ -49,9 +47,5 @@ export function createHopHttp(getToken?: () => string | null): HopHttpClient {
 export const APP_TRANSPORT_IDS = ['internet', 'bluetooth', 'local'] as const;
 
 export function createAppTransportManager(http: HopHttpClient): TransportManager {
-  const manager = new TransportManager();
-  manager.register(createInternetTransport(http));
-  manager.register(createBluetoothTransport());
-  manager.register(new LocalTransport());
-  return manager;
+  return createProductionAppTransportManager(http);
 }

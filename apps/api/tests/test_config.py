@@ -55,6 +55,7 @@ def test_production_accepts_explicit_secrets(monkeypatch) -> None:
     monkeypatch.setenv("CORS_ORIGINS", "https://app.example.com")
     monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://hop:secret@db:5432/hop")
     monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setenv("API_PUBLIC_URL", "https://api.example.com")
     settings = Settings()
     assert_production_config(settings)
 
@@ -63,6 +64,41 @@ def test_development_allows_local_defaults() -> None:
     settings = Settings()
     assert settings.is_production is False
     assert_production_config(settings)
+
+
+def test_production_rejects_http_api_public_url(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example.com")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://hop:secret@db:5432/hop")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setenv("API_PUBLIC_URL", "http://api.example.com")
+    settings = Settings()
+    with pytest.raises(RuntimeError, match="API_PUBLIC_URL") as rejected:
+        assert_production_config(settings)
+    assert "HTTPS" in str(rejected.value)
+
+
+def test_production_rejects_localhost_api_public_url(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example.com")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://hop:secret@db:5432/hop")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.setenv("API_PUBLIC_URL", "https://127.0.0.1:8000")
+    settings = Settings()
+    with pytest.raises(RuntimeError, match="API_PUBLIC_URL") as rejected:
+        assert_production_config(settings)
+    assert "localhost" in str(rejected.value)
+
+
+def test_production_rejects_missing_api_public_url(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example.com")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://hop:secret@db:5432/hop")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    monkeypatch.delenv("API_PUBLIC_URL", raising=False)
+    settings = Settings()
+    with pytest.raises(RuntimeError, match="API_PUBLIC_URL must be set"):
+        assert_production_config(settings)
 
 
 def test_production_rejects_localhost_cors_and_http_origins(monkeypatch) -> None:

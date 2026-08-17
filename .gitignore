@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.production.example
 infra/.env
 infra/backups/*
 !infra/backups/.gitkeep

@@ -13,8 +13,10 @@ SENSITIVE_KEYS = {
     "privatekey",
     "ciphertext",
     "encrypted_payload",
+    "crypto_box",
     "audio_b64",
     "audio",
+    "voice",
     "authorization",
     "cookie",
 }

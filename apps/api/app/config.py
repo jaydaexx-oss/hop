@@ -34,6 +34,8 @@ class Settings(BaseSettings):
         default="http://localhost:8081,http://127.0.0.1:8081",
         validation_alias="CORS_ORIGINS",
     )
+    # Public HTTPS origin clients should use. Empty in development. Required in production.
+    api_public_url: str = Field(default="", validation_alias="API_PUBLIC_URL")
 
     trust_proxy_headers: bool = Field(default=False, validation_alias="TRUST_PROXY_HEADERS")
     docs_enabled: Optional[bool] = Field(default=None, validation_alias="DOCS_ENABLED")
@@ -89,6 +91,17 @@ def assert_production_config(
         if origin.startswith("http://"):
             problems.append("CORS_ORIGINS must be HTTPS in production")
             break
+    public_url = str(env.get("API_PUBLIC_URL", settings.api_public_url)).strip()
+    if not public_url:
+        problems.append("API_PUBLIC_URL must be set")
+    elif PLACEHOLDER in public_url:
+        problems.append("API_PUBLIC_URL still contains CHANGE_ME")
+    else:
+        lowered_public = public_url.lower()
+        if not lowered_public.startswith("https://"):
+            problems.append("API_PUBLIC_URL must be HTTPS in production")
+        if _is_loopback_url(public_url):
+            problems.append("API_PUBLIC_URL must not point at localhost in production")
     if problems:
         raise RuntimeError("Refusing to start in production: " + "; ".join(problems))
 

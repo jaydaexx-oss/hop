@@ -47,6 +47,14 @@ if ! grep -q 'CORS_ORIGINS must be an explicit allow-list' apps/api/app/config.p
   fail "production CORS allow-list guard missing"
 fi
 
+if ! grep -q 'API_PUBLIC_URL must be HTTPS in production' apps/api/app/config.py; then
+  fail "production API_PUBLIC_URL HTTPS guard missing"
+fi
+
+if ! grep -q 'createProductionAppTransportManager' apps/mobile/src/hopRuntime.ts; then
+  fail "hopRuntime must use createProductionAppTransportManager"
+fi
+
 if search 'encodeUnencryptedText|alg: none|alg:none' apps/mobile/src apps/mobile/app --include '*.ts' --include '*.tsx' | grep -q .; then
   fail "insecure crypto fallback referenced on the mobile app path"
 fi

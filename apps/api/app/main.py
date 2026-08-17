@@ -5,13 +5,15 @@ import time
 import uuid
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api import api_router
 from app.config import MAX_REQUEST_BYTES, assert_production_config, get_settings
 from app.db import init_db
+from app.errors import client_error_payload
 from app.logging_config import configure_logging
 from app.metrics import READY, metrics_middleware, metrics_payload
 
@@ -97,6 +99,18 @@ async def access_log_without_bodies(request: Request, call_next):
         extra={"request_id": rid},
     )
     return response
+
+
+@app.exception_handler(Exception)
+async def unhandled_error(request: Request, exc: Exception) -> JSONResponse:
+    if isinstance(exc, HTTPException):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status_code)
+    if isinstance(exc, RequestValidationError):
+        return JSONResponse({"detail": exc.errors()}, status_code=422)
+    rid = getattr(request.state, "request_id", None)
+    logger.exception("unhandled error", extra={"request_id": rid})
+    payload = client_error_payload(exc, is_production=settings.is_production, request_id=rid)
+    return JSONResponse(payload, status_code=500)
 
 
 app.include_router(api_router)

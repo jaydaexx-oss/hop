@@ -17,6 +17,7 @@ describe("API URL policy", () => {
   it("refuses localhost and cleartext HTTP in release", () => {
     expect(() => assertSafeApiUrl("http://127.0.0.1:8000", { isDev: false })).toThrow(/localhost/);
     expect(() => assertSafeApiUrl("https://localhost:8000", { isDev: false })).toThrow(/localhost/);
+    expect(() => assertSafeApiUrl("http://10.0.2.2:8000", { isDev: false })).toThrow(/localhost/);
     expect(() => assertSafeApiUrl("http://api.example.com", { isDev: false })).toThrow(/HTTPS/);
     assertSafeApiUrl("https://api.example.com", { isDev: false });
   });

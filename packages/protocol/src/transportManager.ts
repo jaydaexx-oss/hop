@@ -39,6 +39,10 @@ export class TransportManager {
     return this.transports.get(id);
   }
 
+  registeredIds(): TransportId[] {
+    return [...this.transports.keys()];
+  }
+
   /**
    * Inbound path: drop duplicates and expired envelopes. Does not decrypt.
    * @returns false if the envelope must be discarded.

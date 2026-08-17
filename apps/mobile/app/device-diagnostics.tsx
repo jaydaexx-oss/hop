@@ -15,6 +15,12 @@ import {
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
 import { useOffline } from '@/src/offline/OfflineProvider';
+import {
+  describeTransportSelection,
+  isSafeDiagnosticsText,
+  type BleDiagnosticsSnapshot,
+  type BleHandshakePhase,
+} from '@hop/protocol';
 
 type RowStatus = 'ok' | 'warn' | 'error';
 
@@ -31,6 +37,9 @@ type Probe = {
   peerTrustLines: string[];
   transport: 'Internet' | 'BLE' | 'Offline Queue';
   encryption: 'Active' | 'Error';
+  bleTech: BleDiagnosticsSnapshot;
+  transportSelected: string;
+  fallbackReason: string;
 };
 
 function apiOriginLabel(url: string): string {
@@ -68,6 +77,28 @@ function truncateId(value: string): string {
 
 function fingerprintHint(publicKey: string): string {
   return formatPersistedFingerprint(publicKey);
+}
+
+function handshakeLabel(state: BleHandshakePhase): string {
+  switch (state) {
+    case 'idle':
+      return 'Idle';
+    case 'announced':
+      return 'GATT announced';
+    case 'authenticating':
+      return 'Authenticating';
+    case 'authenticated':
+      return 'Authenticated';
+    case 'failed':
+      return 'Failed';
+    default:
+      return 'Unknown';
+  }
+}
+
+function safeDetail(value: string | null | undefined, fallback: string): string {
+  if (!value) return fallback;
+  return isSafeDiagnosticsText(value) ? value : fallback;
 }
 
 const PROBE_KEY = 'hop.diag.probe';
@@ -115,7 +146,7 @@ export default function DeviceDiagnosticsScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const { user } = useAuth();
-  const { engine, status, connectedId } = useBle();
+  const { engine, connectedId } = useBle();
   const { status: networkStatus, identityError, tofu, service } = useOffline();
   const [probe, setProbe] = useState<Probe | null>(null);
   const [busy, setBusy] = useState(false);
@@ -135,11 +166,17 @@ export default function DeviceDiagnosticsScreen() {
       const secureStore = await probeSecureStore();
       const records = tofu?.snapshot() ?? [];
       const identityLoaded = Boolean(user && service && !identityError);
+      const bleTech = engine.diagnosticsSnapshot();
+      const selection = describeTransportSelection({
+        networkStatus,
+        bleImplemented: bleTech.nativeImplemented,
+        bleBlockedReason: bleTech.blockedReason,
+      });
       const probeResult: Probe = {
         api,
         identity: identityLoaded ? 'Loaded' : 'Error',
         identityDetail: identityError
-          ? identityError
+          ? safeDetail(identityError, 'Identity error (details omitted).')
           : user
             ? identityLoaded
               ? 'Local identity keys are present. Secret key is not shown.'
@@ -148,7 +185,7 @@ export default function DeviceDiagnosticsScreen() {
         secureStore,
         internet: networkStatus === 'Online' || networkStatus === 'Synchronizing' ? 'Online' : 'Offline',
         bluetooth: bluetoothLabel(bleStatus),
-        bluetoothDetail: bleStatus.detail,
+        bluetoothDetail: safeDetail(bleStatus.detail, 'Bluetooth status available.'),
         ble: connectedId ? 'Connected' : bleStatus.scanning ? 'Scanning' : 'Not Connected',
         peerTrust: aggregateTrust(records),
         peerTrustLines: records.map(
@@ -156,6 +193,9 @@ export default function DeviceDiagnosticsScreen() {
         ),
         transport: transportLabel(networkStatus),
         encryption: identityLoaded ? 'Active' : 'Error',
+        bleTech,
+        transportSelected: selection.selected,
+        fallbackReason: safeDetail(selection.reason, 'Transport reason omitted.'),
       };
       setProbe(probeResult);
     } finally {
@@ -186,8 +226,8 @@ export default function DeviceDiagnosticsScreen() {
       contentContainerStyle={styles.content}>
       <Text style={styles.title}>Device diagnostics</Text>
       <Text style={[styles.lede, { color: colors.muted }]}>
-        Development only. Does not prove BLE works on hardware. No private keys, plaintext, or
-        encryption secrets are shown.
+        Development-device validation only — not a product feature. One-phone technical state is
+        not two-phone BLE proof. No private keys, plaintext, voice, or crypto_box are shown.
       </Text>
       {loopback ? (
         <Text style={styles.warn}>{LOOPBACK_API_DEVICE_HINT}</Text>
@@ -259,6 +299,101 @@ export default function DeviceDiagnosticsScreen() {
       ) : (
         <Text style={{ color: colors.muted }}>Probing…</Text>
       )}
+      {probe ? (
+        <View style={[styles.card, { backgroundColor: colors.card }]}>
+          <Text style={styles.sectionTitle}>One-phone BLE technical state</Text>
+          <Text style={[styles.lede, { color: colors.muted }]}>
+            Not two-phone proof. Adapter on this device only.
+          </Text>
+          <Row
+            label="BT permission"
+            value={probe.bleTech.permissionGranted ? 'Granted' : 'Not granted'}
+            tone={probe.bleTech.permissionGranted ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
+            label="Adapter"
+            value={probe.bleTech.adapterOn ? 'On' : 'Off'}
+            tone={probe.bleTech.adapterOn ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
+            label="Advertising"
+            value={probe.bleTech.advertising ? 'Yes' : 'No'}
+            tone={probe.bleTech.advertising ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
+            label="Scanning"
+            value={probe.bleTech.scanning ? 'Yes' : 'No'}
+            tone={probe.bleTech.scanning ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
+            label="GATT registration"
+            value={probe.bleTech.gattRegistered ? 'Registered' : 'Not registered'}
+            tone={probe.bleTech.gattRegistered ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
+            label="Connection"
+            value={
+              probe.bleTech.connected
+                ? `${probe.bleTech.connectedPeerCount} peer(s)`
+                : 'None'
+            }
+            tone={probe.bleTech.connected ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
+            label="MTU"
+            value={
+              probe.bleTech.mtu != null
+                ? String(probe.bleTech.mtu)
+                : 'Unavailable (iOS negotiates internally)'
+            }
+            tone="ok"
+            muted={colors.muted}
+          />
+          <Row
+            label="Handshake"
+            value={handshakeLabel(probe.bleTech.handshakeState)}
+            tone={
+              probe.bleTech.handshakeState === 'authenticated'
+                ? 'ok'
+                : probe.bleTech.handshakeState === 'failed'
+                  ? 'error'
+                  : 'warn'
+            }
+            muted={colors.muted}
+          />
+          <Row
+            label="Transport selected"
+            value={probe.transportSelected}
+            tone="ok"
+            detail={probe.fallbackReason}
+            muted={colors.muted}
+          />
+          <Row
+            label="Native BLE"
+            value={probe.bleTech.nativeImplemented ? 'Loaded' : 'Unavailable'}
+            tone={probe.bleTech.nativeImplemented ? 'ok' : 'warn'}
+            detail={
+              probe.bleTech.blockedReason && isSafeDiagnosticsText(probe.bleTech.blockedReason)
+                ? probe.bleTech.blockedReason
+                : undefined
+            }
+            muted={colors.muted}
+          />
+          <Row
+            label="Permissions note"
+            value="BT / mic / local network"
+            tone="ok"
+            detail="Bluetooth is probed here. Microphone is requested at PTT. Local Network is requested by iOS for LAN HTTP. This screen does not grant extra entitlements."
+            muted={colors.muted}
+          />
+        </View>
+      ) : null}
       <Pressable
         onPress={() => void runProbe()}
         disabled={busy}
@@ -275,6 +410,7 @@ const styles = StyleSheet.create({
   wrap: { flex: 1 },
   content: { padding: 20, paddingBottom: 40, gap: 12 },
   title: { fontSize: 28, fontWeight: '700' },
+  sectionTitle: { fontSize: 18, fontWeight: '700' },
   lede: { fontSize: 14, lineHeight: 20 },
   warn: { color: '#B45309', fontSize: 14, lineHeight: 20, fontWeight: '600' },
   card: { borderRadius: 16, padding: 16, gap: 14 },

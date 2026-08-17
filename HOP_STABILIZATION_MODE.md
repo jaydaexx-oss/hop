@@ -2,7 +2,7 @@
 
 **Branch:** `integration/production-stabilization` only. **Do not merge to `dev` or `main`.**  
 **Cursor rule:** `.cursor/rules/hop-production-stabilization.mdc` (always apply).  
-**This scorecard:** Phase 5 (2026-08-16) under the evidence-based rubric. Canonical narrative: `HOP_PHASE5_REPORT.md`.
+**This scorecard:** Phase 6 (2026-08-16) under the evidence-based rubric. Canonical narrative: `HOP_PHASE6_REPORT.md`.
 
 ---
 
@@ -44,17 +44,17 @@ Every stabilization phase must end with:
 | Deployment readiness | 5 |
 | **Total** | **100** |
 
-Sources for this score (not substitutes for hardware or live HTTPS): `HOP_PRODUCTION_AUDIT.md`, `HOP_PHASE2_SECURITY_REPORT.md`, `HOP_PHASE3_REPORT.md`, `HOP_PHASE4_REPORT.md`, `HOP_PHASE5_REPORT.md`.
+Sources for this score (not substitutes for hardware or live HTTPS): `HOP_PRODUCTION_AUDIT.md`, `HOP_PHASE2_SECURITY_REPORT.md`, `HOP_PHASE3_REPORT.md`, `HOP_PHASE4_REPORT.md`, `HOP_PHASE5_REPORT.md`, `HOP_PHASE6_REPORT.md`.
 
 Prior scores used a different, unstructured scale (audit **38**, Phase 2 **~46**, Phase 3 **54**). This document **recalculates** on the rubric above. It does not carry those numbers forward.
 
 ---
 
-## Current scorecard (Phase 5)
+## Current scorecard (Phase 6)
 
-Phase 4 was **62 / 100**. Phase 5 is **70 / 100**. Hardware-dependent points remain unavailable. Docs and “code exists” do not add points. Forward secrecy is option B (deferred) and scores **0**.
+Phase 5 was **70 / 100**. Phase 6 is **72 / 100**. Hardware-dependent points remain unavailable. Docs and “code exists” do not add points. Forward secrecy is option B (deferred) and scores **0**. Live HTTPS was **not** proven; local prod-mode startup is not a public TLS host.
 
-### Core messaging reliability — **14 / 20** (+1)
+### Core messaging reliability — **14 / 20** (0)
 
 **Evidence**
 
@@ -65,79 +65,82 @@ Phase 4 was **62 / 100**. Phase 5 is **70 / 100**. Hardware-dependent points rem
 
 - Still mocked HTTP / sql.js. No live non-localhost HTTPS. No `expo-sqlite` process-kill proof.
 
-### Security & privacy — **14 / 20** (+2)
+### Security & privacy — **14 / 20** (0)
 
 **Evidence**
 
 - Identity adversarial tests: 409 `SERVER_KEY_LOCKED`, KEY_CHANGED, SQLite fingerprint persist, fail-closed loss, malformed keys, cross-account pk refuse. No unauthenticated rotation.
 - BLE handshake MAC after both pks known (`crypto_auth` + `crypto_box_beforenm`). First GATT pk remains TOFU.
+- Production unhandled errors sanitized; logs still redact secrets / ciphertext / voice.
 
 **Why not full credit**
 
 - Still unattested TOFU. No FS. Lost secret → new account. First-packet pk still plaintext GATT.
 
-### Backend/API production readiness — **11 / 15** (+1)
+### Backend/API production readiness — **11 / 15** (0)
 
 **Evidence**
 
-- Request correlation ids, well-formed identity keys, registration IntegrityError, push **404** (not offered). **67** pytest passed.
+- Request correlation ids, well-formed identity keys, registration IntegrityError, push **404** (not offered). **74** pytest passed.
+- `API_PUBLIC_URL` HTTPS/localhost reject is scored under **deployment**, not here: there is still no live Postgres+Redis+HTTPS.
 
 **Why not full credit**
 
 - No live Postgres+Redis+HTTPS in this environment.
 
-### Mobile application stability — **8 / 15** (0)
+### Mobile application stability — **9 / 15** (+1)
 
-Unchanged evidence. Typecheck passed. No device crash/soak.
+**Evidence**
 
-### BLE / hybrid transport — **12 / 15** (+1)
+- Typecheck passed. `createProductionAppTransportManager` / hopRuntime source tests: no relay, no `SimulatedNetwork`. `__DEV__` gates for debug ping, diagnostics, secret fail-closed. Release URL policy refuses localhost including `10.0.2.2`.
 
-Authenticated handshake is tested in-process (replay/stale/downgrade/KEY_CHANGED). **Still no two-phone radio proof.** The 4 hardware-locked points stay locked.
+**Why not full credit**
 
-### PTT / voice — **3 / 5** (+1)
+- No device crash/soak. No TestFlight.
 
-Crypto-safe temp names, leftover `hop-voice*` cleanup on startup, encrypted persist only. **Mic/playback/transport/queue not tested on phones.**
+### BLE / hybrid transport — **12 / 15** (0)
 
-### Testing & observability — **4 / 5** (+1)
+Authenticated handshake is tested in-process. One-phone diagnostics expose adapter/GATT/handshake **state labels only**. **Still no two-phone radio proof.** The hardware-locked points stay locked.
 
-Protocol **190** / API **67** / mobile typecheck / redact + request-id tests / production-readiness gate. Still no E2E, device farm, or live Prometheus.
+### PTT / voice — **3 / 5** (0)
 
-### Deployment readiness — **4 / 5** (+1)
+Unchanged software evidence. **Mic/playback/transport/queue not tested on phones.**
 
-`scripts/production-readiness-gate.sh` + CI job. Push not advertised. Compose still **not executed** here. No EAS `projectId`.
+### Testing & observability — **4 / 5** (0)
+
+Protocol **195** / API **74** / mobile typecheck / production-readiness gate. Extra tests are counted in deployment/mobile, not a bump here: still no E2E, device farm, or live Prometheus.
+
+### Deployment readiness — **5 / 5** (+1)
+
+`API_PUBLIC_URL` HTTPS and localhost rejected by tests; local `APP_ENV=production` startup serves `/health` and disables docs; `docs/PRODUCTION_DEPLOYMENT.md` + `.env.production.example`. Compose still **not executed** against Let’s Encrypt. No EAS `projectId`. This is the **software ceiling** for the category; a live host cannot add points here and does not unlock internet-messaging credit (that is core/backend).
 
 ---
 
-## Phase 5 end-of-phase block
+## Phase 6 end-of-phase block
 
 ### CURRENT VERIFIED SCORE
 
-**70 / 100**
+**72 / 100**
 
 | Category | Score |
 |---|---|
 | Core messaging reliability | 14 / 20 |
 | Security & privacy | 14 / 20 |
 | Backend/API production readiness | 11 / 15 |
-| Mobile application stability | 8 / 15 |
+| Mobile application stability | 9 / 15 |
 | BLE / hybrid transport | 12 / 15 |
 | PTT / voice | 3 / 5 |
 | Testing & observability | 4 / 5 |
-| Deployment readiness | 4 / 5 |
-| **Total** | **70 / 100** |
+| Deployment readiness | 5 / 5 |
+| **Total** | **72 / 100** |
 
 This is **not** production-ready. It is **not** > 90. No major product features.
 
 ### WHAT INCREASED THE SCORE
 
-- **+2 security:** identity adversarial tests (409, KEY_CHANGED persist, fail-closed, malformed, cross-account).
-- **+1 core messaging:** no ACK-before-SENT DELIVERED; unboxed inbound dropped.
-- **+1 BLE protocol:** authenticated handshake tests (not hardware).
-- **+1 PTT software:** crypto-safe temps + crash leftover cleanup.
-- **+1 backend:** request ids + identity key validation.
-- **+1 testing:** 190 protocol + 67 API + gate.
-- **+1 deployment:** gate script/CI + push 404.
-- **0** phones, live HTTPS, FS, mobile soak.
+- **+1 deployment:** production public URL must be HTTPS and non-localhost (tests) + local prod-mode `/health` startup. Not live TLS. Category now 5/5.
+- **+1 mobile:** release-build tests that mocks/relay are not on the app send path; `__DEV__` debug/diagnostics/secret gates.
+- **0** phones, live HTTPS, FS, BLE hardware, PTT hardware.
 
 ### WHAT PREVENTS 90+
 
@@ -145,7 +148,7 @@ This is **not** production-ready. It is **not** > 90. No major product features.
 - No two-device internet soak against a **live non-localhost HTTPS** API.
 - PTT not hardware-proven.
 - Identity still unattested TOFU; no forward secrecy; lost key → new account.
-- No TestFlight/EAS `projectId` / proven VPS deploy.
+- No TestFlight/EAS `projectId`. Public VPS TLS was not applied in this environment.
 
 ### P0 BLOCKERS
 
@@ -167,16 +170,17 @@ This is **not** production-ready. It is **not** > 90. No major product features.
 
 | Suite | Command | Result |
 |---|---|---|
-| Protocol | `cd packages/protocol && npm test -- --run` | **190 passed**, 0 failed (26 files) |
-| API | `cd apps/api && .venv/bin/pytest` | **67 passed**, 0 failed |
+| Protocol | `cd packages/protocol && npm test -- --run` | **195 passed**, 0 failed (27 files) |
+| API | `cd apps/api && .venv/bin/pytest` | **74 passed**, 0 failed |
 | Mobile | `cd apps/mobile && npm run typecheck` | **passed** |
+| Gate | `bash scripts/production-readiness-gate.sh` | **passed** (software only) |
 
-No test fakes a physical BLE session. Internet protocol tests mock HTTP. API tests use `TestClient`.
+No test fakes a physical BLE session. Internet protocol tests mock HTTP. API tests use `TestClient`. Local prod-mode startup is not live HTTPS.
 
 ### PHYSICAL TESTS STILL REQUIRED
 
-Unchanged from Phase 4 (see `HOP_PHASE5_REPORT.md` section 14). Until recorded pass/fail, do not raise BLE to 15/15, do not give PTT full credit, and do not give internet messaging full credit.
+Unchanged from Phase 4/5 (see `HOP_PHASE6_REPORT.md` sections F–I, `docs/IOS_DEVICE_TESTING.md`, `docs/BLE_TESTING.md`). Until recorded pass/fail, do not raise BLE to 15/15, do not give PTT full credit, and do not give internet messaging full credit.
 
 ---
 
-*Phase 5 complete. Waiting for approval before any merge to `dev`.*
+*Phase 6 complete. Waiting for approval before any merge to `dev`.*

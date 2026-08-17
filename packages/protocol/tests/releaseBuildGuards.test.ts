@@ -1,0 +1,94 @@
+import { readFileSync } from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+import {
+  FORBIDDEN_PRODUCTION_TRANSPORT_IDS,
+  PRODUCTION_APP_TRANSPORT_IDS,
+  assertProductionTransportSet,
+  createProductionAppTransportManager,
+  describeTransportSelection,
+  isSafeDiagnosticsText,
+} from "../src/index.js";
+import type { HopHttpClient } from "../src/http.js";
+
+const repoRoot = path.resolve(fileURLToPath(new URL(".", import.meta.url)), "../../..");
+
+function readRepo(rel: string): string {
+  return readFileSync(path.join(repoRoot, rel), "utf8");
+}
+
+const http: HopHttpClient = {
+  async request() {
+    return { ok: false, status: 0, data: null };
+  },
+};
+
+describe("production app transport registration", () => {
+  it("registers internet, bluetooth, and local only", () => {
+    const manager = createProductionAppTransportManager(http);
+    const ids = manager.registeredIds();
+    expect(ids).toEqual([...PRODUCTION_APP_TRANSPORT_IDS]);
+    expect(ids).not.toContain("relay");
+    expect(manager.getTransport("relay")).toBeUndefined();
+    assertProductionTransportSet(ids);
+  });
+
+  it("refuses a relay id in the production set", () => {
+    expect(() => assertProductionTransportSet(["internet", "bluetooth", "relay", "local"])).toThrow(
+      /relay/,
+    );
+    expect(FORBIDDEN_PRODUCTION_TRANSPORT_IDS).toEqual(["relay"]);
+  });
+});
+
+describe("mobile production send path source", () => {
+  it("hopRuntime uses the production helper and does not register mocks", () => {
+    const src = readRepo("apps/mobile/src/hopRuntime.ts");
+    expect(src).toContain("createProductionAppTransportManager");
+    expect(src).not.toMatch(/SimulatedNetwork/);
+    expect(src).not.toMatch(/createRelayTransport/);
+    expect(src).not.toMatch(/defaultTransportManager/);
+  });
+
+  it("release builds gate debug BLE ping, diagnostics, and secret fallback", () => {
+    const ble = readRepo("apps/mobile/src/ble/BleProvider.tsx");
+    expect(ble).toMatch(/if \(!__DEV__\) \{[\s\S]*Nearby debug ping is not available in production builds/);
+    const diagnostics = readRepo("apps/mobile/app/device-diagnostics.tsx");
+    expect(diagnostics).toMatch(/if \(!__DEV__\)/);
+    expect(diagnostics).toMatch(/Diagnostics are not available in this build/);
+    const settings = readRepo("apps/mobile/app/(tabs)/settings.tsx");
+    expect(settings).toMatch(/\{__DEV__ \? \(/);
+    expect(settings).toContain("Device diagnostics");
+    const secrets = readRepo("apps/mobile/src/crypto/secretStore.ts");
+    expect(secrets).toContain("shouldFailClosedSecretStore");
+    expect(secrets).toMatch(/__DEV__/);
+  });
+});
+
+describe("transport selection diagnostics copy", () => {
+  it("describes internet preference and local fallback without leaking crypto", () => {
+    expect(
+      describeTransportSelection({
+        networkStatus: "Online",
+        bleImplemented: true,
+        bleBlockedReason: null,
+      }),
+    ).toEqual({
+      selected: "internet",
+      reason: "API /health reachable; internet is preferred over BLE.",
+    });
+    expect(
+      describeTransportSelection({
+        networkStatus: "Queued",
+        bleImplemented: false,
+        bleBlockedReason: "Nearby BLE cannot run in Expo Go. Install a HOP development build on a physical device.",
+      }).selected,
+    ).toBe("local");
+    expect(isSafeDiagnosticsText("Bluetooth permission granted.")).toBe(true);
+    expect(isSafeDiagnosticsText("ciphertext ABC")).toBe(false);
+    expect(isSafeDiagnosticsText("crypto_box payload")).toBe(false);
+    expect(isSafeDiagnosticsText("audio_b64 clip")).toBe(false);
+  });
+});

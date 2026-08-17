@@ -1,6 +1,11 @@
-# HOP deployment (Hostinger VPS)
+# HOP deployment
 
-This guide prepares HOP for production on a **Hostinger KVM VPS** (Ubuntu 24.04 LTS recommended). It uses Docker Compose, Nginx, Let's Encrypt, PostgreSQL, and Redis.
+**Generic VPS + Docker (no vendor lock-in):** `docs/PRODUCTION_DEPLOYMENT.md` and `.env.production.example`.
+
+The rest of this file is a Hostinger-oriented walkthrough of the same Compose stack (`infra/docker-compose.prod.yml`). The application does not require Hostinger.
+
+---
+
 
 > **Do not run production deploy commands until you have reviewed `infra/.env`, DNS, and firewall settings.** This repository does not auto-deploy. Every step below is manual and requires your confirmation on the VPS.
 
@@ -116,6 +121,7 @@ Edit `infra/.env` and replace **every** placeholder:
 | Variable | Purpose |
 |---|---|
 | `API_DOMAIN` | Public API hostname (`api.example.com`) |
+| `API_PUBLIC_URL` | Must be `https://<API_DOMAIN>` — production refuses HTTP and localhost |
 | `LETSENCRYPT_EMAIL` | Email for certificate expiry notices |
 | `POSTGRES_USER` / `POSTGRES_PASSWORD` / `POSTGRES_DB` | Database credentials (**generate a strong password**) |
 | `CORS_ORIGINS` | Comma-separated allowed web/mobile origins (`https://app.example.com`) |

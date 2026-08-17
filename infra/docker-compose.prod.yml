@@ -1,6 +1,6 @@
-# Production stack for a single Hostinger VPS.
-# Copy infra/.env.example to infra/.env and fill every CHANGE_ME value before starting.
-# Do not deploy automatically — follow DEPLOYMENT.md.
+# Production stack for a generic VPS (Docker Compose + Nginx + Postgres + Redis).
+# Copy .env.production.example or infra/.env.example to infra/.env and fill every CHANGE_ME.
+# Do not deploy automatically — follow docs/PRODUCTION_DEPLOYMENT.md.
 
 name: hop-prod
 
@@ -61,6 +61,7 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       REDIS_URL: redis://redis:6379/0
       CORS_ORIGINS: ${CORS_ORIGINS}
+      API_PUBLIC_URL: ${API_PUBLIC_URL}
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
       LOG_FORMAT: ${LOG_FORMAT:-json}
       TRUST_PROXY_HEADERS: "true"

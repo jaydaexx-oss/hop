@@ -88,9 +88,69 @@ npx eas-cli build --profile development --platform ios
 
 ## Device diagnostics (`__DEV__` only)
 
-Settings → **Device diagnostics** (also linked from Login in development). It reports API `/health`, identity loaded/error (no secret keys), SecureStore probe `hop.diag.probe`, internet, Bluetooth, BLE scan/connect, peer TOFU state, transport, and encryption ready/error.
+Settings → **Device diagnostics** (also linked from Login in development). Release builds (`__DEV__ === false`) show “Diagnostics are not available in this build.” There is no production backdoor.
 
-A localhost API URL is flagged as invalid for a physical iPhone. It does **not** crash the Simulator.
+It reports:
+
+- API `/health` (host only; localhost is flagged as invalid on a physical iPhone)
+- Identity loaded/error (no secret keys)
+- SecureStore probe `hop.diag.probe`
+- Internet / transport selected / fallback reason
+- Bluetooth permission, adapter on/off, advertising, scanning, GATT registration, connection count, MTU if the stack returns one, handshake phase
+- Peer TOFU state (fingerprint hint only)
+- Encryption ready/error
+
+**One-phone BLE rows are technical state on this device. They are not two-phone radio proof.** Do not raise the BLE score from this screen.
+
+No private keys, plaintext, voice clips, or `crypto_box` payloads are shown.
+
+## Development-device validation checklist (one physical iPhone)
+
+This is **isolated development-device validation**, not a product feature and not App Store proof. Use a development client (`eas.json` `development` / `expo-dev-client`). Do not weaken production security. Do not add test backdoors.
+
+Record pass/fail. Until recorded, do not award hardware or live-HTTPS points.
+
+### Permissions
+
+- [ ] Bluetooth prompt appears; grant or deny is reflected on Device diagnostics (**BT permission**)
+- [ ] Microphone prompt appears when holding PTT (not probed by diagnostics)
+- [ ] Local Network prompt appears if iOS asks (LAN HTTP API)
+- [ ] Diagnostics **Adapter** matches Control Center Bluetooth on/off
+
+### Account and identity
+
+- [ ] Register a new username against the reachable API (LAN HTTP in `__DEV__`, or HTTPS)
+- [ ] Log out and log back in
+- [ ] Identity row is **Loaded**; secret key is not displayed
+- [ ] SecureStore probe is **Available**
+- [ ] Settings → Replace local identity keys → server 409 `SERVER_KEY_LOCKED` if a different key was already published (fail closed; recovery is a new account)
+
+### Internet messaging (this phone ↔ API)
+
+- [ ] Start a 1:1 chat with a second account (second phone, or a second install / web is not provided — use another device or skip and mark blocked)
+- [ ] Send a text; ciphertext is stored (no plaintext in API DB / logs)
+- [ ] Receive and decrypt on the other client if available
+- [ ] Kill the app, relaunch, conversation list and ciphertext queue persist (`expo-sqlite`)
+
+A single phone talking to a LAN API is **not** live non-localhost HTTPS proof.
+
+### PTT (this phone)
+
+- [ ] Hold PTT: record ≤ cap, encrypt, send
+- [ ] Playback of a received (or loopback if you have two accounts) clip
+- [ ] Recording URI deleted after send/cancel; leftover `hop-voice*` cleaned on launch
+- [ ] Waveform remains decorative (not a hardware fail)
+
+Mic/playback/transport/queue on a physical phone is still required for PTT score credit.
+
+### One-phone BLE diagnostics (not two-phone proof)
+
+- [ ] Nearby / diagnostics: permission, adapter, advertising, scanning, GATT registration
+- [ ] MTU value or “Unavailable (iOS negotiates internally)”
+- [ ] Handshake state stays **Idle** or **GATT announced** until a second phone connects
+- [ ] Transport selected / fallback reason match whether `/health` is reachable
+
+Two-phone encrypted Nearby remains `docs/BLE_TESTING.md`.
 
 ## Identity storage
 
@@ -100,7 +160,9 @@ Development client + Metro: `__DEV__` is true, so a missing SecureStore may fall
 
 - It does not enable background BLE (`UIBackgroundModes` bluetooth-central/peripheral are off; Nearby still stops when the app is backgrounded).
 - It does not include `hop-ble-server`, `react-native-ble-plx`, or Expo Go.
-- Seeing Bluetooth **Ready** on diagnostics is not a hardware BLE pass. Encrypted Nearby send on two physical phones is a separate procedure: `docs/BLE_TESTING.md`.
+- Seeing Bluetooth **Ready** or GATT **Registered** on diagnostics is not a hardware BLE pass. Encrypted Nearby send on two physical phones is a separate procedure: `docs/BLE_TESTING.md`.
+- Apple Developer **paid membership** is required for TestFlight / App Store / EAS `production` + `projectId`. A free Apple ID can often run a USB development client on a personal iPhone (7-day signature) but cannot ship TestFlight.
+- A live **non-localhost HTTPS** API is required before internet messaging can receive full credit. LAN HTTP is development-device validation only.
 
 ## Blockers on a machine with no Xcode.app
 

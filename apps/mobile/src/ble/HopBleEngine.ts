@@ -32,6 +32,8 @@ import {
   verifyAuthenticatedBleAck,
   verifyAuthenticatedHandshake,
   type AckAttempt,
+  type BleDiagnosticsSnapshot,
+  type BleHandshakePhase,
   type BleLink,
   type BleLinkStatus,
   type BlePeer,
@@ -100,6 +102,9 @@ export class HopBleEngine implements BleLink {
   private scanOffTimer: ReturnType<typeof setTimeout> | null = null;
   private staleTimer: ReturnType<typeof setInterval> | null = null;
   private detail = 'BLE engine is idle.';
+  private gattRegistered = false;
+  private lastMtu: number | null = null;
+  private handshakePhase: BleHandshakePhase = 'idle';
 
   constructor(tofu?: PublicKeyTofu) {
     this.tofu = tofu ?? new PublicKeyTofu();
@@ -140,6 +145,29 @@ export class HopBleEngine implements BleLink {
       : 'Bluetooth permission was denied.';
     this.emitPeers();
     return this.permissionGranted && this.bluetoothOn;
+  }
+
+  diagnosticsSnapshot(): BleDiagnosticsSnapshot {
+    const blocked = bleRuntimeBlockedReason();
+    const connectedPeerCount = this.connected.size;
+    const authenticated = [...this.peers.values()].some(
+      (peer) => peer.sessionEstablished === true && this.connected.has(peer.deviceId),
+    );
+    let handshakeState = this.handshakePhase;
+    if (authenticated) handshakeState = 'authenticated';
+    return {
+      permissionGranted: this.permissionGranted,
+      adapterOn: this.bluetoothOn,
+      advertising: this.advertising,
+      scanning: this.scanning,
+      gattRegistered: this.gattRegistered,
+      connected: connectedPeerCount > 0,
+      connectedPeerCount,
+      mtu: this.lastMtu,
+      handshakeState,
+      nativeImplemented: Boolean(this.native),
+      blockedReason: blocked,
+    };
   }
 
   async startSession(options: BleSessionOptions): Promise<void> {
@@ -191,6 +219,8 @@ export class HopBleEngine implements BleLink {
         ],
       },
     ]);
+    this.gattRegistered = true;
+    this.handshakePhase = 'announced';
 
     try {
       await native.startAdvertising({
@@ -238,6 +268,9 @@ export class HopBleEngine implements BleLink {
     this.subscriptions = [];
     this.scanning = false;
     this.advertising = false;
+    this.gattRegistered = false;
+    this.lastMtu = null;
+    this.handshakePhase = 'idle';
     this.connected.clear();
     this.session = null;
     this.reassemblers.clear();
@@ -262,6 +295,7 @@ export class HopBleEngine implements BleLink {
     if (!native) throw new Error('Native BLE module is unavailable.');
     await withTimeout(native.connect(deviceId), timeoutMs, 'BLE connect');
     this.connected.add(deviceId);
+    this.handshakePhase = 'authenticating';
     this.emitConnection(deviceId, true);
     try {
       await native.discoverServices(deviceId);
@@ -269,7 +303,10 @@ export class HopBleEngine implements BleLink {
       /* some stacks discover during connect */
     }
     try {
-      await native.requestMTU?.(deviceId, 512);
+      const mtu = await native.requestMTU?.(deviceId, 512);
+      if (typeof mtu === 'number' && Number.isFinite(mtu) && mtu > 0) {
+        this.lastMtu = mtu;
+      }
     } catch {
       /* iOS negotiates MTU internally */
     }
@@ -283,12 +320,22 @@ export class HopBleEngine implements BleLink {
     } catch {
       /* handshake notify used for authenticated proof */
     }
-    const peer = await this.establishAuthenticatedSession(native, deviceId);
+    let peer: BlePeer;
+    try {
+      peer = await this.establishAuthenticatedSession(native, deviceId);
+    } catch (err) {
+      this.handshakePhase = 'failed';
+      this.connected.delete(deviceId);
+      await Promise.resolve(native.disconnect(deviceId)).catch(() => undefined);
+      throw err;
+    }
     if (!peer.publicKey || !peer.sessionEstablished) {
+      this.handshakePhase = 'failed';
       this.connected.delete(deviceId);
       await Promise.resolve(native.disconnect(deviceId)).catch(() => undefined);
       throw new Error(peer.userId ? 'Authenticated BLE handshake failed.' : 'Secure session failed: peer did not publish a libsodium public key.');
     }
+    this.handshakePhase = 'authenticated';
     this.touchSession(deviceId);
     this.peers.set(deviceId, peer);
     this.emitPeers();

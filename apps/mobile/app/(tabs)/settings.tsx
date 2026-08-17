@@ -1,4 +1,4 @@
-import { Alert, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import { bluetoothStatusLabel, LOCAL_AVATAR_COLORS } from '@hop/protocol';
 
@@ -11,16 +11,15 @@ import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
 import { replaceIdentityExplicit } from '@/src/crypto/identity';
 import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
-import { PRIVACY_LABELS, type NearbyPrivacyMode } from '@/src/nearby/types';
+import { AUDIENCE_LABELS, OPERATING_MODE_LABELS } from '@/src/nearby/types';
+import { INVISIBLE_RADAR_COPY } from '@/src/nearby/nearbyPolicy';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
-
-const PRIVACY_ORDER: NearbyPrivacyMode[] = ['invisible', 'contacts', 'everyone'];
 
 export default function SettingsScreen() {
   const { user, logout } = useAuth();
   const { relayConsent, setRelayConsent } = useBle();
-  const { privacyMode, setPrivacyMode, discoverable, setDiscoverable, scanState } = useNearbyPeers();
+  const { operatingMode, audience, eventMode, eventRemainingLabel, scanState } = useNearbyPeers();
   const { identityError } = useOffline();
   const { color, select } = useLocalAvatarColor(user?.id);
   const scheme = useColorScheme() ?? 'light';
@@ -76,30 +75,26 @@ export default function SettingsScreen() {
       </View>
 
       <View style={[styles.card, { backgroundColor: colors.card }]}>
-        <Text style={styles.cardTitle}>Discoverable</Text>
-        <Text style={{ color: colors.muted, marginBottom: 10 }}>
-          Off is Invisible (the default). Event Mode cannot override Invisible. Contacts only lists
-          people you already chat with after a handshake. Everyone nearby can discover other HOP
-          users around this phone.
+        <Text style={styles.cardTitle}>Nearby</Text>
+        <Text style={{ color: colors.text, fontWeight: '700' }}>
+          {OPERATING_MODE_LABELS[operatingMode]}
+          {operatingMode !== 'invisible' ? ` · ${AUDIENCE_LABELS[audience]}` : ''}
         </Text>
-        <View style={styles.discoverRow}>
-          <Text style={{ fontWeight: '700' }}>{discoverable ? 'Discoverable ON' : 'Discoverable OFF'}</Text>
-          <Switch value={discoverable} onValueChange={(on) => void setDiscoverable(on)} />
-        </View>
-        {PRIVACY_ORDER.map((mode) => (
-          <Pressable
-            key={mode}
-            onPress={() => setPrivacyMode(mode)}
-            style={[
-              styles.privacyRow,
-              { borderColor: privacyMode === mode ? colors.tint : colors.tabIconDefault },
-            ]}>
-            <Text style={{ color: privacyMode === mode ? colors.tint : colors.text, fontWeight: '700' }}>
-              {PRIVACY_LABELS[mode]}
-              {privacyMode === mode ? ' · selected' : ''}
-            </Text>
-          </Pressable>
-        ))}
+        {operatingMode === 'event' ? (
+          <Text style={{ color: colors.event, fontWeight: '700' }}>
+            Active · {eventMode.enabled ? eventRemainingLabel : 'ending'} left
+          </Text>
+        ) : null}
+        <Text style={{ color: colors.muted, marginTop: 4 }}>
+          {operatingMode === 'invisible'
+            ? INVISIBLE_RADAR_COPY
+            : 'Change Around Us, Event Mode, or Invisible on the Nearby tab. Discoverable off is still Invisible underneath.'}
+        </Text>
+        <Pressable
+          onPress={() => router.push('/(tabs)/nearby')}
+          style={[styles.button, { borderColor: colors.tint, marginTop: 12 }]}>
+          <Text style={[styles.buttonLabel, { color: colors.tint }]}>Open Nearby to change</Text>
+        </Pressable>
       </View>
 
       <View style={[styles.card, { backgroundColor: colors.card }]}>
@@ -179,8 +174,6 @@ const styles = StyleSheet.create({
   dot: { width: 32, height: 32, borderRadius: 16 },
   button: { marginTop: 12, borderWidth: 1.5, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   buttonLabel: { fontWeight: '700', fontSize: 16 },
-  privacyRow: { borderWidth: 1.5, borderRadius: 12, paddingVertical: 12, paddingHorizontal: 12, marginBottom: 8 },
-  discoverRow: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 },
   rowBtn: { borderRadius: 16, padding: 16, gap: 2 },
   rowBtnTitle: { fontSize: 16, fontWeight: '700' },
 });

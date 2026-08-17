@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import { NearbyService } from './NearbyService';
 import { MockNearbyTransport, mockBlePeer } from './MockNearbyTransport';
-import { discoveryProfileFor, isEventModeAllowed, shouldRunNearbyDiscovery } from './nearbyPolicy';
+import { discoveryProfileFor, isEventModeAllowed, operatingModeFor, shouldRunNearbyDiscovery } from './nearbyPolicy';
 import { projectNearbyPeers, toAroundUsPeer } from './proximity';
 import { SEARCHING_GRACE_MS } from './types';
 
@@ -30,6 +30,24 @@ describe('nearby policy', () => {
       permissionGranted: true,
     })).toBe(false);
     expect(isEventModeAllowed('invisible')).toBe(false);
+  });
+
+  it('keeps Event Mode from advertising or listing peers while Invisible', () => {
+    expect(operatingModeFor('invisible', true)).toBe('invisible');
+    expect(shouldRunNearbyDiscovery({
+      privacyMode: 'invisible',
+      appActive: true,
+      bluetoothOn: true,
+      permissionGranted: true,
+    })).toBe(false);
+    const transport = new MockNearbyTransport();
+    const service = new NearbyService(transport, () => 20_000);
+    service.setPrivacyMode('invisible');
+    service.setSessionActive(true, 20_000);
+    transport.setDiscoveryProfile('event');
+    transport.setPeers([mockBlePeer({ deviceId: 'dev-1', lastSeenAt: 20_000 })]);
+    expect(service.listPeers()).toEqual([]);
+    expect(service.scanState()).toBe('invisible');
   });
 
   it('stops discovery when Bluetooth is off, permission is revoked, or the app is backgrounded', () => {

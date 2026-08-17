@@ -10,7 +10,11 @@ import {
   decideInbound,
   decideOutbound,
   decideQrContact,
+  deriveOperatingMode,
+  eventEnabledAfterPrivacyChange,
   eventModeMayRun,
+  operatingModeAfterEventExpiry,
+  planOperatingMode,
   hopQrContainsSecrets,
   inboxVisibilityFor,
   inferRelationshipFromHistory,
@@ -208,6 +212,66 @@ describe("safety policy", () => {
     expect(rememberDiscoverableMode("invisible", "contacts")).toBe("contacts");
     expect(eventModeMayRun("invisible")).toBe(false);
     expect(eventModeMayRun("everyone")).toBe(true);
+    expect(eventEnabledAfterPrivacyChange("invisible", true)).toBe(false);
+    expect(deriveOperatingMode("invisible", true)).toBe("invisible");
+  });
+
+  it("derives the 3-mode Nearby experience from privacyMode + eventMode", () => {
+    expect(deriveOperatingMode("invisible", false)).toBe("invisible");
+    expect(deriveOperatingMode("contacts", false)).toBe("around_us");
+    expect(deriveOperatingMode("everyone", false)).toBe("around_us");
+    expect(deriveOperatingMode("contacts", true)).toBe("event");
+    expect(deriveOperatingMode("everyone", true)).toBe("event");
+    expect(deriveOperatingMode("invisible", true)).toBe("invisible");
+    expect(operatingModeAfterEventExpiry("everyone")).toBe("around_us");
+    expect(operatingModeAfterEventExpiry("contacts")).toBe("around_us");
+    expect(operatingModeAfterEventExpiry("invisible")).toBe("invisible");
+  });
+
+  it("refuses Event Mode while Invisible until an audience is chosen", () => {
+    const blocked = planOperatingMode({
+      target: "event",
+      privacyMode: "invisible",
+      lastDiscoverableMode: "everyone",
+      eventEnabled: false,
+    });
+    expect(blocked.blockedByInvisible).toBe(true);
+    expect(blocked.nextPrivacyMode).toBe("invisible");
+    expect(blocked.nextEventEnabled).toBe(false);
+    expect(eventModeMayRun("invisible")).toBe(false);
+
+    const consented = planOperatingMode({
+      target: "event",
+      privacyMode: "invisible",
+      lastDiscoverableMode: "everyone",
+      eventEnabled: false,
+      audience: "contacts",
+    });
+    expect(consented.blockedByInvisible).toBe(false);
+    expect(consented.nextPrivacyMode).toBe("contacts");
+    expect(consented.nextEventEnabled).toBe(true);
+
+    const kill = planOperatingMode({
+      target: "invisible",
+      privacyMode: "everyone",
+      lastDiscoverableMode: "everyone",
+      eventEnabled: true,
+    });
+    expect(kill.nextPrivacyMode).toBe("invisible");
+    expect(kill.nextEventEnabled).toBe(false);
+    expect(kill.lastDiscoverableMode).toBe("everyone");
+
+    const afterExpiry = planOperatingMode({
+      target: "around_us",
+      privacyMode: "everyone",
+      lastDiscoverableMode: "everyone",
+      eventEnabled: true,
+    });
+    expect(afterExpiry.nextPrivacyMode).toBe("everyone");
+    expect(afterExpiry.nextEventEnabled).toBe(false);
+    expect(deriveOperatingMode(afterExpiry.nextPrivacyMode, afterExpiry.nextEventEnabled)).toBe(
+      "around_us",
+    );
   });
 
   it("BLE debug is gated to __DEV__ and never exposes hardware IDs", () => {

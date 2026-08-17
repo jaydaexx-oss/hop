@@ -1,8 +1,9 @@
 import { useEffect, useRef } from 'react';
 import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 
-import type { AroundUsPeer } from '@/src/nearby/types';
+import type { AroundUsPeer, NearbyOperatingMode } from '@/src/nearby/types';
 import { layoutRadarNodes, type RadarNode } from '@/src/nearby/radarLayout';
+import { radarShouldAnimate } from '@/src/nearby/scanState';
 import { Avatar } from '@/components/Avatar';
 
 const NODE_SIZE = 36;
@@ -95,6 +96,9 @@ export function NearbyRadar({
   selfColor,
   emptyCopy,
   onPressPeer,
+  operatingMode = 'around_us',
+  reduceMotion = false,
+  eventRemainingLabel,
 }: {
   peers: AroundUsPeer[];
   size: number;
@@ -105,26 +109,34 @@ export function NearbyRadar({
   selfColor: string;
   emptyCopy: string;
   onPressPeer: (peer: AroundUsPeer) => void;
+  operatingMode?: NearbyOperatingMode;
+  reduceMotion?: boolean;
+  eventRemainingLabel?: string;
 }) {
   const rotation = useRef(new Animated.Value(0)).current;
   const nodes = layoutRadarNodes(peers, size);
   const byToken = new Map(peers.map((peer) => [peer.token, peer]));
   const center = size / 2;
+  const invisible = operatingMode === 'invisible';
+  const eventActive = operatingMode === 'event';
+  const animate = radarShouldAnimate({ scanning, reduceMotion, invisible });
+  const discOpacity = invisible ? 0.42 : 1;
 
   useEffect(() => {
-    if (!scanning) {
+    if (!animate) {
       rotation.stopAnimation();
       rotation.setValue(0);
       return;
     }
     const loop = Animated.loop(
-      Animated.timing(rotation, { toValue: 1, duration: 3200, useNativeDriver: true }),
+      Animated.timing(rotation, { toValue: 1, duration: eventActive ? 2200 : 3200, useNativeDriver: true }),
     );
     loop.start();
     return () => loop.stop();
-  }, [rotation, scanning]);
+  }, [animate, eventActive, rotation]);
 
   const spin = rotation.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
+  const sweepDuration = eventActive ? 1800 : 2600;
 
   return (
     <View style={[styles.wrap, { width: size, height: size }]}>
@@ -135,7 +147,9 @@ export function NearbyRadar({
             width: size,
             height: size,
             borderRadius: size / 2,
-            borderColor: border,
+            borderColor: eventActive ? tint : border,
+            borderWidth: eventActive ? 2 : 1,
+            opacity: discOpacity,
           },
         ]}>
         {[0.33, 0.66, 1].map((ratio) => (
@@ -146,9 +160,9 @@ export function NearbyRadar({
               width: size * ratio,
               height: size * ratio,
               borderRadius: (size * ratio) / 2,
-              borderWidth: 0.6,
+              borderWidth: eventActive ? 1 : 0.6,
               borderColor: tint,
-              opacity: 0.35,
+              opacity: invisible ? 0.18 : eventActive ? 0.5 : 0.35,
               left: center - (size * ratio) / 2,
               top: center - (size * ratio) / 2,
             }}
@@ -156,11 +170,11 @@ export function NearbyRadar({
         ))}
         <View pointerEvents="none" style={[styles.crossH, { backgroundColor: border, top: center }]} />
         <View pointerEvents="none" style={[styles.crossV, { backgroundColor: border, left: center }]} />
-        {scanning ? (
+        {animate ? (
           <>
             <PulseRing delay={0} size={size} color={tint} />
-            <PulseRing delay={866} size={size} color={tint} />
-            <PulseRing delay={1732} size={size} color={tint} />
+            <PulseRing delay={Math.round(sweepDuration / 3)} size={size} color={tint} />
+            <PulseRing delay={Math.round((sweepDuration * 2) / 3)} size={size} color={tint} />
             <Animated.View
               pointerEvents="none"
               style={{
@@ -175,7 +189,7 @@ export function NearbyRadar({
                   left: center,
                   top: center - 1,
                   width: center,
-                  height: 2,
+                  height: eventActive ? 3 : 2,
                   backgroundColor: tint,
                   opacity: 0.85,
                 }}
@@ -183,7 +197,7 @@ export function NearbyRadar({
             </Animated.View>
           </>
         ) : null}
-        <View style={[styles.center, { backgroundColor: tint }]}>
+        <View style={[styles.center, { backgroundColor: tint, opacity: invisible ? 0.55 : 1 }]}>
           <Avatar username={selfName} color={selfColor} size={28} />
         </View>
         {nodes.map((node) => {
@@ -192,6 +206,11 @@ export function NearbyRadar({
           return <RadarDot key={node.token} node={node} color={tint} onPress={() => onPressPeer(peer)} />;
         })}
       </View>
+      {eventActive && eventRemainingLabel ? (
+        <View pointerEvents="none" style={styles.eventBadge}>
+          <Text style={[styles.eventBadgeText, { color: tint }]}>{eventRemainingLabel} left</Text>
+        </View>
+      ) : null}
       {peers.length === 0 ? (
         <View pointerEvents="none" style={styles.emptyOverlay}>
           <Text style={styles.emptyText}>{emptyCopy}</Text>
@@ -243,4 +262,14 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     paddingHorizontal: 24,
   },
+  eventBadge: {
+    position: 'absolute',
+    top: 14,
+    alignSelf: 'center',
+    backgroundColor: 'rgba(7,11,18,0.78)',
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  eventBadgeText: { fontSize: 12, fontWeight: '800' },
 });

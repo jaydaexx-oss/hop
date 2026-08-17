@@ -1,8 +1,15 @@
 import {
+  deriveOperatingMode,
+  eventEnabledAfterPrivacyChange,
   eventModeMayRun,
   isDiscoverableMode,
+  operatingModeAfterEventExpiry,
+  planOperatingMode,
   privacyModeForDiscoverable,
   rememberDiscoverableMode,
+  type NearbyAudience,
+  type NearbyOperatingMode,
+  type OperatingModePlan,
 } from '@hop/protocol';
 
 import type { BleDiscoveryProfile, NearbyPrivacyMode } from './types';
@@ -48,3 +55,53 @@ export function shouldRunNearbyDiscovery(input: {
   if (!input.bluetoothOn || !input.permissionGranted) return false;
   return true;
 }
+
+export function operatingModeFor(
+  privacyMode: NearbyPrivacyMode,
+  eventEnabled: boolean,
+): NearbyOperatingMode {
+  return deriveOperatingMode(privacyMode, eventEnabled);
+}
+
+export function survivingEventEnabled(
+  privacyMode: NearbyPrivacyMode,
+  eventEnabled: boolean,
+): boolean {
+  return eventEnabledAfterPrivacyChange(privacyMode, eventEnabled);
+}
+
+export function operatingModeAfterExpiry(privacyMode: NearbyPrivacyMode): NearbyOperatingMode {
+  return operatingModeAfterEventExpiry(privacyMode);
+}
+
+export function planNearbyOperatingMode(input: {
+  target: NearbyOperatingMode;
+  privacyMode: NearbyPrivacyMode;
+  lastDiscoverableMode: NearbyAudience;
+  eventEnabled: boolean;
+  audience?: NearbyAudience | null;
+}): OperatingModePlan {
+  return planOperatingMode(input);
+}
+
+export const OPERATING_MODE_ORDER: NearbyOperatingMode[] = ['around_us', 'event', 'invisible'];
+
+export const EVENT_BLOCKED_COPY = {
+  title: 'Choose who can find you',
+  body: 'Event Mode cannot run while Invisible. Pick Contacts only or Everyone nearby first. You will not appear to new nearby people until you do.',
+};
+
+export const EVENT_ENTRY_COPY = {
+  title: 'Start Event Mode?',
+  body: 'Runs for 2 hours with more active Bluetooth discovery. Uses more battery. No GPS. Encryption and message requests stay the same. When time is up you return to Around Us — not Invisible.',
+  confirm: 'Start for 2 hours',
+};
+
+export const INVISIBLE_RADAR_COPY =
+  'Chats still work. You won’t appear to new nearby people.';
+
+export const OPERATING_MODE_HINTS: Record<NearbyOperatingMode, string> = {
+  around_us: 'Find people nearby over Bluetooth. Existing chats stay available.',
+  event: 'Two-hour gathering discovery. Choose who can find you before it starts.',
+  invisible: 'Stop appearing to new nearby people. Existing chats still work.',
+};

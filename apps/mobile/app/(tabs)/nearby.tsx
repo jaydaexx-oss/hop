@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Dimensions, Pressable, ScrollView, StyleSheet, Switch } from 'react-native';
+import { Dimensions, Pressable, ScrollView, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import {
@@ -11,22 +11,28 @@ import {
 } from '@hop/protocol';
 
 import { ActionSheet, type SheetAction } from '@/components/ActionSheet';
+import { NearbyModeSelector } from '@/components/NearbyModeSelector';
 import { NearbyRadar } from '@/components/NearbyRadar';
 import { StatusBanner } from '@/components/StatusBanner';
 import { Text, View } from '@/components/Themed';
+import { useReduceMotion } from '@/components/useReduceMotion';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { chatRoute, openPeerThread } from '@/src/chat/openPeerThread';
+import {
+  EVENT_BLOCKED_COPY,
+  EVENT_ENTRY_COPY,
+  INVISIBLE_RADAR_COPY,
+} from '@/src/nearby/nearbyPolicy';
 import { SCAN_STATE_COPY } from '@/src/nearby/scanState';
-import type { AroundUsPeer, NearbyPrivacyMode } from '@/src/nearby/types';
-import { PRIVACY_LABELS, PROXIMITY_LABELS } from '@/src/nearby/types';
+import type { AroundUsPeer, NearbyAudience, NearbyOperatingMode } from '@/src/nearby/types';
+import { AUDIENCE_LABELS, OPERATING_MODE_LABELS, PROXIMITY_LABELS } from '@/src/nearby/types';
 import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
 import { avatarInitialsFromName } from '@/components/Avatar';
 
-const PRIVACY_ORDER: NearbyPrivacyMode[] = ['invisible', 'contacts', 'everyone'];
 const RADAR_SIZE = Math.min(Dimensions.get('window').width * 0.88, 336);
 
 function presenceLabel(peer: AroundUsPeer): string {
@@ -49,10 +55,19 @@ function sheetLabel(id: NearbySheetActionId, peer: AroundUsPeer): string {
   return id;
 }
 
+function leadCopy(mode: NearbyOperatingMode): string {
+  if (mode === 'invisible') return INVISIBLE_RADAR_COPY;
+  if (mode === 'event') {
+    return 'Gathering discovery is on. Faster Bluetooth for this session only. Tap a person for profile, connect, or a message request — never an automatic chat.';
+  }
+  return 'Real people this phone can see over Bluetooth. Tap a dot for profile, connect, or a message request — never an automatic chat. Approximate proximity only.';
+}
+
 export default function NearbyScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const router = useRouter();
+  const reduceMotion = useReduceMotion();
   const { user, token } = useAuth();
   const { color: selfColor } = useLocalAvatarColor(user?.id);
   const { cacheConversation, listCachedConversations, safety } = useOffline();
@@ -60,13 +75,12 @@ export default function NearbyScreen() {
     peers,
     scanState,
     privacyMode,
-    setPrivacyMode,
-    discoverable,
-    setDiscoverable,
+    operatingMode,
+    setOperatingMode,
+    audience,
+    setAudience,
     eventMode,
     eventRemainingLabel,
-    enableEventMode,
-    disableEventMode,
     sessionActive,
     busy,
     error,
@@ -79,6 +93,14 @@ export default function NearbyScreen() {
   const [openError, setOpenError] = useState<string | null>(null);
   const [eventError, setEventError] = useState<string | null>(null);
   const [sheetPeer, setSheetPeer] = useState<AroundUsPeer | null>(null);
+  const [modeSheet, setModeSheet] = useState<'event-blocked' | 'event-confirm' | null>(null);
+  const [pendingAudience, setPendingAudience] = useState<NearbyAudience | null>(null);
+
+  const radarTint = operatingMode === 'event' ? colors.event : colors.tint;
+  const scanning =
+    operatingMode !== 'invisible' && (scanState === 'searching' || scanState === 'peers_found');
+  const emptyCopy =
+    operatingMode === 'invisible' ? INVISIBLE_RADAR_COPY : SCAN_STATE_COPY[scanState] || 'Nobody nearby right now.';
 
   async function messagePeer(peer: AroundUsPeer) {
     if (!user || !peer.userId) return;
@@ -136,45 +158,101 @@ export default function NearbyScreen() {
       }))
     : [];
 
-  async function toggleEventMode() {
+  function requestEventMode() {
     setEventError(null);
+    if (operatingMode === 'invisible') {
+      setPendingAudience(null);
+      setModeSheet('event-blocked');
+      return;
+    }
+    setPendingAudience(privacyMode === 'contacts' || privacyMode === 'everyone' ? privacyMode : audience);
+    setModeSheet('event-confirm');
+  }
+
+  function chooseBlockedAudience(next: NearbyAudience) {
+    setPendingAudience(next);
+    setModeSheet('event-confirm');
+  }
+
+  async function confirmEventStart(next: NearbyAudience) {
+    setEventError(null);
+    setModeSheet(null);
     try {
-      if (eventMode.enabled) await disableEventMode();
-      else await enableEventMode();
+      await setOperatingMode('event', { audience: next });
     } catch (err) {
-      setEventError(err instanceof Error ? err.message : 'Could not update Event Mode');
+      setEventError(err instanceof Error ? err.message : 'Could not start Event Mode');
     }
   }
 
-  const emptyCopy = SCAN_STATE_COPY[scanState] || 'Nobody nearby right now.';
-  const eventLocked = privacyMode === 'invisible';
-  const scanning = scanState === 'searching' || scanState === 'peers_found';
+  function onSelectMode(mode: NearbyOperatingMode) {
+    setEventError(null);
+    if (mode === 'event') {
+      if (operatingMode === 'event') return;
+      requestEventMode();
+      return;
+    }
+    void setOperatingMode(mode).catch((err) => {
+      setEventError(err instanceof Error ? err.message : 'Could not update Nearby mode');
+    });
+  }
+
+  const confirmAudience = pendingAudience ?? audience;
+  const blockedActions: SheetAction[] = [
+    { label: AUDIENCE_LABELS.contacts, onPress: () => chooseBlockedAudience('contacts') },
+    { label: AUDIENCE_LABELS.everyone, onPress: () => chooseBlockedAudience('everyone') },
+  ];
+  const confirmActions: SheetAction[] =
+    operatingMode === 'invisible'
+      ? [{ label: EVENT_ENTRY_COPY.confirm, onPress: () => void confirmEventStart(confirmAudience) }]
+      : [
+          { label: `${AUDIENCE_LABELS.contacts} · 2 hours`, onPress: () => void confirmEventStart('contacts') },
+          { label: `${AUDIENCE_LABELS.everyone} · 2 hours`, onPress: () => void confirmEventStart('everyone') },
+        ];
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={styles.wrap}>
       <StatusBanner />
       <View style={styles.header}>
         <Text style={[styles.brand, { color: colors.tint }]}>HOP</Text>
-        <Text style={[styles.scanBadge, { color: colors.muted }]}>
-          {bluetoothStatusLabel(scanState)}
+        <Text style={[styles.scanBadge, { color: operatingMode === 'event' ? colors.event : colors.muted }]}>
+          {operatingMode === 'event'
+            ? `Event Mode · ${eventRemainingLabel}`
+            : bluetoothStatusLabel(scanState)}
           {nearbyCount > 0 ? ` · ${nearbyCount}` : ''}
         </Text>
       </View>
-      <Text style={styles.title}>Around Us</Text>
-      <Text style={[styles.lead, { color: colors.muted }]}>
-        Real people this phone can see over Bluetooth. Tap a dot for profile, connect, or a
-        message request — never an automatic chat. Approximate proximity only.
-      </Text>
+      <Text style={styles.title}>{OPERATING_MODE_LABELS[operatingMode]}</Text>
+      <Text style={[styles.lead, { color: colors.muted }]}>{leadCopy(operatingMode)}</Text>
+
+      <NearbyModeSelector
+        operatingMode={operatingMode}
+        audience={audience}
+        eventRemainingLabel={eventRemainingLabel}
+        tint={colors.tint}
+        eventTint={colors.event}
+        muted={colors.muted}
+        border={colors.border}
+        text={colors.text}
+        busy={busy}
+        onSelectMode={onSelectMode}
+        onSelectAudience={(next) => {
+          void setAudience(next);
+        }}
+      />
+      {eventError ? <Text style={styles.error}>{eventError}</Text> : null}
 
       <NearbyRadar
         peers={peers}
         size={RADAR_SIZE}
-        tint={colors.tint}
+        tint={radarTint}
         border={colors.border}
         scanning={scanning}
         selfName={user?.username ?? 'You'}
         selfColor={selfColor}
         emptyCopy={emptyCopy}
+        operatingMode={operatingMode}
+        reduceMotion={reduceMotion}
+        eventRemainingLabel={eventMode.enabled ? eventRemainingLabel : undefined}
         onPressPeer={(peer) => {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
           setSheetPeer(peer);
@@ -182,95 +260,15 @@ export default function NearbyScreen() {
       />
 
       <View style={[styles.card, { backgroundColor: colors.card }]}>
-        <Text style={styles.cardTitle}>Nearby visibility</Text>
-        <Text style={{ color: colors.muted }}>
-          Discoverable off is Invisible — you stop advertising and do not appear to new nearby
-          users. Existing chats and internet messaging stay on. Event Mode cannot override it.
-        </Text>
-        <View style={styles.discoverRow}>
-          <Text style={{ fontWeight: '700' }}>Discoverable</Text>
-          <Switch
-            value={discoverable}
-            onValueChange={(on) => {
-              void setDiscoverable(on);
-            }}
-            disabled={busy}
-          />
-        </View>
-        <View style={styles.segment}>
-          {PRIVACY_ORDER.map((mode) => {
-            const active = privacyMode === mode;
-            return (
-              <Pressable
-                key={mode}
-                onPress={() => setPrivacyMode(mode)}
-                disabled={busy}
-                style={[
-                  styles.segmentItem,
-                  {
-                    backgroundColor: active ? colors.tint : 'transparent',
-                    borderColor: colors.tint,
-                  },
-                ]}>
-                <Text style={{ color: active ? '#042f2e' : colors.tint, fontWeight: '700', fontSize: 12 }}>
-                  {PRIVACY_LABELS[mode]}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      </View>
-
-      <View style={[styles.card, { backgroundColor: colors.card }]}>
-        <Text style={styles.cardTitle}>Event Mode</Text>
-        {eventMode.enabled ? (
-          <>
-            <Text style={{ color: colors.tint, fontWeight: '700' }}>On · {eventRemainingLabel} left</Text>
-            <Text style={{ color: colors.muted }}>
-              {nearbyCount} HOP {nearbyCount === 1 ? 'user' : 'users'} nearby. Discovery is more active for
-              this session only. Encryption is unchanged.
-            </Text>
-          </>
-        ) : (
-          <Text style={{ color: colors.muted }}>
-            Optional 2-hour discovery boost for a gathering. Off until you turn it on. Expires
-            automatically.
-          </Text>
-        )}
-        {eventLocked ? (
-          <Text style={{ color: colors.muted, fontSize: 12 }}>
-            Choose Contacts only or Everyone nearby before turning on Event Mode.
-          </Text>
-        ) : null}
-        {eventError ? <Text style={styles.error}>{eventError}</Text> : null}
-        <Pressable
-          onPress={toggleEventMode}
-          disabled={busy || (eventLocked && !eventMode.enabled)}
-          style={[
-            styles.button,
-            {
-              backgroundColor: eventMode.enabled ? 'transparent' : colors.tint,
-              borderWidth: eventMode.enabled ? 1.5 : 0,
-              borderColor: colors.tint,
-              opacity: busy || (eventLocked && !eventMode.enabled) ? 0.45 : 1,
-            },
-          ]}>
-          <Text style={{ color: eventMode.enabled ? colors.tint : '#042f2e', fontWeight: '700' }}>
-            {eventMode.enabled ? 'Turn off Event Mode' : 'Turn on for 2 hours'}
-          </Text>
-        </Pressable>
-      </View>
-
-      <View style={[styles.card, { backgroundColor: colors.card }]}>
         <Text style={styles.cardTitle}>This phone</Text>
         <Text style={{ color: colors.muted }}>{bluetoothStatusLabel(scanState)}</Text>
-        {privacyMode === 'invisible' ? (
+        {operatingMode === 'invisible' ? (
           <Text style={{ color: colors.muted }}>Invisible — not advertising or scanning</Text>
         ) : (
           <Text style={{ color: colors.muted }}>
             {sessionActive
-              ? eventMode.enabled
-                ? 'Event Mode scanning'
+              ? operatingMode === 'event'
+                ? `Event Mode scanning · ${eventRemainingLabel} left`
                 : 'Looking around'
               : 'Nearby is idle'}
           </Text>
@@ -332,6 +330,25 @@ export default function NearbyScreen() {
         avatarColor={colors.tint}
         actions={sheetActions}
       />
+      <ActionSheet
+        visible={modeSheet === 'event-blocked'}
+        onDismiss={() => setModeSheet(null)}
+        title={EVENT_BLOCKED_COPY.title}
+        message={EVENT_BLOCKED_COPY.body}
+        avatarInitials="IN"
+        avatarColor={colors.tint}
+        actions={blockedActions}
+      />
+      <ActionSheet
+        visible={modeSheet === 'event-confirm'}
+        onDismiss={() => setModeSheet(null)}
+        title={EVENT_ENTRY_COPY.title}
+        subtitle={`Who can find you: ${AUDIENCE_LABELS[confirmAudience]}`}
+        message={EVENT_ENTRY_COPY.body}
+        avatarInitials="EV"
+        avatarColor={colors.event}
+        actions={confirmActions}
+      />
     </ScrollView>
   );
 }
@@ -351,16 +368,7 @@ const styles = StyleSheet.create({
   lead: { fontSize: 15, lineHeight: 21, marginBottom: 16 },
   card: { borderRadius: 16, padding: 14, marginBottom: 12, gap: 6, backgroundColor: 'transparent' },
   cardTitle: { fontSize: 16, fontWeight: '700' },
-  discoverRow: {
-    marginTop: 8,
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    backgroundColor: 'transparent',
-  },
   section: { fontSize: 18, fontWeight: '700', marginTop: 8, marginBottom: 8 },
-  segment: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: 8, backgroundColor: 'transparent' },
-  segmentItem: { borderRadius: 12, borderWidth: 1.5, paddingVertical: 8, paddingHorizontal: 10 },
   peerHeader: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -377,6 +385,5 @@ const styles = StyleSheet.create({
   avatarText: { color: '#042f2e', fontWeight: '800', fontSize: 13 },
   peerMeta: { flex: 1, backgroundColor: 'transparent', gap: 2 },
   peerName: { fontSize: 18, fontWeight: '700' },
-  button: { marginTop: 10, borderRadius: 12, paddingVertical: 12, alignItems: 'center' },
-  error: { color: '#DC2626' },
+  error: { color: '#DC2626', marginBottom: 8 },
 });

@@ -18,9 +18,23 @@ import { EventModeService, formatEventRemaining } from './EventModeService';
 import { NearbyService } from './NearbyService';
 import { createEphemeralDiscoveryId } from './ephemeralId';
 import { createPersistentKv } from './kvStore';
-import { discoveryProfileFor, isDiscoverable, isEventModeAllowed, shouldRunNearbyDiscovery } from './nearbyPolicy';
+import {
+  discoveryProfileFor,
+  isDiscoverable,
+  isEventModeAllowed,
+  operatingModeFor,
+  planNearbyOperatingMode,
+  shouldRunNearbyDiscovery,
+} from './nearbyPolicy';
 import { loadLastDiscoverableMode, loadPrivacyMode, saveLastDiscoverableMode, savePrivacyMode } from './privacyStore';
-import type { AroundUsPeer, AroundUsScanState, EventModeSnapshot, NearbyPrivacyMode } from './types';
+import type {
+  AroundUsPeer,
+  AroundUsScanState,
+  EventModeSnapshot,
+  NearbyAudience,
+  NearbyOperatingMode,
+  NearbyPrivacyMode,
+} from './types';
 import { DEFAULT_EVENT_DURATION_MS } from './types';
 
 type NearbyContextValue = {
@@ -31,6 +45,13 @@ type NearbyContextValue = {
   setPrivacyMode: (mode: NearbyPrivacyMode) => Promise<void>;
   discoverable: boolean;
   setDiscoverable: (on: boolean) => Promise<void>;
+  operatingMode: NearbyOperatingMode;
+  setOperatingMode: (
+    mode: NearbyOperatingMode,
+    options?: { audience?: NearbyAudience | null },
+  ) => Promise<void>;
+  audience: NearbyAudience;
+  setAudience: (audience: NearbyAudience) => Promise<void>;
   eventMode: EventModeSnapshot;
   eventRemainingLabel: string;
   enableEventMode: () => Promise<void>;
@@ -331,15 +352,18 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     [lastDiscoverableMode, setPrivacyMode],
   );
 
-  const enableEventMode = useCallback(async () => {
-    if (!user) return;
-    if (!isEventModeAllowed(privacyMode)) {
-      throw new Error('Turn on Contacts only or Everyone nearby before Event Mode.');
-    }
-    const next = await eventServiceRef.current.enable(user.id, DEFAULT_EVENT_DURATION_MS);
-    setEventMode(next);
-    setDiscoveryProfile('event');
-  }, [privacyMode, setDiscoveryProfile, user]);
+  const enableEventMode = useCallback(
+    async (forPrivacy: NearbyPrivacyMode = privacyMode) => {
+      if (!user) return;
+      if (!isEventModeAllowed(forPrivacy)) {
+        throw new Error('Turn on Contacts only or Everyone nearby before Event Mode.');
+      }
+      const next = await eventServiceRef.current.enable(user.id, DEFAULT_EVENT_DURATION_MS);
+      setEventMode(next);
+      setDiscoveryProfile('event');
+    },
+    [privacyMode, setDiscoveryProfile, user],
+  );
 
   const disableEventMode = useCallback(async () => {
     if (!user) return;
@@ -347,6 +371,49 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     setEventMode(next);
     setDiscoveryProfile('standard');
   }, [setDiscoveryProfile, user]);
+
+  const setOperatingMode = useCallback(
+    async (mode: NearbyOperatingMode, options?: { audience?: NearbyAudience | null }) => {
+      if (!user) return;
+      const plan = planNearbyOperatingMode({
+        target: mode,
+        privacyMode,
+        lastDiscoverableMode,
+        eventEnabled: eventMode.enabled,
+        audience: options?.audience,
+      });
+      if (plan.blockedByInvisible) {
+        throw new Error('Turn on Contacts only or Everyone nearby before Event Mode.');
+      }
+      if (plan.nextPrivacyMode !== privacyMode) {
+        await setPrivacyMode(plan.nextPrivacyMode);
+      }
+      if (plan.nextEventEnabled) {
+        await enableEventMode(plan.nextPrivacyMode);
+      } else if (eventMode.enabled) {
+        await disableEventMode();
+      }
+    },
+    [
+      disableEventMode,
+      enableEventMode,
+      eventMode.enabled,
+      lastDiscoverableMode,
+      privacyMode,
+      setPrivacyMode,
+      user,
+    ],
+  );
+
+  const setAudience = useCallback(
+    async (next: NearbyAudience) => {
+      if (privacyMode === 'invisible') return;
+      await setPrivacyMode(next);
+    },
+    [privacyMode, setPrivacyMode],
+  );
+
+  const operatingMode = operatingModeFor(privacyMode, eventMode.enabled);
 
   const value = useMemo<NearbyContextValue>(
     () => ({
@@ -357,6 +424,10 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
       setPrivacyMode,
       discoverable: isDiscoverable(privacyMode),
       setDiscoverable,
+      operatingMode,
+      setOperatingMode,
+      audience: lastDiscoverableMode,
+      setAudience,
       eventMode,
       eventRemainingLabel: formatEventRemaining(eventMode.remainingMs),
       enableEventMode,
@@ -377,12 +448,16 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
       enableEventMode,
       error,
       eventMode,
+      lastDiscoverableMode,
+      operatingMode,
       peers,
       privacyMode,
       ready,
       scanState,
       sessionActive,
+      setAudience,
       setDiscoverable,
+      setOperatingMode,
       setPrivacyMode,
       status.detail,
     ],

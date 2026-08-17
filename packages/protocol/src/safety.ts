@@ -131,6 +131,101 @@ export function eventModeMayRun(privacyMode: string): boolean {
   return isDiscoverableMode(privacyMode);
 }
 
+/** Primary Nearby UX mode. Derived — not a second privacy system. */
+export type NearbyOperatingMode = "around_us" | "event" | "invisible";
+
+export type NearbyAudience = "contacts" | "everyone";
+
+/**
+ * INVISIBLE  ↔ privacyMode === 'invisible' (Event cannot run)
+ * AROUND US  ↔ Discoverable AND event off
+ * EVENT MODE ↔ Discoverable AND event on
+ */
+export function deriveOperatingMode(
+  privacyMode: string,
+  eventEnabled: boolean,
+): NearbyOperatingMode {
+  if (!isDiscoverableMode(privacyMode)) return "invisible";
+  if (eventEnabled && eventModeMayRun(privacyMode)) return "event";
+  return "around_us";
+}
+
+/** Invisible always wins. A stale Event flag cannot keep discovery on. */
+export function eventEnabledAfterPrivacyChange(
+  privacyMode: string,
+  eventEnabled: boolean,
+): boolean {
+  return eventEnabled && eventModeMayRun(privacyMode);
+}
+
+/** Event expiry returns Around Us whenever Discoverable is still on. */
+export function operatingModeAfterEventExpiry(privacyMode: string): NearbyOperatingMode {
+  return isDiscoverableMode(privacyMode) ? "around_us" : "invisible";
+}
+
+export type OperatingModePlan = {
+  nextPrivacyMode: "invisible" | NearbyAudience;
+  nextEventEnabled: boolean;
+  /** Event requested while Invisible with no audience — do not advertise. */
+  blockedByInvisible: boolean;
+  lastDiscoverableMode: NearbyAudience;
+};
+
+function asAudience(value: string | null | undefined): NearbyAudience | null {
+  return value === "contacts" || value === "everyone" ? value : null;
+}
+
+/**
+ * Plan a 3-mode transition. Does not persist. Event from Invisible without an
+ * explicit audience stays Invisible and does not enable Event Mode.
+ */
+export function planOperatingMode(input: {
+  target: NearbyOperatingMode;
+  privacyMode: string;
+  lastDiscoverableMode?: string | null;
+  eventEnabled: boolean;
+  audience?: string | null;
+}): OperatingModePlan {
+  const lastOn = rememberDiscoverableMode(input.privacyMode, input.lastDiscoverableMode);
+  const requested = asAudience(input.audience);
+
+  if (input.target === "invisible") {
+    return {
+      nextPrivacyMode: "invisible",
+      nextEventEnabled: false,
+      blockedByInvisible: false,
+      lastDiscoverableMode: lastOn,
+    };
+  }
+
+  if (input.target === "around_us") {
+    const audience = requested ?? lastOn;
+    return {
+      nextPrivacyMode: audience,
+      nextEventEnabled: false,
+      blockedByInvisible: false,
+      lastDiscoverableMode: audience,
+    };
+  }
+
+  if (!eventModeMayRun(input.privacyMode) && !requested) {
+    return {
+      nextPrivacyMode: "invisible",
+      nextEventEnabled: false,
+      blockedByInvisible: true,
+      lastDiscoverableMode: lastOn,
+    };
+  }
+
+  const audience = requested ?? asAudience(input.privacyMode) ?? lastOn;
+  return {
+    nextPrivacyMode: audience,
+    nextEventEnabled: true,
+    blockedByInvisible: false,
+    lastDiscoverableMode: audience,
+  };
+}
+
 export function inferRelationshipFromHistory(input: {
   inboundCount: number;
   outboundCount: number;

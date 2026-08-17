@@ -24,7 +24,7 @@ export function deriveScanState(input: {
 }
 
 export const SCAN_STATE_COPY: Record<AroundUsScanState, string> = {
-  invisible: 'You’re invisible. Discovery stays off until you choose Contacts only or Everyone nearby.',
+  invisible: 'Chats still work. You won’t appear to new nearby people.',
   bluetooth_off: 'Bluetooth is off. Turn it on to find people around you. Internet chat and the offline queue still work.',
   permission_needed: 'HOP needs Bluetooth permission to find people around you.',
   searching: 'Searching for HOP users around you…',
@@ -32,3 +32,12 @@ export const SCAN_STATE_COPY: Record<AroundUsScanState, string> = {
   peers_found: '',
   connection_failure: 'Couldn’t connect. Try again — internet chat still works if you’re online.',
 };
+
+export function radarShouldAnimate(input: {
+  scanning: boolean;
+  reduceMotion: boolean;
+  invisible: boolean;
+}): boolean {
+  if (input.reduceMotion || input.invisible) return false;
+  return input.scanning;
+}

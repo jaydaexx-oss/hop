@@ -1,4 +1,13 @@
-import type { BleLinkStatus, BlePeer, BleScanMode, BleSessionOptions } from '@hop/protocol';
+import type {
+  BleLinkStatus,
+  BlePeer,
+  BleScanMode,
+  BleSessionOptions,
+  NearbyAudience,
+  NearbyOperatingMode,
+} from '@hop/protocol';
+
+export type { NearbyAudience, NearbyOperatingMode };
 
 export type NearbyPrivacyMode = 'invisible' | 'contacts' | 'everyone';
 
@@ -78,6 +87,17 @@ export const SEARCHING_GRACE_MS = 12_000;
 
 export const PRIVACY_LABELS: Record<NearbyPrivacyMode, string> = {
   invisible: 'Invisible',
+  contacts: 'Contacts only',
+  everyone: 'Everyone nearby',
+};
+
+export const OPERATING_MODE_LABELS: Record<NearbyOperatingMode, string> = {
+  around_us: 'Around Us',
+  event: 'Event Mode',
+  invisible: 'Invisible',
+};
+
+export const AUDIENCE_LABELS: Record<NearbyAudience, string> = {
   contacts: 'Contacts only',
   everyone: 'Everyone nearby',
 };

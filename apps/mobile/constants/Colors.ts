@@ -12,6 +12,7 @@ export default {
     card: '#FFFFFF',
     border: '#E5E7EB',
     destructive: '#DC2626',
+    event: '#D97706',
   },
   dark: {
     text: '#F9FAFB',
@@ -23,5 +24,6 @@ export default {
     card: '#111827',
     border: '#1F2937',
     destructive: '#F87171',
+    event: '#FBBF24',
   },
 };

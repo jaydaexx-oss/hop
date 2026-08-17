@@ -13,6 +13,7 @@ type ActionSheetProps = {
   onDismiss: () => void;
   title: string;
   subtitle?: string;
+  message?: string;
   avatarInitials?: string;
   avatarColor?: string;
   actions: SheetAction[];
@@ -23,6 +24,7 @@ export function ActionSheet({
   onDismiss,
   title,
   subtitle,
+  message,
   avatarInitials,
   avatarColor = '#14B8A6',
   actions,
@@ -64,6 +66,7 @@ export function ActionSheet({
           <View style={styles.headerText}>
             <Text style={styles.headerName}>{title}</Text>
             {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
+            {message ? <Text style={styles.headerMessage}>{message}</Text> : null}
           </View>
         </View>
         <View style={styles.divider} />
@@ -113,6 +116,7 @@ const styles = StyleSheet.create({
   headerText: { flex: 1 },
   headerName: { fontSize: 16, fontWeight: '700', color: '#F9FAFB' },
   headerSub: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
+  headerMessage: { fontSize: 13, color: '#D1D5DB', marginTop: 8, lineHeight: 19 },
   avatar: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
   avatarText: { color: '#042f2e', fontWeight: '800', fontSize: 16 },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: '#1F2937', marginBottom: 6 },

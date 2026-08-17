@@ -1,4 +1,5 @@
 import { mergePersistedStatus } from "./acks.js";
+import { compareSenderStream, sortConversationMessages } from "./lifecycle.js";
 import type { PeerTrustRecord } from "./tofu.js";
 
 /** Durable store is ciphertext + optional local_seal. Do not persist decrypted voice. */
@@ -164,36 +165,51 @@ export class HopSqliteStore {
 
   async saveMessage(message: StoredMessage): Promise<void> {
     const existing = await this.getMessage(message.message_id);
+    if (
+      existing &&
+      (existing.conversation_id !== message.conversation_id ||
+        existing.sender_id !== message.sender_id ||
+        existing.recipient_id !== message.recipient_id)
+    ) {
+      return;
+    }
     const status = existing ? mergePersistedStatus(existing.status, message.status) : message.status;
-    const kind = message.kind ?? existing?.kind ?? null;
+    const kind = existing?.kind ?? message.kind ?? null;
+    const ciphertext =
+      existing?.encrypted_payload && existing.encrypted_payload.length > 0
+        ? existing.encrypted_payload
+        : message.encrypted_payload;
     await this.db.execute(
       `INSERT INTO messages (
         message_id, conversation_id, sender_id, recipient_id, text, encrypted_payload, local_seal,
         status, transport, created_at, expires_at, ttl, hop_count, send_seq, kind
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(message_id) DO UPDATE SET
-        text=excluded.text,
-        encrypted_payload=excluded.encrypted_payload,
-        local_seal=excluded.local_seal,
+        text=NULL,
+        encrypted_payload=CASE
+          WHEN length(COALESCE(messages.encrypted_payload, '')) > 0 THEN messages.encrypted_payload
+          ELSE excluded.encrypted_payload
+        END,
+        local_seal=COALESCE(messages.local_seal, excluded.local_seal),
         status=excluded.status,
         transport=excluded.transport,
-        kind=COALESCE(excluded.kind, messages.kind),
-        send_seq=COALESCE(excluded.send_seq, messages.send_seq)`,
+        kind=COALESCE(messages.kind, excluded.kind),
+        send_seq=COALESCE(messages.send_seq, excluded.send_seq)`,
       [
         message.message_id,
-        message.conversation_id,
-        message.sender_id,
-        message.recipient_id,
-        message.text,
-        message.encrypted_payload,
-        message.local_seal ?? null,
+        existing?.conversation_id ?? message.conversation_id,
+        existing?.sender_id ?? message.sender_id,
+        existing?.recipient_id ?? message.recipient_id,
+        null,
+        ciphertext,
+        existing?.local_seal ?? message.local_seal ?? null,
         status,
-        message.transport,
-        message.created_at,
-        message.expires_at,
-        message.ttl,
-        message.hop_count,
-        message.send_seq ?? null,
+        message.transport || existing?.transport || "local",
+        existing?.created_at ?? message.created_at,
+        existing?.expires_at ?? message.expires_at,
+        existing?.ttl ?? message.ttl,
+        existing?.hop_count ?? message.hop_count,
+        existing?.send_seq ?? message.send_seq ?? null,
         kind,
       ],
     );
@@ -208,11 +224,11 @@ export class HopSqliteStore {
   }
 
   async listMessages(conversationId: string): Promise<StoredMessage[]> {
-    return this.db.query<StoredMessage>(
-      `SELECT * FROM messages WHERE conversation_id = ?
-       ORDER BY COALESCE(send_seq, 0) ASC, created_at ASC, message_id ASC`,
+    const rows = await this.db.query<StoredMessage>(
+      `SELECT * FROM messages WHERE conversation_id = ?`,
       [conversationId],
     );
+    return sortConversationMessages(rows);
   }
 
   async listMessagesByStatus(status: string): Promise<StoredMessage[]> {
@@ -227,11 +243,33 @@ export class HopSqliteStore {
     return rows[0] ?? null;
   }
 
-  async nextSendSeq(conversationId: string): Promise<number> {
-    const key = `send_seq:${conversationId}`;
-    const current = Number.parseInt((await this.getSyncValue(key)) ?? "0", 10);
-    const next = (Number.isFinite(current) ? current : 0) + 1;
-    await this.setSyncValue(key, String(next));
+  async nextSendSeq(conversationId: string, senderId?: string): Promise<number> {
+    const legacyKey = `send_seq:${conversationId}`;
+    const keyed = senderId ? `send_seq:${conversationId}:${senderId}` : legacyKey;
+    const fromKeyed = Number.parseInt((await this.getSyncValue(keyed)) ?? "0", 10);
+    const fromLegacy = senderId ? Number.parseInt((await this.getSyncValue(legacyKey)) ?? "0", 10) : 0;
+    let fromRows = 0;
+    if (senderId) {
+      const rows = await this.db.query<{ m: number | null }>(
+        `SELECT MAX(send_seq) AS m FROM messages WHERE conversation_id = ? AND sender_id = ?`,
+        [conversationId, senderId],
+      );
+      fromRows = Number(rows[0]?.m ?? 0);
+    } else {
+      const rows = await this.db.query<{ m: number | null }>(
+        `SELECT MAX(send_seq) AS m FROM messages WHERE conversation_id = ?`,
+        [conversationId],
+      );
+      fromRows = Number(rows[0]?.m ?? 0);
+    }
+    const current = Math.max(
+      Number.isFinite(fromKeyed) ? fromKeyed : 0,
+      Number.isFinite(fromLegacy) ? fromLegacy : 0,
+      Number.isFinite(fromRows) ? fromRows : 0,
+    );
+    const next = current + 1;
+    await this.setSyncValue(keyed, String(next));
+    if (senderId) await this.setSyncValue(legacyKey, String(next));
     return next;
   }
 
@@ -313,23 +351,23 @@ export class HopSqliteStore {
       [conversationId, messageId],
     );
     return rows.some((row) => {
-      if (sendSeq != null && row.send_seq != null && row.send_seq !== sendSeq) {
-        return row.send_seq < sendSeq;
-      }
-      if (row.created_at !== createdAt) return row.created_at < createdAt;
-      const otherSeq = row.send_seq ?? 0;
-      const selfSeq = sendSeq ?? 0;
-      if (otherSeq !== selfSeq) return otherSeq < selfSeq;
-      return row.message_id < messageId;
+      return (
+        compareSenderStream(
+          {
+            message_id: row.message_id,
+            sender_id: "",
+            created_at: row.created_at,
+            send_seq: row.send_seq,
+          },
+          { message_id: messageId, sender_id: "", created_at: createdAt, send_seq: sendSeq },
+        ) < 0
+      );
     });
   }
 
   async latestMessage(conversationId: string): Promise<StoredMessage | null> {
-    const rows = await this.db.query<StoredMessage>(
-      "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1",
-      [conversationId],
-    );
-    return rows[0] ?? null;
+    const rows = (await this.listMessages(conversationId)).filter((row) => row.kind !== "delivery_ack");
+    return rows[rows.length - 1] ?? null;
   }
 
   async removeOutbound(messageId: string): Promise<void> {

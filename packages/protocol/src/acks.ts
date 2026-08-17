@@ -149,8 +149,9 @@ export function receiptRank(status: string): number {
 
 /**
  * Never regress SENT → DELIVERED → READ. READ + delayed DELIVERED stays READ.
- * FAILED may advance to DELIVERED/READ when a late crypto ACK arrives.
- * EXPIRED stays expired.
+ * FAILED may advance to DELIVERED/READ when a late crypto ACK arrives, or QUEUED on retry.
+ * SENDING may return to QUEUED/RETRYING for transport retry. EXPIRED stays expired.
+ * Pre-SENT ranks are monotonic: ENCRYPTING never returns to CREATED, QUEUED never to ENCRYPTING.
  */
 export function mergePersistedStatus(current: string, incoming: string): string {
   if (current === incoming) return current;
@@ -169,10 +170,16 @@ export function mergePersistedStatus(current: string, incoming: string): string 
     }
     return MessageStatus.FAILED;
   }
-  if (receiptRank(current) >= receiptRank(MessageStatus.SENT) && receiptRank(incoming) < receiptRank(MessageStatus.SENT)) {
-    if (incoming === MessageStatus.FAILED || incoming === MessageStatus.EXPIRED) return incoming;
-    return current;
+  if (
+    current === MessageStatus.SENDING &&
+    (incoming === MessageStatus.QUEUED || incoming === MessageStatus.RETRYING)
+  ) {
+    return incoming;
   }
+  if (incoming === MessageStatus.FAILED || incoming === MessageStatus.EXPIRED) {
+    return incoming;
+  }
+  if (receiptRank(incoming) < receiptRank(current)) return current;
   return incoming;
 }
 

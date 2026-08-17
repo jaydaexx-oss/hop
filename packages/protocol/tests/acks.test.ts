@@ -55,6 +55,9 @@ describe("encrypted ack protocol helpers", () => {
     expect(mergePersistedStatus(MessageStatus.READ, MessageStatus.SENT)).toBe(MessageStatus.READ);
     expect(mergePersistedStatus(MessageStatus.DELIVERED, MessageStatus.SENT)).toBe(MessageStatus.DELIVERED);
     expect(mergePersistedStatus(MessageStatus.FAILED, MessageStatus.DELIVERED)).toBe(MessageStatus.DELIVERED);
+    expect(mergePersistedStatus(MessageStatus.ENCRYPTING, MessageStatus.CREATED)).toBe(MessageStatus.ENCRYPTING);
+    expect(mergePersistedStatus(MessageStatus.QUEUED, MessageStatus.ENCRYPTING)).toBe(MessageStatus.QUEUED);
+    expect(mergePersistedStatus(MessageStatus.READ, MessageStatus.DELIVERED)).toBe(MessageStatus.READ);
   });
 
   it("derives unread from inbound DELIVERED rows", () => {

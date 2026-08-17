@@ -80,6 +80,8 @@ export function withDecryptedPlain(message: StoredMessage, plain: ApplicationPla
     seq: plain.seq,
     total: plain.total,
     part_of: plain.part_of,
-    send_seq: plain.send_seq,
+    send_seq: plain.send_seq ?? message.send_seq,
+    created_at: plain.created_at || message.created_at,
+    expires_at: plain.expires_at || message.expires_at,
   };
 }

@@ -79,11 +79,15 @@ def apply_receipt_status(current: MessageStatus, incoming: MessageStatus) -> Mes
         return current
     if current == "DELIVERED":
         return "READ" if incoming == "READ" else "DELIVERED"
-    if current == "FAILED" and incoming in {"QUEUED", "DELIVERED", "READ"}:
-        return incoming
-    if RECEIPT_RANK.get(current, -100) >= RECEIPT_RANK["SENT"] and RECEIPT_RANK.get(incoming, -100) < RECEIPT_RANK["SENT"]:
-        if incoming in {"FAILED", "EXPIRED"}:
+    if current == "FAILED":
+        if incoming in {"QUEUED", "DELIVERED", "READ"}:
             return incoming
+        return current
+    if current == "SENDING" and incoming in {"QUEUED", "RETRYING"}:
+        return incoming
+    if incoming in {"FAILED", "EXPIRED"}:
+        return incoming
+    if RECEIPT_RANK.get(incoming, -100) < RECEIPT_RANK.get(current, -100):
         return current
     return incoming
 

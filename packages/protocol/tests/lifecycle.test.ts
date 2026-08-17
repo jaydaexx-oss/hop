@@ -52,6 +52,29 @@ describe("canonical message lifecycle mapping", () => {
     ]);
   });
 
+  it("merges two senders without cycles when clocks jump", () => {
+    const alice1 = { message_id: "a1", sender_id: "alice", created_at: "2026-01-01T00:00:02.000Z", send_seq: 1 };
+    const alice2 = { message_id: "a2", sender_id: "alice", created_at: "2026-01-01T00:00:00.000Z", send_seq: 2 };
+    const bob1 = { message_id: "b1", sender_id: "bob", created_at: "2026-01-01T00:00:01.000Z", send_seq: 1 };
+    expect(sortConversationMessages([alice2, bob1, alice1]).map((row) => row.message_id)).toEqual([
+      "b1",
+      "a1",
+      "a2",
+    ]);
+    expect(sortConversationMessages([bob1, alice1, alice2]).map((row) => row.message_id)).toEqual([
+      "b1",
+      "a1",
+      "a2",
+    ]);
+  });
+
+  it("breaks same-timestamp ties by sender_id then message_id", () => {
+    const t = "2026-08-16T00:00:00.000Z";
+    const a = { message_id: "m-b", sender_id: "bob", created_at: t, send_seq: 1 };
+    const b = { message_id: "m-a", sender_id: "alice", created_at: t, send_seq: 1 };
+    expect(sortConversationMessages([a, b]).map((row) => row.message_id)).toEqual(["m-a", "m-b"]);
+  });
+
   it("caps the durable outbox", () => {
     expect(MAX_OUTBOX_MESSAGES).toBeGreaterThanOrEqual(100);
     expect(MAX_OUTBOX_MESSAGES).toBeLessThanOrEqual(1_000);

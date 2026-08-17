@@ -61,6 +61,17 @@ describe("libsodium crypto_box application messages", () => {
     ).rejects.toThrow(/sender_id/i);
   });
 
+  it("rejects an authenticated conversation_id that does not match the envelope", async () => {
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const packed = await encryptApplicationMessage(plain, blake.publicKey, alice);
+    await expect(
+      decryptApplicationMessage(packed, blake, alice.publicKey, plain.message_id, {
+        expectedConversationId: "other-convo",
+      }),
+    ).rejects.toThrow(/conversation_id/i);
+  });
+
   it("TOFU-binds sender_pk and rejects a later key change", async () => {
     const alice = await generateIdentityKeyPair();
     const mallory = await generateIdentityKeyPair();

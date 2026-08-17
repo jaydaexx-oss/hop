@@ -49,3 +49,5 @@ def test_receipts_never_regress() -> None:
     assert apply_receipt_status("DELIVERED", "SENT") == "DELIVERED"
     assert apply_receipt_status("FAILED", "DELIVERED") == "DELIVERED"
     assert apply_receipt_status("SENT", "DELIVERED") == "DELIVERED"
+    assert apply_receipt_status("ENCRYPTING", "CREATED") == "ENCRYPTING"
+    assert apply_receipt_status("QUEUED", "ENCRYPTING") == "QUEUED"

@@ -134,6 +134,7 @@ export async function encryptApplicationMessage(
 export interface DecryptOptions {
   expectedSenderId?: string;
   expectedRecipientId?: string;
+  expectedConversationId?: string;
   tofu?: { bind(userId: string, publicKey: string): boolean };
 }
 
@@ -174,6 +175,9 @@ export async function decryptApplicationMessage(
   }
   if (options?.expectedRecipientId && plain.recipient_id !== options.expectedRecipientId) {
     throw new Error("Authenticated recipient_id does not match this device");
+  }
+  if (options?.expectedConversationId && plain.conversation_id !== options.expectedConversationId) {
+    throw new Error("Authenticated conversation_id does not match the envelope");
   }
   if (options?.tofu && !options.tofu.bind(plain.sender_id, parsed.sender_pk)) {
     throw new Error("Sender public key does not match the bound identity");

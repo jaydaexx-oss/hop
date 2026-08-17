@@ -110,24 +110,84 @@ export interface ConversationOrderFields {
 }
 
 /**
- * Deterministic conversation order. Same-sender streams follow monotonic send_seq
- * (survives clock skew, delayed BLE, retries). Cross-sender ties break on created_at
- * then message_id — never wall-clock alone.
+ * Conversation convergence order (not a second sync protocol).
+ *
+ * Each sender has a causal stream ordered by `send_seq` (monotonic per sender,
+ * assigned at encrypt time, carried inside crypto_box). Streams are merged by a
+ * cycle-free key of authenticated plaintext fields:
+ *   (created_at, sender_id, send_seq, message_id)
+ *
+ * Pairwise "same-sender by seq else by created_at" can cycle under clock jumps.
+ * `sortConversationMessages` therefore merge-sorts per-sender streams so both
+ * devices render the same order after BLE/Internet/duplicates/out-of-order
+ * delivery. Wall-clock is never used alone; receive-time is never used.
  */
-export function compareConversationMessages(a: ConversationOrderFields, b: ConversationOrderFields): number {
-  if (a.sender_id === b.sender_id && a.send_seq != null && b.send_seq != null && a.send_seq !== b.send_seq) {
-    return a.send_seq - b.send_seq;
-  }
-  if (a.created_at !== b.created_at) {
-    return a.created_at < b.created_at ? -1 : 1;
-  }
-  const seqA = a.send_seq ?? 0;
-  const seqB = b.send_seq ?? 0;
-  if (seqA !== seqB) return seqA - seqB;
+export function compareSenderStream(a: ConversationOrderFields, b: ConversationOrderFields): number {
   if (a.message_id === b.message_id) return 0;
+  const seqA = a.send_seq;
+  const seqB = b.send_seq;
+  if (seqA != null && seqB != null && seqA !== seqB) return seqA - seqB;
+  if (seqA != null && seqB == null) return -1;
+  if (seqA == null && seqB != null) return 1;
+  if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
   return a.message_id < b.message_id ? -1 : 1;
 }
 
+/** Merge key for heads of per-sender streams. Cycle-free total order. */
+export function compareMergeKey(a: ConversationOrderFields, b: ConversationOrderFields): number {
+  if (a.message_id === b.message_id) return 0;
+  if (a.created_at !== b.created_at) return a.created_at < b.created_at ? -1 : 1;
+  if (a.sender_id !== b.sender_id) return a.sender_id < b.sender_id ? -1 : 1;
+  const seqA = a.send_seq ?? 0;
+  const seqB = b.send_seq ?? 0;
+  if (seqA !== seqB) return seqA - seqB;
+  return a.message_id < b.message_id ? -1 : 1;
+}
+
+/**
+ * Pairwise helper: same sender uses the causal stream; different senders use the
+ * merge key. Do not rely on transitivity across mixed pairs — use
+ * `sortConversationMessages` to render a conversation.
+ */
+export function compareConversationMessages(a: ConversationOrderFields, b: ConversationOrderFields): number {
+  if (a.message_id === b.message_id) return 0;
+  if (a.sender_id === b.sender_id) return compareSenderStream(a, b);
+  return compareMergeKey(a, b);
+}
+
 export function sortConversationMessages<T extends ConversationOrderFields>(rows: T[]): T[] {
-  return [...rows].sort(compareConversationMessages);
+  const groups = new Map<string, T[]>();
+  for (const row of rows) {
+    const list = groups.get(row.sender_id);
+    if (list) list.push(row);
+    else groups.set(row.sender_id, [row]);
+  }
+  const streams = [...groups.values()].map((list) => [...list].sort(compareSenderStream));
+  const heads = streams.map(() => 0);
+  const out: T[] = [];
+  for (;;) {
+    let best = -1;
+    for (let i = 0; i < streams.length; i++) {
+      const index = heads[i]!;
+      const stream = streams[i]!;
+      if (index >= stream.length) continue;
+      if (best < 0 || compareMergeKey(stream[index]!, streams[best]![heads[best]!]!) < 0) {
+        best = i;
+      }
+    }
+    if (best < 0) break;
+    out.push(streams[best]![heads[best]!]!);
+    heads[best]! += 1;
+  }
+  return out;
+}
+
+export function sameLogicalIdentity(
+  a: Pick<ConversationOrderFields, "message_id"> & { conversation_id?: string; sender_id?: string },
+  b: Pick<ConversationOrderFields, "message_id"> & { conversation_id?: string; sender_id?: string },
+): boolean {
+  if (a.message_id !== b.message_id) return false;
+  if (a.conversation_id && b.conversation_id && a.conversation_id !== b.conversation_id) return false;
+  if (a.sender_id && b.sender_id && a.sender_id !== b.sender_id) return false;
+  return true;
 }

@@ -117,8 +117,11 @@ export {
   ackLayerFromStatus,
   canonicalLifecycle,
   compareConversationMessages,
+  compareMergeKey,
+  compareSenderStream,
   isOutboxStatus,
   isTransportAcceptedStatus,
+  sameLogicalIdentity,
   sortConversationMessages,
 } from "./lifecycle.js";
 export {

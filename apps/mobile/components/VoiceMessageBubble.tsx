@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, Text, View } from 'react-native';
-import { Audio } from 'expo-av';
+import {
+  createAudioPlayer,
+  setAudioModeAsync,
+  type AudioPlayer,
+  type AudioStatus,
+} from 'expo-audio';
 
 import {
   deleteEphemeralPlaybackFile,
@@ -38,13 +43,20 @@ export function VoiceMessageBubble({
   const [playing, setPlaying] = useState(false);
   const [progress, setProgress] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const soundRef = useRef<Audio.Sound | null>(null);
+  const soundRef = useRef<AudioPlayer | null>(null);
+  const statusSubRef = useRef<{ remove(): void } | null>(null);
   const tempUriRef = useRef<string | null>(null);
+
+  const releasePlayer = () => {
+    statusSubRef.current?.remove();
+    statusSubRef.current = null;
+    soundRef.current?.remove();
+    soundRef.current = null;
+  };
 
   useEffect(() => {
     return () => {
-      soundRef.current?.unloadAsync().catch(() => undefined);
-      soundRef.current = null;
+      releasePlayer();
       const uri = tempUriRef.current;
       tempUriRef.current = null;
       deleteEphemeralPlaybackFile(uri).catch(() => undefined);
@@ -52,8 +64,7 @@ export function VoiceMessageBubble({
   }, []);
 
   const stopAndScrubTemp = async () => {
-    await soundRef.current?.unloadAsync().catch(() => undefined);
-    soundRef.current = null;
+    releasePlayer();
     const uri = tempUriRef.current;
     tempUriRef.current = null;
     await deleteEphemeralPlaybackFile(uri);
@@ -67,12 +78,12 @@ export function VoiceMessageBubble({
       return;
     }
     if (playing) {
-      await soundRef.current?.pauseAsync().catch(() => undefined);
+      soundRef.current?.pause();
       setPlaying(false);
       return;
     }
     try {
-      await Audio.setAudioModeAsync({ playsInSilentModeIOS: true, allowsRecordingIOS: false });
+      await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
       if (!soundRef.current) {
         let uri = voiceDataUri(audioB64, mime);
         try {
@@ -81,17 +92,19 @@ export function VoiceMessageBubble({
         } catch {
           /* data URI fallback — in-memory only, not durable storage */
         }
-        const { sound } = await Audio.Sound.createAsync({ uri }, { shouldPlay: true }, (st) => {
+        const player = createAudioPlayer({ uri }, { updateInterval: 100 });
+        statusSubRef.current = player.addListener('playbackStatusUpdate', (st: AudioStatus) => {
           if (!st.isLoaded) return;
-          const dur = st.durationMillis ?? durationMs;
-          setProgress(dur > 0 ? (st.positionMillis ?? 0) / dur : 0);
+          const durMs = st.duration > 0 ? st.duration * 1000 : durationMs;
+          setProgress(durMs > 0 ? (st.currentTime * 1000) / durMs : 0);
           if (st.didJustFinish) {
             stopAndScrubTemp().catch(() => undefined);
           }
         });
-        soundRef.current = sound;
+        soundRef.current = player;
+        player.play();
       } else {
-        await soundRef.current.playAsync();
+        soundRef.current.play();
       }
       setPlaying(true);
       setError(null);

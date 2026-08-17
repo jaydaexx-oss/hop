@@ -1,6 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
-import { Audio } from 'expo-av';
+import {
+  AudioQuality,
+  IOSOutputFormat,
+  requestRecordingPermissionsAsync,
+  setAudioModeAsync,
+  useAudioRecorder,
+  type RecordingOptions,
+} from 'expo-audio';
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
 import { MAX_VOICE_DURATION_MS, microphoneDeniedMessage } from '@hop/protocol';
@@ -8,22 +15,18 @@ import { MAX_VOICE_DURATION_MS, microphoneDeniedMessage } from '@hop/protocol';
 const MIN_RECORDING_MS = 300;
 const BAR_COUNT = 10;
 
-export const SPEECH_RECORDING_OPTIONS: Audio.RecordingOptions = {
+export const SPEECH_RECORDING_OPTIONS: RecordingOptions = {
+  extension: '.m4a',
+  sampleRate: 16_000,
+  numberOfChannels: 1,
+  bitRate: 32_000,
   android: {
-    extension: '.m4a',
-    outputFormat: Audio.AndroidOutputFormat.MPEG_4,
-    audioEncoder: Audio.AndroidAudioEncoder.AAC,
-    sampleRate: 16_000,
-    numberOfChannels: 1,
-    bitRate: 32_000,
+    outputFormat: 'mpeg4',
+    audioEncoder: 'aac',
   },
   ios: {
-    extension: '.m4a',
-    audioQuality: Audio.IOSAudioQuality.MEDIUM,
-    sampleRate: 16_000,
-    numberOfChannels: 1,
-    bitRate: 32_000,
-    outputFormat: Audio.IOSOutputFormat.MPEG4AAC,
+    outputFormat: IOSOutputFormat.MPEG4AAC,
+    audioQuality: AudioQuality.MEDIUM,
   },
   web: {
     mimeType: 'audio/webm',
@@ -52,11 +55,14 @@ function fmt(ms: number): string {
 }
 
 export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButtonProps) {
+  const recorder = useAudioRecorder(SPEECH_RECORDING_OPTIONS);
+  const recorderRef = useRef(recorder);
+  recorderRef.current = recorder;
   const [granted, setGranted] = useState<boolean | null>(null);
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
   const [error, setError] = useState<string | null>(null);
-  const recordingRef = useRef<Audio.Recording | null>(null);
+  const startedRef = useRef(false);
   const startRef = useRef(0);
   const timerIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hapticIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -76,7 +82,7 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
 
   const requestMic = useCallback(async () => {
     try {
-      const { granted: ok } = await Audio.requestPermissionsAsync();
+      const { granted: ok } = await requestRecordingPermissionsAsync();
       setGranted(ok);
     } catch {
       setGranted(false);
@@ -92,10 +98,10 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
     return () => {
       abortRef.current = true;
       clearAllIntervals();
-      if (recordingRef.current) {
-        recordingRef.current.stopAndUnloadAsync().catch(() => undefined);
-        recordingRef.current = null;
+      if (recorderRef.current.isRecording) {
+        recorderRef.current.stop().catch(() => undefined);
       }
+      startedRef.current = false;
     };
   }, [requestMic]);
 
@@ -103,19 +109,19 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
     if (!granted || Platform.OS === 'web' || stoppingRef.current) return;
     abortRef.current = false;
     setError(null);
-    let rec: Audio.Recording;
     try {
-      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
-      ({ recording: rec } = await Audio.Recording.createAsync(SPEECH_RECORDING_OPTIONS));
+      await setAudioModeAsync({ allowsRecording: true, playsInSilentMode: true });
+      await recorder.prepareToRecordAsync();
+      recorder.record();
     } catch {
       setError('Could not start recording');
       return;
     }
     if (abortRef.current) {
-      rec.stopAndUnloadAsync().catch(() => undefined);
+      recorder.stop().catch(() => undefined);
       return;
     }
-    recordingRef.current = rec;
+    startedRef.current = true;
     startRef.current = Date.now();
     setRecording(true);
     setElapsed(0);
@@ -126,7 +132,7 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
     hapticIdRef.current = setInterval(() => {
       Haptics.selectionAsync().catch(() => undefined);
     }, 800);
-  }, [granted]);
+  }, [granted, recorder]);
 
   const handlePressOut = useCallback(async () => {
     abortRef.current = true;
@@ -135,17 +141,19 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
     clearAllIntervals();
     setRecording(false);
     const duration = Math.min(Date.now() - startRef.current, MAX_VOICE_DURATION_MS);
-    const rec = recordingRef.current;
-    recordingRef.current = null;
+    const recStarted = startedRef.current;
+    startedRef.current = false;
     let uri: string | null = null;
     try {
-      if (!rec || duration < MIN_RECORDING_MS) {
-        await rec?.stopAndUnloadAsync().catch(() => undefined);
-        uri = rec?.getURI() ?? null;
+      if (!recStarted || duration < MIN_RECORDING_MS) {
+        if (recStarted) {
+          await recorder.stop().catch(() => undefined);
+          uri = recorder.uri;
+        }
         return;
       }
-      await rec.stopAndUnloadAsync();
-      uri = rec.getURI();
+      await recorder.stop();
+      uri = recorder.uri;
       if (!uri) {
         setError('Recording produced no audio');
         return;
@@ -164,7 +172,7 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
       }
       stoppingRef.current = false;
     }
-  }, [onSend]);
+  }, [onSend, recorder]);
 
   useEffect(() => {
     if (recording && elapsed >= MAX_VOICE_DURATION_MS) {

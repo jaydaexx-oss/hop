@@ -33,5 +33,6 @@ def configure_logging(level: str, log_format: str) -> None:
         )
     root.addHandler(handler)
 
-    logging.getLogger("uvicorn.access").setLevel(logging.INFO)
+    logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
     logging.getLogger("sqlalchemy.engine").setLevel(logging.WARNING)
+    logging.getLogger("uvicorn.error").setLevel(logging.INFO)

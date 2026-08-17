@@ -1,13 +1,16 @@
 import {
   BLE_DEFAULT_CHUNK_BYTES,
   BLE_FALLBACK_CHUNK_BYTES,
+  BLE_SESSION_IDLE_MS,
   BleReassembler,
+  HandshakeReplayGuard,
   HOP_BLE_ACK_UUID,
   HOP_BLE_HANDSHAKE_UUID,
   HOP_BLE_INBOX_UUID,
   HOP_BLE_SERVICE_UUID,
   ProcessedIdSet,
   advertiseLocalName,
+  bleSendRefusal,
   bytesToHex,
   chunkBytes,
   decodeEnvelope,
@@ -19,6 +22,7 @@ import {
   hexToBytes,
   isCryptoBoxPayload,
   isUnauthenticatedBleAck,
+  newHandshakeNonce,
   parseCryptoBoxPayload,
   PublicKeyTofu,
   sendWithAckRetry,
@@ -79,6 +83,9 @@ export class HopBleEngine implements BleLink {
   tofu: PublicKeyTofu;
   private readonly serverKeyCache = new Map<string, string>();
   private readonly reassemblers = new Map<string, BleReassembler>();
+  private readonly handshakeReplay = new HandshakeReplayGuard();
+  private handshakeNonce = '';
+  private readonly sessionActivity = new Map<string, number>();
   private readonly pendingAcks = new Map<
     string,
     { resolve: () => void; from: string; peerPublicKey: string }
@@ -146,12 +153,14 @@ export class HopBleEngine implements BleLink {
     this.session = options;
     this.scanMode = options.scanMode;
     this.bindNativeEvents(native);
+    this.handshakeNonce = newHandshakeNonce();
 
     const handshake = encodeHandshake({
       v: 2,
       user_id: options.userId,
       username: options.username,
       pk: options.identityPublicKey,
+      n: this.handshakeNonce,
     });
     await native.setServices([
       {
@@ -224,6 +233,8 @@ export class HopBleEngine implements BleLink {
     this.advertising = false;
     this.connected.clear();
     this.session = null;
+    this.reassemblers.clear();
+    this.sessionActivity.clear();
     this.detail = 'Nearby is stopped.';
     this.emitPeers();
   }
@@ -304,13 +315,11 @@ export class HopBleEngine implements BleLink {
     if (!peer?.sessionEstablished || !peer.publicKey) {
       return { ok: false, transport: 'bluetooth', error: 'Secure session is not established' };
     }
-    if (peer.userId && !this.tofu.canEncryptTo(peer.userId, peer.publicKey)) {
-      return {
-        ok: false,
-        transport: 'bluetooth',
-        error: 'Peer identity key changed; re-verify before sending',
-      };
+    const refused = bleSendRefusal(this.tofu, peer.userId, peer.publicKey);
+    if (refused) {
+      return { ok: false, transport: 'bluetooth', error: refused };
     }
+    this.touchSession(deviceId);
 
     const bytes = encodeEnvelope({ ...envelope, transport: 'bluetooth' });
     return sendWithAckRetry(
@@ -389,6 +398,9 @@ export class HopBleEngine implements BleLink {
       const hex = typeof raw === 'string' ? raw : raw.value;
       const handshake = decodeHandshake(hex);
       if (handshake) {
+        if (!this.handshakeReplay.remember(handshake.user_id, handshake.n)) {
+          throw new Error('BLE handshake nonce replayed');
+        }
         if (handshake.user_id && handshake.pk && !this.tofu.bind(handshake.user_id, handshake.pk)) {
           throw new Error('Peer identity key changed; re-verify before sending');
         }
@@ -519,6 +531,7 @@ export class HopBleEngine implements BleLink {
     const envelope = decodeEnvelope(complete);
     if (!envelope?.encrypted_payload) return;
     if (!isCryptoBoxPayload(envelope.encrypted_payload)) return;
+    this.touchSession(centralId);
 
     const peer: BlePeer = this.peers.get(centralId) ?? {
       deviceId: centralId,
@@ -647,13 +660,29 @@ export class HopBleEngine implements BleLink {
     const now = Date.now();
     let changed = false;
     for (const [id, peer] of this.peers) {
-      if (this.connected.has(id)) continue;
+      if (this.connected.has(id)) {
+        const last = this.sessionActivity.get(id) ?? peer.lastSeenAt;
+        if (now - last > BLE_SESSION_IDLE_MS) {
+          this.connected.delete(id);
+          this.sessionActivity.delete(id);
+          this.reassemblers.delete(id);
+          this.emitConnection(id, false);
+          void Promise.resolve(this.native?.disconnect(id)).catch(() => undefined);
+          changed = true;
+        }
+        continue;
+      }
       if (now - peer.lastSeenAt > PEER_STALE_MS) {
         this.peers.delete(id);
+        this.reassemblers.delete(id);
         changed = true;
       }
     }
     if (changed) this.emitPeers();
+  }
+
+  private touchSession(deviceId: string): void {
+    this.sessionActivity.set(deviceId, Date.now());
   }
 
   private emitPeers(): void {

@@ -83,10 +83,12 @@ export class TransportManager {
     }
 
     let last: SendResult = { ok: false, transport: "local", error: "No transport available" };
+    const attempted = new Set<TransportId>();
     for (const id of LIVE_TRANSPORT_PRIORITY) {
       const transport = this.transports.get(id);
       if (!transport) continue;
       if (!(await this.canUse(transport, envelope))) continue;
+      attempted.add(id);
       try {
         const result = await transport.send({ ...envelope, transport: transport.id });
         if (result.ok) return result;
@@ -97,6 +99,23 @@ export class TransportManager {
           transport: id,
           error: err instanceof Error ? err.message : "Transport failed",
         };
+      }
+    }
+    // BLE was selected (internet unavailable) and failed: retry internet if it is now usable.
+    if (!last.ok && attempted.has("bluetooth") && !attempted.has("internet")) {
+      const internet = this.transports.get("internet");
+      if (internet && (await this.canUse(internet, envelope))) {
+        try {
+          const result = await internet.send({ ...envelope, transport: "internet" });
+          if (result.ok) return result;
+          last = result;
+        } catch (err) {
+          last = {
+            ok: false,
+            transport: "internet",
+            error: err instanceof Error ? err.message : "Transport failed",
+          };
+        }
       }
     }
     return last.ok ? last : { ok: false, transport: "local", error: last.error ?? "No transport available" };

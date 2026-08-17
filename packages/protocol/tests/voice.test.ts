@@ -378,4 +378,78 @@ describe("voice messages", () => {
     expect(listed[0]?.kind).toBe("voice");
     session.driver.close();
   });
+
+  it("fails closed when encrypt throws and does not queue plaintext", async () => {
+    const file = tempDb();
+    const world = mockWorld();
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const session = await openService(file, world.http, {
+      async encrypt() {
+        throw new Error("box failed");
+      },
+      async sealLocal() {
+        throw new Error("box failed");
+      },
+      async decrypt() {
+        throw new Error("box failed");
+      },
+    });
+    await expect(
+      session.service.sendVoice({
+        ...sendInput,
+        audio_b64: AUDIO_B64,
+        duration_ms: 400,
+      }),
+    ).rejects.toThrow(/box failed/i);
+    expect(await session.store.queuedCount()).toBe(0);
+    expect(await session.store.listMessages(CONVO)).toHaveLength(0);
+    session.driver.close();
+  });
+
+  it("rejects corrupt inbound voice ciphertext", async () => {
+    const file = tempDb();
+    const world = mockWorld();
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const packed = await encryptApplicationMessage(
+      {
+        message_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        sender_id: RECIPIENT,
+        recipient_id: SENDER,
+        conversation_id: CONVO,
+        text: "Voice message",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        ttl: 86_400_000,
+        hop_count: 0,
+        kind: "voice",
+        audio_b64: AUDIO_B64,
+        duration_ms: 400,
+      },
+      alice.publicKey,
+      blake,
+    );
+    const parsed = JSON.parse(packed) as { ciphertext: string };
+    parsed.ciphertext = `${parsed.ciphertext.slice(0, -6)}XXXXXX`;
+    const session = await openService(file, world.http, testCrypto(alice, blake.publicKey));
+    expect(
+      await session.service.acceptInbound({
+        message_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+        conversation_id: CONVO,
+        sender_id: RECIPIENT,
+        recipient_id: SENDER,
+        text: null,
+        encrypted_payload: JSON.stringify(parsed),
+        status: MessageStatus.SENT,
+        transport: "internet",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        ttl: 86_400_000,
+        hop_count: 0,
+      }),
+    ).toBe(false);
+    expect(await session.store.listMessages(CONVO)).toHaveLength(0);
+    session.driver.close();
+  });
 });

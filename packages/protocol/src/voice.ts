@@ -42,6 +42,18 @@ export function assertEncryptedPayloadSize(payload: string): void {
   }
 }
 
+export const MICROPHONE_DENIED_MESSAGE =
+  "Microphone access denied. Enable it in Settings to send voice notes.";
+
+export function microphoneDeniedMessage(granted: boolean | null): string | null {
+  if (granted === false) return MICROPHONE_DENIED_MESSAGE;
+  return null;
+}
+
+export function isEphemeralVoicePlaybackName(name: string): boolean {
+  return name.startsWith("hop-voice-play-") || name === "hop-voice";
+}
+
 export function withDecryptedPlain(message: StoredMessage, plain: ApplicationPlaintext): StoredMessage {
   const audio = plain.kind === "voice" ? voiceAudioB64(plain) : "";
   return {

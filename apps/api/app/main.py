@@ -1,14 +1,15 @@
 from __future__ import annotations
 
 import logging
+import time
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api import api_router
-from app.config import assert_production_config, get_settings
+from app.config import MAX_REQUEST_BYTES, assert_production_config, get_settings
 from app.db import init_db
 from app.logging_config import configure_logging
 from app.metrics import READY, metrics_middleware, metrics_payload
@@ -47,12 +48,41 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"] if allow_all else origins,
     allow_credentials=not allow_all,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept"],
 )
 
 if settings.metrics_enabled:
     app.middleware("http")(metrics_middleware())
+
+
+@app.middleware("http")
+async def limit_request_body(request: Request, call_next):
+    length = request.headers.get("content-length")
+    if length is not None:
+        try:
+            size = int(length)
+        except ValueError:
+            return JSONResponse({"detail": "Invalid Content-Length"}, status_code=400)
+        if size > MAX_REQUEST_BYTES:
+            return JSONResponse({"detail": "Request body too large"}, status_code=413)
+    return await call_next(request)
+
+
+@app.middleware("http")
+async def access_log_without_bodies(request: Request, call_next):
+    started = time.perf_counter()
+    response = await call_next(request)
+    elapsed_ms = int((time.perf_counter() - started) * 1000)
+    logger.info(
+        "http %s %s %s %sms",
+        request.method,
+        request.url.path,
+        response.status_code,
+        elapsed_ms,
+    )
+    return response
+
 
 app.include_router(api_router)
 

@@ -10,6 +10,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 
 PLACEHOLDER = "CHANGE_ME"
 DEFAULT_DATABASE_URL = "postgresql+psycopg://hop@localhost:5432/hop"
+# Opaque crypto_box JSON is capped at 64KiB; allow headers/JSON wrapping headroom.
+MAX_REQUEST_BYTES = 262_144
 
 
 class Settings(BaseSettings):
@@ -63,14 +65,37 @@ def assert_production_config(
         problems.append("DATABASE_URL is still the development default or a CHANGE_ME placeholder")
     if not str(env.get("REDIS_URL", "")).strip():
         problems.append("REDIS_URL must be set")
+    elif PLACEHOLDER in settings.redis_url:
+        problems.append("REDIS_URL still contains CHANGE_ME")
+    elif _is_loopback_url(settings.redis_url):
+        problems.append("REDIS_URL must not point at localhost in production")
+    if settings.database_url.startswith("sqlite"):
+        problems.append("DATABASE_URL must be PostgreSQL in production (not sqlite)")
+    elif _is_loopback_url(settings.database_url) and settings.database_url != DEFAULT_DATABASE_URL:
+        problems.append("DATABASE_URL must not point at localhost in production")
     cors = settings.cors_origins.strip()
     origins = [item.strip() for item in cors.split(",") if item.strip()]
     if not origins or "*" in origins:
         problems.append("CORS_ORIGINS must be an explicit allow-list (not *)")
     if PLACEHOLDER in cors:
         problems.append("CORS_ORIGINS still contains CHANGE_ME")
+    for origin in origins:
+        lowered = origin.lower()
+        if "*" in origin:
+            continue
+        if "localhost" in lowered or "127.0.0.1" in lowered or "0.0.0.0" in lowered:
+            problems.append("CORS_ORIGINS must not include localhost in production")
+            break
+        if origin.startswith("http://"):
+            problems.append("CORS_ORIGINS must be HTTPS in production")
+            break
     if problems:
         raise RuntimeError("Refusing to start in production: " + "; ".join(problems))
+
+
+def _is_loopback_url(value: str) -> bool:
+    lowered = value.lower()
+    return "localhost" in lowered or "127.0.0.1" in lowered or "0.0.0.0" in lowered
 
 
 @lru_cache

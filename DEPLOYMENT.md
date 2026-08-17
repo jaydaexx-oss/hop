@@ -143,7 +143,7 @@ Production Postgres runs inside Docker with:
 - Config: `infra/postgres/postgresql.conf`
 - Backups directory: `infra/backups/`
 
-Migrations run automatically when the API container starts (`alembic upgrade head` in `apps/api/scripts/entrypoint.sh`).
+Migrations run automatically when the API container starts (`alembic upgrade head` in `apps/api/scripts/entrypoint.sh`). Production **does not** call SQLModel `create_all` (Alembic is the only schema source). Nginx and the API reject bodies larger than **256 KiB**. Rate limits use Redis; if Redis is down in production the API returns **503** instead of silently widening to per-process memory.
 
 Manual migration (if needed):
 

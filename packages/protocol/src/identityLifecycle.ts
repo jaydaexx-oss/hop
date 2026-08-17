@@ -7,6 +7,7 @@ export type IdentityErrorCode =
   | "SECRET_STORE_UNAVAILABLE"
   | "IDENTITY_INACCESSIBLE"
   | "KEY_MISMATCH"
+  | "SERVER_KEY_LOCKED"
   | "IDENTITY_RESET_REQUIRED";
 
 export class IdentityError extends Error {
@@ -27,6 +28,57 @@ export interface SecretBackend {
 /** PUT /users/me/identity body. Never include secretKey. */
 export function identityPublishBody(publicKey: string): { public_key: string } {
   return { public_key: publicKey };
+}
+
+export type IdentityPublishAction = "publish" | "skip" | "mismatch";
+
+/** First publish when the server has no key. Matching key is idempotent. Different key must not PUT. */
+export function decideIdentityPublish(
+  localPublicKey: string,
+  serverPublicKey: string | null | undefined,
+): IdentityPublishAction {
+  const published = (serverPublicKey ?? "").trim();
+  if (!published) return "publish";
+  if (published === localPublicKey) return "skip";
+  return "mismatch";
+}
+
+export function isHttpConflict(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const record = err as { status?: unknown; statusCode?: unknown };
+  return record.status === 409 || record.statusCode === 409;
+}
+
+export function serverKeyLockedError(): IdentityError {
+  return new IdentityError(
+    "SERVER_KEY_LOCKED",
+    "This account already has a published identity public key. HOP will not replace it. Recovery is a new account. A future rotation API must prove possession of the old secret; unauthenticated key replacement is not allowed.",
+  );
+}
+
+/**
+ * Publish the local public key only when the server has none.
+ * Never PUT on KEY_MISMATCH. Map HTTP 409 to SERVER_KEY_LOCKED (do not retry).
+ */
+export async function publishIdentityIfAllowed(input: {
+  localPublicKey: string;
+  serverPublicKey: string | null | undefined;
+  put: (body: { public_key: string }) => Promise<void>;
+}): Promise<"ok" | "skipped"> {
+  const action = decideIdentityPublish(input.localPublicKey, input.serverPublicKey);
+  if (action === "mismatch") {
+    assertPublishedIdentityMatches(input.localPublicKey, input.serverPublicKey);
+  }
+  if (action === "skip") return "skipped";
+  const body = identityPublishBody(input.localPublicKey);
+  assertIdentityPublishHasNoSecret(body as Record<string, unknown>, "");
+  try {
+    await input.put(body);
+  } catch (err) {
+    if (isHttpConflict(err)) throw serverKeyLockedError();
+    throw err;
+  }
+  return "ok";
 }
 
 export function assertIdentityPublishHasNoSecret(

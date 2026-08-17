@@ -4,8 +4,10 @@ import {
   IdentityError,
   assertIdentityPublishHasNoSecret,
   assertPublishedIdentityMatches,
+  decideIdentityPublish,
   identityPublishBody,
   loadOrCreateIdentity,
+  publishIdentityIfAllowed,
   replaceIdentityExplicit,
   type IdentityKeyPair,
   type SecretBackend,
@@ -99,6 +101,54 @@ describe("identity lifecycle", () => {
       throw new Error("must not generate");
     });
     expect(loaded).toEqual(PAIR_B);
+  });
+
+  it("does not PUT when the server already has a different key", async () => {
+    let putCalls = 0;
+    await expect(
+      publishIdentityIfAllowed({
+        localPublicKey: PAIR_A.publicKey,
+        serverPublicKey: PAIR_B.publicKey,
+        put: async () => {
+          putCalls += 1;
+        },
+      }),
+    ).rejects.toMatchObject({ code: "KEY_MISMATCH" });
+    expect(putCalls).toBe(0);
+    expect(decideIdentityPublish(PAIR_A.publicKey, PAIR_B.publicKey)).toBe("mismatch");
+    expect(decideIdentityPublish(PAIR_A.publicKey, PAIR_A.publicKey)).toBe("skip");
+    expect(decideIdentityPublish(PAIR_A.publicKey, "")).toBe("publish");
+  });
+
+  it("maps HTTP 409 to SERVER_KEY_LOCKED and does not retry", async () => {
+    let putCalls = 0;
+    await expect(
+      publishIdentityIfAllowed({
+        localPublicKey: PAIR_A.publicKey,
+        serverPublicKey: "",
+        put: async () => {
+          putCalls += 1;
+          const err = new Error("conflict") as Error & { status: number };
+          err.status = 409;
+          throw err;
+        },
+      }),
+    ).rejects.toMatchObject({ code: "SERVER_KEY_LOCKED", name: "IdentityError" });
+    expect(putCalls).toBe(1);
+  });
+
+  it("skips PUT when the published key already matches", async () => {
+    let putCalls = 0;
+    await expect(
+      publishIdentityIfAllowed({
+        localPublicKey: PAIR_A.publicKey,
+        serverPublicKey: PAIR_A.publicKey,
+        put: async () => {
+          putCalls += 1;
+        },
+      }),
+    ).resolves.toBe("skipped");
+    expect(putCalls).toBe(0);
   });
 });
 

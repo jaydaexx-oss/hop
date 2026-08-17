@@ -63,3 +63,58 @@ def test_development_allows_local_defaults() -> None:
     settings = Settings()
     assert settings.is_production is False
     assert_production_config(settings)
+
+
+def test_production_rejects_localhost_cors_and_http_origins(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost:8081")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://hop:secret@db:5432/hop")
+    monkeypatch.setenv("REDIS_URL", "redis://redis:6379/0")
+    settings = Settings()
+    with pytest.raises(RuntimeError, match="CORS_ORIGINS") as rejected:
+        assert_production_config(settings)
+    assert "localhost" in str(rejected.value) or "HTTPS" in str(rejected.value)
+
+
+def test_production_rejects_sqlite_and_localhost_redis(monkeypatch) -> None:
+    monkeypatch.setenv("APP_ENV", "production")
+    monkeypatch.setenv("CORS_ORIGINS", "https://app.example.com")
+    monkeypatch.setenv("DATABASE_URL", "sqlite://")
+    monkeypatch.setenv("REDIS_URL", "redis://127.0.0.1:6379/0")
+    settings = Settings()
+    with pytest.raises(RuntimeError) as rejected:
+        assert_production_config(settings)
+    message = str(rejected.value)
+    assert "sqlite" in message.lower()
+    assert "REDIS_URL" in message
+
+
+def test_init_db_skips_create_all_in_production(monkeypatch) -> None:
+    from app.config import get_settings
+    from app.db import init_db
+
+    monkeypatch.setenv("APP_ENV", "production")
+    get_settings.cache_clear()
+    try:
+        assert init_db() is False
+    finally:
+        monkeypatch.setenv("APP_ENV", "development")
+        get_settings.cache_clear()
+
+
+def test_production_rate_limit_does_not_silently_widen(monkeypatch) -> None:
+    from fastapi import HTTPException
+
+    from app.config import get_settings
+    from app.rate_limit import _allow
+
+    monkeypatch.setenv("APP_ENV", "production")
+    get_settings.cache_clear()
+    monkeypatch.setattr("app.rate_limit._redis_allow", lambda *_args, **_kwargs: None)
+    try:
+        with pytest.raises(HTTPException) as denied:
+            _allow("auth:203.0.113.10", 30, 60)
+        assert denied.value.status_code == 503
+    finally:
+        monkeypatch.setenv("APP_ENV", "development")
+        get_settings.cache_clear()

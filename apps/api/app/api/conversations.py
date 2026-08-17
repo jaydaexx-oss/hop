@@ -5,6 +5,7 @@ from datetime import timedelta
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app.db import get_session
@@ -128,11 +129,11 @@ def create_conversation(
         return _conversation_out(session, existing, user)
     convo = Conversation()
     session.add(convo)
-    session.commit()
-    session.refresh(convo)
+    session.flush()
     session.add(ConversationMember(conversation_id=convo.id, user_id=user.id))
     session.add(ConversationMember(conversation_id=convo.id, user_id=peer.id))
     session.commit()
+    session.refresh(convo)
     return _conversation_out(session, convo, user)
 
 
@@ -213,7 +214,14 @@ async def send_message(
     session.add(
         MessageDelivery(message_id=row.id, recipient_user_id=peer.id, status=status),
     )
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raced = session.get(Message, message_id)
+        if raced and raced.sender_id == user.id and raced.conversation_id == conversation_id:
+            return _message_out(raced)
+        raise HTTPException(status_code=409, detail="message_id already used")
     session.refresh(row)
     event = message_event(row)
     await hub.send_json(peer.id, event)

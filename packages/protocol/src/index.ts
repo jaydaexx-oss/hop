@@ -35,6 +35,11 @@ export type { BleLink, BleLinkStatus, BlePeer, BleScanMode, BleSessionOptions } 
 export {
   BLE_DEFAULT_CHUNK_BYTES,
   BLE_FALLBACK_CHUNK_BYTES,
+  BLE_MAX_ASSEMBLED_BYTES,
+  BLE_MAX_CHUNK_PAYLOAD,
+  BLE_MAX_FRAME_BYTES,
+  BLE_REASSEMBLER_STALE_MS,
+  BLE_SESSION_IDLE_MS,
   HOP_BLE_ACK_UUID,
   HOP_BLE_HANDSHAKE_UUID,
   HOP_BLE_INBOX_UUID,
@@ -50,6 +55,7 @@ export {
   encodeHandshake,
   hexToBytes,
   looksLikeHardwareId,
+  newHandshakeNonce,
   safeNearbyDisplayName,
   type BleHandshake,
 } from "./bleCodec.js";
@@ -88,9 +94,12 @@ export {
   MAX_ENCRYPTED_PAYLOAD_BYTES,
   MAX_VOICE_AUDIO_B64_CHARS,
   MAX_VOICE_DURATION_MS,
+  MICROPHONE_DENIED_MESSAGE,
   assertEncryptedPayloadSize,
   assertVoiceFitsBudget,
   estimateBoxedPayloadBytes,
+  isEphemeralVoicePlaybackName,
+  microphoneDeniedMessage,
   voiceAudioB64,
   withDecryptedPlain,
 } from "./voice.js";
@@ -99,12 +108,23 @@ export {
   IdentityError,
   assertIdentityPublishHasNoSecret,
   assertPublishedIdentityMatches,
+  decideIdentityPublish,
   identityPublishBody,
+  isHttpConflict,
   loadOrCreateIdentity,
+  publishIdentityIfAllowed,
   replaceIdentityExplicit,
+  serverKeyLockedError,
   type IdentityErrorCode,
+  type IdentityPublishAction,
   type SecretBackend,
 } from "./identityLifecycle.js";
+export { formatPersistedFingerprint, identityFingerprint } from "./fingerprint.js";
+export {
+  BLE_KEY_CHANGED_REFUSAL,
+  HandshakeReplayGuard,
+  bleSendRefusal,
+} from "./bleGuard.js";
 export {
   readWithSecretPolicy,
   shouldFailClosedSecretStore,

@@ -3,7 +3,7 @@ import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { Audio } from 'expo-av';
 import * as Haptics from 'expo-haptics';
 import * as FileSystem from 'expo-file-system/legacy';
-import { MAX_VOICE_DURATION_MS } from '@hop/protocol';
+import { MAX_VOICE_DURATION_MS, microphoneDeniedMessage } from '@hop/protocol';
 
 const MIN_RECORDING_MS = 300;
 const BAR_COUNT = 10;
@@ -184,7 +184,7 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
     return (
       <Pressable onPress={requestMic} style={styles.fallback}>
         <Text style={[styles.fallbackText, { color: muted }]}>
-          Microphone access denied. Enable it in Settings to send voice notes.
+          {microphoneDeniedMessage(false)}
         </Text>
       </Pressable>
     );

@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet } from 'react-native';
 import type { BleLinkStatus, NetworkStatus, PeerTrustRecord, PeerTrustState } from '@hop/protocol';
+import { formatPersistedFingerprint } from '@hop/protocol';
 
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
@@ -66,8 +67,7 @@ function truncateId(value: string): string {
 }
 
 function fingerprintHint(publicKey: string): string {
-  if (publicKey.length < 12) return 'fp:n/a';
-  return `fp:${publicKey.slice(0, 6)}…${publicKey.slice(-4)}`;
+  return formatPersistedFingerprint(publicKey);
 }
 
 const PROBE_KEY = 'hop.diag.probe';

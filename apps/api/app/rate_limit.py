@@ -52,9 +52,13 @@ def _redis_allow(key: str, limit: int, window_s: int) -> bool | None:
 
 
 def _allow(key: str, limit: int, window_s: float) -> bool:
+    settings = get_settings()
     redis_result = _redis_allow(key, limit, int(window_s))
     if redis_result is not None:
         return redis_result
+    if settings.is_production:
+        # Do not silently widen to per-process memory in production (multi-worker bypass).
+        raise HTTPException(status_code=503, detail="Rate limiter unavailable")
     return _memory_limiter.allow(key, limit, window_s)
 
 

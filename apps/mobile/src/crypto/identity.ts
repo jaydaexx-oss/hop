@@ -3,6 +3,7 @@ import {
   assertPublishedIdentityMatches,
   identityPublishBody,
   loadOrCreateIdentity as loadStoredIdentity,
+  publishIdentityIfAllowed,
   replaceIdentityExplicit as rotateStoredIdentity,
   type IdentityKeyPair,
   type SecretBackend,
@@ -15,7 +16,7 @@ const backend: SecretBackend = {
   write: (key, value) => writeSecret(key, value),
 };
 
-export { IdentityError, assertPublishedIdentityMatches, identityPublishBody };
+export { IdentityError, assertPublishedIdentityMatches, identityPublishBody, publishIdentityIfAllowed };
 export type { IdentityKeyPair };
 
 export async function loadOrCreateIdentity(userId: string): Promise<IdentityKeyPair> {

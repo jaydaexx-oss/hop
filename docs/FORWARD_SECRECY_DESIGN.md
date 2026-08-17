@@ -1,6 +1,17 @@
 # Forward secrecy design (not implemented)
 
-**Status:** design only. Phase 2 does **not** replace `crypto_box`, does **not** add a Double Ratchet, and does **not** claim forward secrecy.
+**Status:** design only. **Phase 4 choice: option B — defer.** Do not replace `crypto_box`. Do not award forward-secrecy rubric points. A homegrown ratchet is forbidden.
+
+Phase 2–4 keep libsodium `crypto_box_easy` (X25519 + XSalsa20-Poly1305) to the peer’s long-term identity public key. `docs/IDENTITY_TRUST.md` describes TOFU identity; this document describes the future session-key migration only.
+
+## Phase 4 decision (option B)
+
+| Option | What it is | Phase 4 |
+|---|---|---|
+| **A** | Adopt a **mature** library (libsignal / a reviewed Double Ratchet implementation) beside today’s identity keys | **Rejected this phase.** Adding libsignal is a product+schema+BLE-MTU migration, not a drop-in. No reviewed TypeScript/React Native libsignal integration is wired in this repo. |
+| **B** | Keep `crypto_box`. Document the exact later migration. Do not invent a mini-ratchet. | **Chosen.** |
+
+**Do not** implement a custom ratchet, “epoch key”, or hash-chain of `crypto_box` keys. That would be a homemade protocol.
 
 ## Current limitation
 
@@ -10,18 +21,20 @@ If the identity secret in SecureStore is later compromised, an attacker who reco
 
 BLE GATT ACKs use a MAC key derived from the same long-term `crypto_box_beforenm` shared secret. Compromise of either identity secret also forges or verifies those ACKs.
 
-## Why not invent a custom ratchet this phase
+## Exact post-stabilization migration (when option A is picked)
 
-A homegrown ratchet would be a new cryptographic protocol. HOP should not ship one without a review comparable to Signal’s. Keeping `crypto_box` for this phase is a deliberate constraint.
+Do this only after production-readiness > 90 **or** as a dedicated crypto milestone with review. Do not mix it into BLE hardware bring-up.
 
-## Signal-style sessions for HOP (evaluation)
-
-A later migration could introduce X3DH + Double Ratchet (or a well-reviewed library such as libsignal) **alongside** today’s identity keys:
-
-1. **Identity** remains the long-term X25519 key (already published via `PUT /users/me/identity` and BLE handshake `pk`).
-2. **Signed prekeys / one-time prekeys** would need a server that stores **public** prekeys only. The current API stores one immutable identity public key per user and opaque message ciphertext. Prekeys are a new schema.
-3. **Session state** (root key, chain keys, skipped-message keys) must live in SecureStore or an encrypted DB, fail-closed like identity secrets. SQLite currently holds ciphertext, not session keys.
-4. **Each message** would wrap `ApplicationPlaintext` in a ratchet payload instead of (or inside) `crypto_box`. Recipients without a session still need a bootstrap path.
+1. **Keep shipping `alg: crypto_box_xsalsa20poly1305`.** Historical rows stay static-key ciphertext. Never “upgrade” them by re-encrypting on the server (the server cannot open boxes).
+2. **Add a well-reviewed library** (libsignal or equivalent) as a **new** payload `alg` (working name: `hop_ratchet_v1`). Do not wrap a homemade ratchet in libsodium primitives and call it Signal.
+3. **Identity keys stay** the current X25519 `PUT /users/me/identity` keys. Prekeys are a **new** table of **public** material only. Identity 409 immutability stays; ratchet sessions must not require silent identity replacement (`docs/IDENTITY_TRUST.md`).
+4. **Server schema:** signed prekeys + one-time prekeys, fetched over HTTPS. No private prekeys on the server.
+5. **Client session state** (root/chain/skipped-message keys) lives in fail-closed SecureStore / sealed SQLite, same policy as identity secrets. Offline `MessageService.flushOne` may send much later — skipped-message keys must survive process death.
+6. **Hybrid transports:** session state is per peer, not per internet/BLE link. Duplicate `message_id` delivery stays idempotent.
+7. **BLE MTU:** ratchet headers inflate frames. Keep chunk limits (`BLE_MAX_*` in `bleCodec.ts`). Do not put session keys in the plaintext handshake; handshake `pk` remains the long-term identity (discoverability + TOFU).
+8. **Capability advertise:** both peers must advertise ratchet support (prekey presence or an app version flag) before using `hop_ratchet_v1`. Otherwise stay on `crypto_box`.
+9. **QR / safety numbers** verify the **identity** fingerprint (`identityFingerprint`), then optionally the session fingerprint. `markVerified` already exists; no new crypto in the verify UX.
+10. **Rollout:** protocol tests with real libsignal first; then two-phone soak; then cut over. Until both sides speak ratchet, `crypto_box` remains the production algorithm.
 
 ### Constraints that make a naive port hard
 
@@ -34,17 +47,10 @@ A later migration could introduce X3DH + Double Ratchet (or a well-reviewed libr
 | Identity 409 immutability | Rotation of long-term identity is intentionally blocked. A ratchet migration must not require silent identity replacement. |
 | Voice clips ≤ 8s / 64KiB API cap | Extra ratchet headers compete with `audio_b64` budget. |
 
-### Migration sketch (future work)
-
-- Keep `alg: crypto_box_xsalsa20poly1305` working until both peers advertise `alg: hop_ratchet_v1` (or similar).
-- Do not decrypt historical crypto_box rows with a new ratchet; they stay static-key ciphertext.
-- New sessions: X3DH using published identity + prekeys; then Double Ratchet for each 1:1 conversation.
-- BLE handshake can keep advertising the long-term `pk` (discoverability) while session keys stay off-air except as ratchet headers inside inbox frames.
-- QR / safety numbers should verify the **identity** key (and later the session fingerprint), which Phase 2 only **structures** (`markVerified`) without UX.
-
-## Explicit non-goals for Phase 2
+## Explicit non-goals (Phase 4 and earlier)
 
 - No replacement of `crypto_box`
 - No custom “mini-ratchet”
 - No cloud backup of identity secrets (would undermine any later FS story unless the backup is itself reviewed)
 - No claim of Signal-level security
+- No forward-secrecy points on the production-readiness rubric until a mature library is implemented **and** tested

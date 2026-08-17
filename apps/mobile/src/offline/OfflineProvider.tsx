@@ -14,10 +14,10 @@ import {
   IdentityError,
   MessageService,
   PublicKeyTofu,
-  assertPublishedIdentityMatches,
   decryptApplicationMessage,
   encryptApplicationMessage,
   isCryptoBoxPayload,
+  publishIdentityIfAllowed,
   sqlitePeerTrustPersistence,
   type IdentityKeyPair,
   type MessageCrypto,
@@ -161,19 +161,20 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       if (token) {
         try {
           const me = await api.me(token);
-          assertPublishedIdentityMatches(identity.publicKey, me.identity_public_key);
-          if (!me.identity_public_key) {
-            await api.putIdentity(token, identity.publicKey);
-          }
+          await publishIdentityIfAllowed({
+            localPublicKey: identity.publicKey,
+            serverPublicKey: me.identity_public_key,
+            put: async (body) => {
+              await api.putIdentity(token, body.public_key);
+            },
+          });
         } catch (err) {
-          if (err instanceof IdentityError && err.code === 'KEY_MISMATCH') {
+          if (err instanceof IdentityError) {
             setIdentityError(err.message);
           } else if (err instanceof ApiError && err.status === 409) {
             setIdentityError(
-              'Server rejected a new identity public key (409). HOP will not silently replace the published key.',
+              'SERVER_KEY_LOCKED: this account already published a different identity key. HOP will not replace it. Recovery is a new account — local Replace keys cannot publish a second key.',
             );
-          } else if (err instanceof IdentityError) {
-            setIdentityError(err.message);
           }
           /* network errors stay best-effort while offline */
         }

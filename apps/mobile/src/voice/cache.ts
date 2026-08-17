@@ -1,3 +1,4 @@
+import { isEphemeralVoicePlaybackName } from '@hop/protocol';
 import * as FileSystem from 'expo-file-system/legacy';
 
 const PLAYBACK_PREFIX = 'hop-voice-play-';
@@ -48,7 +49,7 @@ export async function clearVoicePlaybackTemps(): Promise<void> {
   const listing = await FileSystem.readDirectoryAsync(dir).catch(() => [] as string[]);
   await Promise.all(
     listing
-      .filter((name) => name.startsWith(PLAYBACK_PREFIX) || name === LEGACY_DIR_NAME)
+      .filter((name) => isEphemeralVoicePlaybackName(name))
       .map((name) => FileSystem.deleteAsync(`${dir}${name}`, { idempotent: true }).catch(() => undefined)),
   );
 }

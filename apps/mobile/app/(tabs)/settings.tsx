@@ -22,7 +22,7 @@ export default function SettingsScreen() {
     if (!user) return;
     Alert.alert(
       'Replace local identity keys?',
-      'This creates a new key pair on this device only. Private keys are never backed up to the cloud. The server will reject publishing a second key (409). You must re-verify with every contact. There is no QR safety-number UX yet.',
+      'This creates a new key pair on this device only. Private keys are never backed up to the cloud. If this account already published a different public key, the server returns 409 SERVER_KEY_LOCKED and will not accept a second key. Recovery is a new account. There is no unauthenticated rotation and no QR safety-number UX yet.',
       [
         { text: 'Cancel', style: 'cancel' },
         {

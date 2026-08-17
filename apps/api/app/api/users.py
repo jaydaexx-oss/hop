@@ -42,7 +42,11 @@ def put_identity(
     elif device.identity_public_key and device.identity_public_key != public_key:
         raise HTTPException(
             status_code=409,
-            detail="Identity public key is already published and cannot be changed",
+            detail=(
+                "SERVER_KEY_LOCKED: this account already published a different identity "
+                "public key. HOP will not replace it. Recovery is a new account, or a "
+                "future rotation API that proves possession of the old secret."
+            ),
         )
     else:
         device.identity_public_key = public_key

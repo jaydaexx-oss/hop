@@ -42,7 +42,8 @@ class AuthOut(BaseModel):
 
 
 class ConversationCreateIn(BaseModel):
-    username: str
+    model_config = ConfigDict(extra="forbid")
+    username: str = Field(min_length=3, max_length=20)
 
 
 class MemberOut(BaseModel):
@@ -58,10 +59,15 @@ class ConversationOut(BaseModel):
 
 
 class TextMessageIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
     # Opaque libsodium crypto_box JSON only. Voice uses the same envelope as text;
     # clients cap clips at ~8 seconds so boxed payloads fit. Plaintext audio is never stored.
     encrypted_payload: str = Field(min_length=32, max_length=65536)
-    message_id: Optional[str] = None
+    message_id: Optional[str] = Field(
+        default=None,
+        pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        max_length=36,
+    )
 
 
 class IdentityIn(BaseModel):
@@ -74,7 +80,8 @@ class BlockIn(BaseModel):
 
 
 class AckIn(BaseModel):
-    status: str
+    model_config = ConfigDict(extra="forbid")
+    status: str = Field(min_length=1, max_length=16)
 
 
 class MessageOut(BaseModel):

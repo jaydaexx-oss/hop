@@ -8,18 +8,33 @@ export const HOP_BLE_ACK_UUID = "8e7a0004-6f70-48a1-9c3d-2b1e0a7c5d11";
 export const BLE_CHUNK_MAGIC = "HOP1";
 export const BLE_DEFAULT_CHUNK_BYTES = 160;
 export const BLE_FALLBACK_CHUNK_BYTES = 18;
+export const BLE_MAX_CHUNK_PAYLOAD = 512;
+export const BLE_MAX_FRAME_BYTES = 8 + BLE_MAX_CHUNK_PAYLOAD;
+export const BLE_MAX_ASSEMBLED_BYTES = 70_000;
+export const BLE_REASSEMBLER_STALE_MS = 15_000;
+export const BLE_SESSION_IDLE_MS = 120_000;
+export const BLE_MAX_HANDSHAKE_FIELD = 128;
+export const BLE_MAX_HANDSHAKE_BYTES = 512;
 
 export interface BleHandshake {
   v: 2;
   user_id: string;
   username: string;
   pk: string;
+  /** Session nonce. Optional for older advertisers; first-packet pk remains TOFU. */
+  n?: string;
 }
 
 const MAGIC_BYTES = new TextEncoder().encode(BLE_CHUNK_MAGIC);
+let handshakeNonceSeq = 0;
 
 export function utf8ToBytes(text: string): Uint8Array {
   return new TextEncoder().encode(text);
+}
+
+export function newHandshakeNonce(): string {
+  handshakeNonceSeq += 1;
+  return `${Date.now().toString(16)}-${handshakeNonceSeq.toString(16)}`;
 }
 
 export function bytesToUtf8(bytes: Uint8Array): string {
@@ -44,17 +59,33 @@ export function hexToBytes(hex: string): Uint8Array {
   return out;
 }
 
+function boundedField(value: unknown, max = BLE_MAX_HANDSHAKE_FIELD): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  if (!trimmed || trimmed.length > max) return null;
+  if (trimmed.includes("\0") || trimmed.includes("\n")) return null;
+  return trimmed;
+}
+
 export function encodeHandshake(handshake: BleHandshake): string {
   return bytesToHex(utf8ToBytes(JSON.stringify(handshake)));
 }
 
 export function decodeHandshake(hex: string): BleHandshake | null {
   try {
-    const data = JSON.parse(bytesToUtf8(hexToBytes(hex))) as Partial<BleHandshake>;
-    if (data.v !== 2 || typeof data.user_id !== "string" || typeof data.username !== "string" || typeof data.pk !== "string") {
-      return null;
-    }
-    return { v: 2, user_id: data.user_id, username: data.username, pk: data.pk };
+    const raw = hexToBytes(hex);
+    if (raw.length === 0 || raw.length > BLE_MAX_HANDSHAKE_BYTES) return null;
+    const data = JSON.parse(bytesToUtf8(raw)) as Partial<BleHandshake>;
+    if (data.v !== 2) return null;
+    const user_id = boundedField(data.user_id, 64);
+    const username = boundedField(data.username, 20);
+    const pk = boundedField(data.pk, BLE_MAX_HANDSHAKE_FIELD);
+    if (!user_id || !username || !pk) return null;
+    const nonce = data.n === undefined ? undefined : boundedField(data.n, 64);
+    if (data.n !== undefined && !nonce) return null;
+    const handshake: BleHandshake = { v: 2, user_id, username, pk };
+    if (nonce) handshake.n = nonce;
+    return handshake;
   } catch {
     return null;
   }
@@ -65,10 +96,22 @@ export function encodeEnvelope(envelope: EncryptedEnvelope): Uint8Array {
 }
 
 export function decodeEnvelope(bytes: Uint8Array): EncryptedEnvelope | null {
+  if (bytes.length === 0 || bytes.length > BLE_MAX_ASSEMBLED_BYTES) return null;
   try {
-    const data = JSON.parse(bytesToUtf8(bytes)) as EncryptedEnvelope;
-    if (!data?.message_id || !data.encrypted_payload) return null;
-    return data;
+    const data = JSON.parse(bytesToUtf8(bytes)) as Partial<EncryptedEnvelope>;
+    if (
+      typeof data.message_id !== "string" ||
+      typeof data.sender_id !== "string" ||
+      typeof data.recipient_id !== "string" ||
+      typeof data.conversation_id !== "string" ||
+      typeof data.encrypted_payload !== "string" ||
+      !data.message_id ||
+      !data.encrypted_payload
+    ) {
+      return null;
+    }
+    if (data.encrypted_payload.length > 65_536) return null;
+    return data as EncryptedEnvelope;
   } catch {
     return null;
   }
@@ -92,28 +135,69 @@ export function chunkBytes(bytes: Uint8Array, chunkBytes = BLE_DEFAULT_CHUNK_BYT
   return frames;
 }
 
+function bytesEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) {
+    if (a[i] !== b[i]) return false;
+  }
+  return true;
+}
+
 export class BleReassembler {
   private readonly parts = new Map<number, Uint8Array>();
   private expected = 0;
+  private lastPushAt = 0;
 
-  push(frame: Uint8Array): Uint8Array | null {
-    if (frame.length < 8) return null;
+  constructor(
+    private readonly maxAssembled = BLE_MAX_ASSEMBLED_BYTES,
+    private readonly staleMs = BLE_REASSEMBLER_STALE_MS,
+  ) {}
+
+  push(frame: Uint8Array, now = Date.now()): Uint8Array | null {
+    if (this.lastPushAt && now - this.lastPushAt > this.staleMs) {
+      this.reset();
+    }
+    this.lastPushAt = now;
+    if (frame.length < 8 || frame.length > BLE_MAX_FRAME_BYTES) {
+      this.reset();
+      return null;
+    }
     const magic = bytesToUtf8(frame.subarray(0, 4));
-    if (magic !== BLE_CHUNK_MAGIC) return null;
+    if (magic !== BLE_CHUNK_MAGIC) {
+      this.reset();
+      return null;
+    }
     const total = (frame[4] << 8) | frame[5];
     const index = (frame[6] << 8) | frame[7];
-    if (total < 1 || index < 0 || index >= total) return null;
+    if (total < 1 || total > 4096 || index < 0 || index >= total) {
+      this.reset();
+      return null;
+    }
+    const payload = frame.subarray(8);
+    if (payload.length > BLE_MAX_CHUNK_PAYLOAD) {
+      this.reset();
+      return null;
+    }
     if (this.expected !== 0 && this.expected !== total) {
       this.reset();
     }
     this.expected = total;
-    this.parts.set(index, frame.subarray(8));
+    const existing = this.parts.get(index);
+    if (existing && !bytesEqual(existing, payload)) {
+      this.reset();
+      return null;
+    }
+    this.parts.set(index, payload);
     if (this.parts.size < total) return null;
     let length = 0;
     for (let i = 0; i < total; i++) {
       const part = this.parts.get(i);
       if (!part) return null;
       length += part.length;
+      if (length > this.maxAssembled) {
+        this.reset();
+        return null;
+      }
     }
     const out = new Uint8Array(length);
     let offset = 0;
@@ -129,6 +213,7 @@ export class BleReassembler {
   reset(): void {
     this.parts.clear();
     this.expected = 0;
+    this.lastPushAt = 0;
   }
 }
 

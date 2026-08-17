@@ -15,7 +15,8 @@ CREATE TABLE IF NOT EXISTS messages (
   created_at TEXT NOT NULL,
   expires_at TEXT NOT NULL,
   ttl INTEGER NOT NULL,
-  hop_count INTEGER NOT NULL DEFAULT 0
+  hop_count INTEGER NOT NULL DEFAULT 0,
+  send_seq INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS outbound_queue (
@@ -71,6 +72,8 @@ export interface StoredMessage {
   expires_at: string;
   ttl: number;
   hop_count: number;
+  /** Monotonic per-conversation sender sequence. Not a wall-clock timestamp. */
+  send_seq?: number | null;
   /** In-memory only after decrypt. Never written to the SQLite text column. */
   kind?: "message" | "delivery_ack" | "voice";
   duration_ms?: number;
@@ -115,20 +118,26 @@ export class HopSqliteStore {
     } catch {
       /* column already exists on new databases */
     }
+    try {
+      await this.db.execute("ALTER TABLE messages ADD COLUMN send_seq INTEGER");
+    } catch {
+      /* column already exists on new databases */
+    }
   }
 
   async saveMessage(message: StoredMessage): Promise<void> {
     await this.db.execute(
       `INSERT INTO messages (
         message_id, conversation_id, sender_id, recipient_id, text, encrypted_payload, local_seal,
-        status, transport, created_at, expires_at, ttl, hop_count
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, transport, created_at, expires_at, ttl, hop_count, send_seq
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(message_id) DO UPDATE SET
         text=excluded.text,
         encrypted_payload=excluded.encrypted_payload,
         local_seal=excluded.local_seal,
         status=excluded.status,
-        transport=excluded.transport`,
+        transport=excluded.transport,
+        send_seq=COALESCE(excluded.send_seq, messages.send_seq)`,
       [
         message.message_id,
         message.conversation_id,
@@ -143,6 +152,7 @@ export class HopSqliteStore {
         message.expires_at,
         message.ttl,
         message.hop_count,
+        message.send_seq ?? null,
       ],
     );
   }
@@ -157,9 +167,30 @@ export class HopSqliteStore {
 
   async listMessages(conversationId: string): Promise<StoredMessage[]> {
     return this.db.query<StoredMessage>(
-      "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at ASC",
+      `SELECT * FROM messages WHERE conversation_id = ?
+       ORDER BY COALESCE(send_seq, 0) ASC, created_at ASC, message_id ASC`,
       [conversationId],
     );
+  }
+
+  async listMessagesByStatus(status: string): Promise<StoredMessage[]> {
+    return this.db.query<StoredMessage>("SELECT * FROM messages WHERE status = ?", [status]);
+  }
+
+  async getConversation(id: string): Promise<StoredConversation | null> {
+    const rows = await this.db.query<StoredConversation>(
+      "SELECT id, peer_id, peer_username, peer_public_key, created_at FROM conversations WHERE id = ?",
+      [id],
+    );
+    return rows[0] ?? null;
+  }
+
+  async nextSendSeq(conversationId: string): Promise<number> {
+    const key = `send_seq:${conversationId}`;
+    const current = Number.parseInt((await this.getSyncValue(key)) ?? "0", 10);
+    const next = (Number.isFinite(current) ? current : 0) + 1;
+    await this.setSyncValue(key, String(next));
+    return next;
   }
 
   async listConversationIds(): Promise<string[]> {
@@ -220,21 +251,33 @@ export class HopSqliteStore {
       `SELECT o.message_id, o.attempts, o.next_retry_at
        FROM outbound_queue o
        JOIN messages m ON m.message_id = o.message_id
-       ORDER BY m.conversation_id ASC, m.created_at ASC, o.next_retry_at ASC`,
+       ORDER BY m.conversation_id ASC, COALESCE(m.send_seq, 0) ASC, m.created_at ASC, o.message_id ASC`,
     );
   }
 
-  async hasEarlierOutbound(conversationId: string, createdAt: string, messageId: string): Promise<boolean> {
-    const rows = await this.db.query<{ message_id: string }>(
-      `SELECT o.message_id
+  async hasEarlierOutbound(
+    conversationId: string,
+    createdAt: string,
+    messageId: string,
+    sendSeq?: number | null,
+  ): Promise<boolean> {
+    const rows = await this.db.query<{ message_id: string; created_at: string; send_seq: number | null }>(
+      `SELECT o.message_id, m.created_at, m.send_seq
        FROM outbound_queue o
        JOIN messages m ON m.message_id = o.message_id
-       WHERE m.conversation_id = ? AND m.created_at < ? AND o.message_id != ?
-       ORDER BY m.created_at ASC
-       LIMIT 1`,
-      [conversationId, createdAt, messageId],
+       WHERE m.conversation_id = ? AND o.message_id != ?`,
+      [conversationId, messageId],
     );
-    return rows.length > 0;
+    return rows.some((row) => {
+      if (sendSeq != null && row.send_seq != null && row.send_seq !== sendSeq) {
+        return row.send_seq < sendSeq;
+      }
+      if (row.created_at !== createdAt) return row.created_at < createdAt;
+      const otherSeq = row.send_seq ?? 0;
+      const selfSeq = sendSeq ?? 0;
+      if (otherSeq !== selfSeq) return otherSeq < selfSeq;
+      return row.message_id < messageId;
+    });
   }
 
   async latestMessage(conversationId: string): Promise<StoredMessage | null> {
@@ -250,15 +293,15 @@ export class HopSqliteStore {
   }
 
   async rememberProcessed(messageId: string, at = new Date()): Promise<boolean> {
-    const existing = await this.db.query("SELECT message_id FROM processed_ids WHERE message_id = ?", [
-      messageId,
-    ]);
-    if (existing.length > 0) return false;
-    await this.db.execute("INSERT INTO processed_ids (message_id, seen_at) VALUES (?, ?)", [
-      messageId,
-      at.toISOString(),
-    ]);
-    return true;
+    try {
+      await this.db.execute("INSERT INTO processed_ids (message_id, seen_at) VALUES (?, ?)", [
+        messageId,
+        at.toISOString(),
+      ]);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async hasProcessed(messageId: string): Promise<boolean> {

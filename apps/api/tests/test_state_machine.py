@@ -24,6 +24,10 @@ def test_illegal_transition() -> None:
 
 def test_retry_from_sending() -> None:
     assert can_transition("SENDING", "QUEUED")
+    assert can_transition("SENDING", "RETRYING")
+    assert can_transition("FAILED", "QUEUED")
+    assert can_transition("CREATED", "ENCRYPTING")
+    assert can_transition("EXPIRED", "QUEUED") is False
 
 
 def test_forwarding_stops() -> None:

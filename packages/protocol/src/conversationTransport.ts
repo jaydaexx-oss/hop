@@ -108,19 +108,26 @@ export function nearbyPeerPresence(peer: {
 
 const MESSAGE_STATUS_LABEL: Record<string, string> = {
   [MessageStatus.CREATED]: "Queued",
+  [MessageStatus.ENCRYPTING]: "Queued",
   [MessageStatus.ENCRYPTED]: "Queued",
   [MessageStatus.QUEUED]: "Queued",
+  [MessageStatus.RETRYING]: "Retrying",
   [MessageStatus.SENDING]: "Sending",
   [MessageStatus.SENT]: "Sent",
   [MessageStatus.RELAYING]: "Relaying",
   [MessageStatus.DELIVERED]: "Delivered",
   [MessageStatus.READ]: "Read",
   [MessageStatus.FAILED]: "Failed",
-  [MessageStatus.EXPIRED]: "Expired",
+  [MessageStatus.EXPIRED]: "Failed",
 };
 
 export function formatMessageStatus(status: string, retryAttempts = 0): string {
-  if (retryAttempts > 0 && (status === MessageStatus.QUEUED || status === MessageStatus.SENDING)) {
+  if (
+    retryAttempts > 0 &&
+    (status === MessageStatus.QUEUED ||
+      status === MessageStatus.SENDING ||
+      status === MessageStatus.RETRYING)
+  ) {
     return "Retrying";
   }
   return MESSAGE_STATUS_LABEL[status] ?? status;
@@ -150,4 +157,13 @@ export function conversationPreviewLine(
 
 export function isFailedMessageStatus(status: string): boolean {
   return status === MessageStatus.FAILED || status === MessageStatus.EXPIRED;
+}
+
+export function isInFlightOutboundStatus(status: string): boolean {
+  return (
+    status === MessageStatus.QUEUED ||
+    status === MessageStatus.RETRYING ||
+    status === MessageStatus.SENDING ||
+    status === MessageStatus.ENCRYPTING
+  );
 }

@@ -14,6 +14,7 @@ import {
   formatMessageStatus,
   internetStatusAvailable,
   isFailedMessageStatus,
+  isInFlightOutboundStatus,
   type StoredMessage,
 } from '@hop/protocol';
 
@@ -50,9 +51,9 @@ export default function ChatScreen() {
     [messages, user?.id],
   );
   const conversationQueued = messages.some(
-    (row) =>
-      row.sender_id === user?.id && (row.status === 'QUEUED' || row.status === 'SENDING'),
+    (row) => row.sender_id === user?.id && isInFlightOutboundStatus(row.status),
   );
+  const needsOutboxPoll = messages.some((row) => isInFlightOutboundStatus(row.status));
   const transportView = conversationTransportStatus({
     recipientId,
     peers: peers.map((item) => ({
@@ -96,6 +97,7 @@ export default function ChatScreen() {
     }
     await syncNow();
     if (service) {
+      if (user?.id) await service.markConversationRead(id, user.id).catch(() => undefined);
       const local = await service.listMessages(id);
       setMessages(local.map(storedToChat));
     }
@@ -104,14 +106,14 @@ export default function ChatScreen() {
       const match = convos.find((row) => row.id === id);
       if (match?.peer_id) setRecipientId(match.peer_id);
     }
-  }, [id, service, store, syncNow, recipientId]);
+  }, [id, service, store, syncNow, recipientId, user?.id]);
 
   useEffect(() => {
     load().catch((err) => setError(err instanceof Error ? err.message : 'Could not load messages'));
   }, [load]);
 
   useEffect(() => {
-    if (!service || !id || sending) return;
+    if (!service || !id || sending || !needsOutboxPoll) return;
     const tick = setInterval(() => {
       service
         .listMessages(id)
@@ -119,7 +121,7 @@ export default function ChatScreen() {
         .catch(() => undefined);
     }, 3_000);
     return () => clearInterval(tick);
-  }, [service, id, sending]);
+  }, [service, id, sending, needsOutboxPoll]);
 
   useHopSocket(token, (event) => {
     const incoming = event.message as (ChatMessage & Partial<StoredMessage>) | undefined;
@@ -140,7 +142,10 @@ export default function ChatScreen() {
     };
     service
       .acceptInbound(stored)
-      .then(() => service.listMessages(id))
+      .then(async () => {
+        if (user?.id) await service.markConversationRead(id, user.id).catch(() => undefined);
+        return service.listMessages(id);
+      })
       .then((rows) => setMessages(rows.map(storedToChat)))
       .catch(() => undefined);
   });
@@ -195,6 +200,22 @@ export default function ChatScreen() {
     }
   }
 
+  async function retryFailed(messageId: string) {
+    if (!id || !service || sending) return;
+    setError(null);
+    setSending(true);
+    try {
+      await service.retryFailed(messageId);
+      await syncNow();
+      const local = await service.listMessages(id);
+      setMessages(local.map(storedToChat));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Retry failed');
+    } finally {
+      setSending(false);
+    }
+  }
+
   async function sendVoice(clip: VoiceClip) {
     if (!id || !service || sending) return;
     if (!recipientId || recipientId === me.id) {
@@ -241,6 +262,7 @@ export default function ChatScreen() {
         renderItem={({ item }) => {
           const mine = item.sender_id === me.id;
           const failed = isFailedMessageStatus(item.status);
+          const canRetry = item.status === 'FAILED';
           const voice = item.kind === 'voice';
           return (
             <View style={[styles.bubbleWrap, mine ? styles.mineWrap : styles.theirsWrap]}>
@@ -266,9 +288,16 @@ export default function ChatScreen() {
                 </View>
               )}
               {mine ? (
-                <Text style={[styles.status, { color: failed ? '#DC2626' : colors.muted }]}>
-                  {formatMessageStatus(item.status, item.retry_attempts)}
-                </Text>
+                <View style={styles.statusRow}>
+                  <Text style={[styles.status, { color: failed ? '#DC2626' : colors.muted }]}>
+                    {formatMessageStatus(item.status, item.retry_attempts)}
+                  </Text>
+                  {canRetry ? (
+                    <Pressable onPress={() => retryFailed(item.message_id)} hitSlop={8}>
+                      <Text style={[styles.retry, { color: colors.tint }]}>Retry</Text>
+                    </Pressable>
+                  ) : null}
+                </View>
               ) : null}
             </View>
           );
@@ -327,6 +356,14 @@ const styles = StyleSheet.create({
   theirsWrap: { alignSelf: 'flex-start' },
   bubble: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
   status: { fontSize: 11, marginTop: 2 },
+  statusRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'transparent',
+    marginTop: 2,
+  },
+  retry: { fontSize: 11, fontWeight: '700' },
   composer: { flexDirection: 'row', gap: 8, padding: 12, alignItems: 'center' },
   pttRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   input: { flex: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, fontSize: 16 },

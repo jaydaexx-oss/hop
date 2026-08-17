@@ -2,6 +2,12 @@ import type { ApplicationPlaintext, DecryptOptions } from "./cryptoBox.js";
 import { isCryptoBoxPayload, parseCryptoBoxPayload } from "./cryptoBox.js";
 import type { HopHttpClient } from "./http.js";
 import { createMessageId } from "./ids.js";
+import {
+  MAX_OUTBOX_MESSAGES,
+  isOutboxStatus,
+  isTransportAcceptedStatus,
+  sortConversationMessages,
+} from "./lifecycle.js";
 import { DEFAULT_TTL_MS, MessageStatus, isExpired } from "./message.js";
 import { DEFAULT_RETRY_POLICY, nextBackoffMs, type RetryPolicy } from "./retry.js";
 import { requirePeerRecipient } from "./sendGuards.js";
@@ -55,6 +61,8 @@ export interface MessageCrypto {
 }
 
 export class MessageService {
+  private readonly conversationTails = new Map<string, Promise<unknown>>();
+
   constructor(
     private readonly store: HopSqliteStore,
     private readonly manager: TransportManager,
@@ -65,7 +73,24 @@ export class MessageService {
     private readonly retry: RetryPolicy = DEFAULT_RETRY_POLICY,
   ) {}
 
+  private enqueueConversation<T>(conversationId: string, fn: () => Promise<T>): Promise<T> {
+    const prev = this.conversationTails.get(conversationId) ?? Promise.resolve();
+    const next = prev.then(fn, fn);
+    this.conversationTails.set(
+      conversationId,
+      next.then(
+        () => undefined,
+        () => undefined,
+      ),
+    );
+    return next;
+  }
+
   async sendText(input: SendTextInput): Promise<StoredMessage> {
+    return this.enqueueConversation(input.conversation_id, () => this.sendTextUnlocked(input));
+  }
+
+  private async sendTextUnlocked(input: SendTextInput): Promise<StoredMessage> {
     if (!this.crypto) {
       throw new Error("Refusing to send without libsodium crypto_box keys");
     }
@@ -74,6 +99,7 @@ export class MessageService {
     const created_at = now.toISOString();
     const expires_at = new Date(now.getTime() + DEFAULT_TTL_MS).toISOString();
     const message_id = createMessageId();
+    const send_seq = await this.store.nextSendSeq(input.conversation_id);
     const plain: ApplicationPlaintext = {
       message_id,
       sender_id: input.sender_id,
@@ -84,35 +110,45 @@ export class MessageService {
       expires_at,
       ttl: DEFAULT_TTL_MS,
       hop_count: 0,
+      send_seq,
     };
-    const encrypted_payload = await this.crypto.encrypt(plain);
-    if (!isCryptoBoxPayload(encrypted_payload)) {
-      throw new Error("encrypt() must return a libsodium crypto_box payload");
-    }
-    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
     let record: StoredMessage = {
       message_id,
       conversation_id: input.conversation_id,
       sender_id: input.sender_id,
       recipient_id,
       text: input.text,
-      encrypted_payload,
-      local_seal,
+      encrypted_payload: "",
+      local_seal: null,
       status: MessageStatus.CREATED,
       transport: "local",
       created_at,
       expires_at,
       ttl: DEFAULT_TTL_MS,
       hop_count: 0,
+      send_seq,
+    };
+    record = this.withStatus(record, MessageStatus.ENCRYPTING);
+    const encrypted_payload = await this.crypto.encrypt(plain);
+    if (!isCryptoBoxPayload(encrypted_payload)) {
+      throw new Error("encrypt() must return a libsodium crypto_box payload");
+    }
+    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
+    record = {
+      ...record,
+      encrypted_payload,
+      local_seal,
     };
     record = this.withStatus(record, MessageStatus.ENCRYPTED);
     record = this.withStatus(record, MessageStatus.QUEUED);
-    await this.persistMessage(record);
-    await this.store.enqueue(record.message_id, 0, now.getTime());
-    return this.flushOne({ ...record, text: input.text }, now, true);
+    return this.persistAndFlush(record, now, input.text);
   }
 
   async sendVoice(input: SendVoiceInput): Promise<StoredMessage> {
+    return this.enqueueConversation(input.conversation_id, () => this.sendVoiceUnlocked(input));
+  }
+
+  private async sendVoiceUnlocked(input: SendVoiceInput): Promise<StoredMessage> {
     if (!this.crypto) {
       throw new Error("Refusing to send without libsodium crypto_box keys");
     }
@@ -122,6 +158,7 @@ export class MessageService {
     const created_at = now.toISOString();
     const expires_at = new Date(now.getTime() + DEFAULT_TTL_MS).toISOString();
     const message_id = createMessageId();
+    const send_seq = await this.store.nextSendSeq(input.conversation_id);
     const caption = input.text?.trim() ? input.text.trim() : DEFAULT_VOICE_CAPTION;
     const plain: ApplicationPlaintext = {
       message_id,
@@ -140,37 +177,55 @@ export class MessageService {
       codec: input.codec ?? DEFAULT_VOICE_CODEC,
       seq: 0,
       total: 1,
+      send_seq,
     };
     if (estimateBoxedPayloadBytes(plain) > MAX_ENCRYPTED_PAYLOAD_BYTES) {
       throw new Error("Voice payload exceeds maximum size");
     }
-    const encrypted_payload = await this.crypto.encrypt(plain);
-    if (!isCryptoBoxPayload(encrypted_payload)) {
-      throw new Error("encrypt() must return a libsodium crypto_box payload");
-    }
-    assertEncryptedPayloadSize(encrypted_payload);
-    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
     let record: StoredMessage = {
       message_id,
       conversation_id: input.conversation_id,
       sender_id: input.sender_id,
       recipient_id,
       text: null,
-      encrypted_payload,
-      local_seal,
+      encrypted_payload: "",
+      local_seal: null,
       status: MessageStatus.CREATED,
       transport: "local",
       created_at,
       expires_at,
       ttl: DEFAULT_TTL_MS,
       hop_count: 0,
+      send_seq,
     };
+    record = this.withStatus(record, MessageStatus.ENCRYPTING);
+    const encrypted_payload = await this.crypto.encrypt(plain);
+    if (!isCryptoBoxPayload(encrypted_payload)) {
+      throw new Error("encrypt() must return a libsodium crypto_box payload");
+    }
+    assertEncryptedPayloadSize(encrypted_payload);
+    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
+    record = { ...record, encrypted_payload, local_seal };
     record = this.withStatus(record, MessageStatus.ENCRYPTED);
     record = this.withStatus(record, MessageStatus.QUEUED);
+    const sent = await this.persistAndFlush(record, now, null);
+    return withDecryptedPlain(sent, plain);
+  }
+
+  private async persistAndFlush(
+    record: StoredMessage,
+    now: Date,
+    displayText: string | null,
+  ): Promise<StoredMessage> {
+    if ((await this.store.queuedCount()) >= MAX_OUTBOX_MESSAGES) {
+      const failed = this.withStatus(record, MessageStatus.FAILED);
+      await this.persistMessage(failed);
+      return displayText ? { ...failed, text: displayText } : failed;
+    }
     await this.persistMessage(record);
     await this.store.enqueue(record.message_id, 0, now.getTime());
-    const sent = await this.flushOne(record, now, true);
-    return withDecryptedPlain(sent, plain);
+    const flushed = await this.flushOne({ ...record, text: displayText }, now, true);
+    return displayText ? { ...flushed, text: displayText } : flushed;
   }
 
   async listMessages(conversationId: string): Promise<StoredMessage[]> {
@@ -183,7 +238,7 @@ export class MessageService {
       if (materialized.kind === "delivery_ack") continue;
       out.push({ ...materialized, retry_attempts: attempts.get(row.message_id) ?? 0 });
     }
-    return out;
+    return sortConversationMessages(out);
   }
 
   async previewForConversation(conversationId: string): Promise<string> {
@@ -202,6 +257,7 @@ export class MessageService {
   }
 
   async sync(now = new Date()): Promise<void> {
+    await this.recoverInFlight(now);
     const internet = this.manager.getTransport("internet");
     const online = Boolean(internet && (await internet.isAvailable()));
     if (online) {
@@ -230,6 +286,7 @@ export class MessageService {
   }
 
   async retryDue(now = new Date()): Promise<void> {
+    await this.recoverInFlight(now);
     const outbound = await this.store.listOutbound();
     for (const item of outbound) {
       if (item.next_retry_at > now.getTime()) continue;
@@ -242,11 +299,70 @@ export class MessageService {
     }
   }
 
+  async recoverInFlight(now = new Date()): Promise<void> {
+    const sending = await this.store.listMessagesByStatus(MessageStatus.SENDING);
+    for (const message of sending) {
+      const recovered = this.withStatus(message, MessageStatus.QUEUED);
+      await this.persistMessage(recovered);
+      const queued = (await this.store.listOutbound()).some((row) => row.message_id === message.message_id);
+      if (!queued) {
+        await this.store.enqueue(message.message_id, 0, now.getTime());
+      }
+    }
+    for (const item of await this.store.listOutbound()) {
+      const message = await this.store.getMessage(item.message_id);
+      if (!message) {
+        await this.store.removeOutbound(item.message_id);
+        continue;
+      }
+      if (
+        isTransportAcceptedStatus(message.status) ||
+        message.status === MessageStatus.FAILED ||
+        message.status === MessageStatus.EXPIRED
+      ) {
+        await this.store.removeOutbound(item.message_id);
+      }
+    }
+  }
+
+  async retryFailed(messageId: string, now = new Date()): Promise<StoredMessage | null> {
+    const message = await this.store.getMessage(messageId);
+    if (!message) return null;
+    if (message.status !== MessageStatus.FAILED) return message;
+    return this.enqueueConversation(message.conversation_id, async () => {
+      const latest = await this.store.getMessage(messageId);
+      if (!latest || latest.status !== MessageStatus.FAILED) return latest;
+      if ((await this.store.queuedCount()) >= MAX_OUTBOX_MESSAGES) {
+        return latest;
+      }
+      const queued = { ...this.withStatus(latest, MessageStatus.QUEUED), transport: "local" };
+      await this.persistMessage(queued);
+      await this.store.enqueue(queued.message_id, 0, now.getTime());
+      return this.flushOne(queued, now, true);
+    });
+  }
+
+  async markConversationRead(conversationId: string, readerId: string, now = new Date()): Promise<void> {
+    const rows = await this.store.listMessages(conversationId);
+    for (const row of rows) {
+      if (row.sender_id === readerId) continue;
+      if (row.status === MessageStatus.READ) continue;
+      if (row.status !== MessageStatus.DELIVERED) continue;
+      const opened = await this.openInbound(row);
+      if (!opened.plain || opened.plain.kind === "delivery_ack") continue;
+      const next = this.withStatus(row, MessageStatus.READ);
+      await this.persistMessage(next);
+      await this.sendAck(opened.plain, "READ", now).catch(() => undefined);
+    }
+  }
   async acceptInbound(message: StoredMessage, now = new Date()): Promise<boolean> {
     if (isExpired(message, now)) return false;
     const opened = await this.openInbound(message);
     if (opened.plain?.kind === "delivery_ack") {
       return this.acceptCryptoDeliveryAck(message, opened.plain, now);
+    }
+    if (opened.plain && !(await this.inboundParticipantsAllowed(message, opened.plain))) {
+      return false;
     }
     const existing = await this.store.getMessage(message.message_id);
     if (existing) {
@@ -255,6 +371,7 @@ export class MessageService {
         text: null,
         encrypted_payload: opened.record.encrypted_payload || existing.encrypted_payload,
         transport: message.transport || existing.transport,
+        send_seq: existing.send_seq ?? opened.record.send_seq ?? opened.plain?.send_seq ?? null,
         status: cryptographicStatusFromServer(existing.status, message.status),
       };
       await this.persistMessage(merged);
@@ -266,17 +383,30 @@ export class MessageService {
     if (isCryptoBoxPayload(message.encrypted_payload) && this.crypto && !opened.plain) {
       return false;
     }
-    const fresh = await this.store.rememberProcessed(message.message_id, now);
-    if (!fresh) return false;
     await this.persistMessage({
       ...opened.record,
       text: null,
+      send_seq: opened.plain?.send_seq ?? opened.record.send_seq ?? null,
       status: opened.plain ? MessageStatus.DELIVERED : message.status,
     });
+    const fresh = await this.store.rememberProcessed(message.message_id, now);
+    if (!fresh) return false;
     if (opened.plain) {
-      void this.sendDeliveryAck(opened.plain, now).catch(() => undefined);
+      void this.sendAck(opened.plain, "DELIVERED", now).catch(() => undefined);
     }
     return true;
+  }
+
+  private async inboundParticipantsAllowed(
+    message: StoredMessage,
+    plain: ApplicationPlaintext,
+  ): Promise<boolean> {
+    if (plain.conversation_id !== message.conversation_id) return false;
+    if (plain.sender_id !== message.sender_id) return false;
+    if (plain.recipient_id !== message.recipient_id) return false;
+    const convo = await this.store.getConversation(message.conversation_id);
+    if (!convo?.peer_id) return true;
+    return plain.sender_id === convo.peer_id;
   }
 
   private async flushOne(message: StoredMessage, now: Date, ignoreBackoff: boolean): Promise<StoredMessage> {
@@ -287,16 +417,32 @@ export class MessageService {
       return expired;
     }
 
+    if (isTransportAcceptedStatus(message.status)) {
+      await this.store.removeOutbound(message.message_id);
+      return message;
+    }
+    if (message.status === MessageStatus.FAILED || message.status === MessageStatus.EXPIRED) {
+      await this.store.removeOutbound(message.message_id);
+      return message;
+    }
+
     const queued = (await this.store.listOutbound()).find((row) => row.message_id === message.message_id);
     if (!ignoreBackoff && queued && queued.next_retry_at > now.getTime()) {
       return message;
     }
-    if (await this.store.hasEarlierOutbound(message.conversation_id, message.created_at, message.message_id)) {
+    if (
+      await this.store.hasEarlierOutbound(
+        message.conversation_id,
+        message.created_at,
+        message.message_id,
+        message.send_seq,
+      )
+    ) {
       return message;
     }
 
     let current = message;
-    if (current.status === MessageStatus.QUEUED) {
+    if (isOutboxStatus(current.status) && current.status !== MessageStatus.SENDING) {
       current = this.advanceToward(current, MessageStatus.SENDING);
       await this.persistMessage(current);
     }
@@ -379,7 +525,11 @@ export class MessageService {
     return applied;
   }
 
-  private async sendDeliveryAck(original: ApplicationPlaintext, now: Date): Promise<void> {
+  private async sendAck(
+    original: ApplicationPlaintext,
+    ack_status: "DELIVERED" | "READ",
+    now: Date,
+  ): Promise<void> {
     if (!this.crypto || original.kind === "delivery_ack") return;
     const ack_id = createMessageId();
     const plain: ApplicationPlaintext = {
@@ -394,7 +544,7 @@ export class MessageService {
       hop_count: 0,
       kind: "delivery_ack",
       ack_of: original.message_id,
-      ack_status: "DELIVERED",
+      ack_status,
     };
     const encrypted_payload = await this.crypto.encrypt(plain);
     if (!isCryptoBoxPayload(encrypted_payload)) {
@@ -416,6 +566,7 @@ export class MessageService {
       ttl: DEFAULT_TTL_MS,
       hop_count: 0,
     };
+    record = this.withStatus(record, MessageStatus.ENCRYPTING);
     record = this.withStatus(record, MessageStatus.ENCRYPTED);
     record = this.withStatus(record, MessageStatus.QUEUED);
     await this.persistMessage(record);
@@ -504,6 +655,7 @@ export class MessageService {
       expires_at: message.expires_at,
       ttl: message.ttl,
       hop_count: message.hop_count,
+      send_seq: message.send_seq ?? null,
     };
     await this.store.saveMessage(stored);
   }
@@ -529,9 +681,19 @@ export class MessageService {
   private advanceToward(message: StoredMessage, target: string): StoredMessage {
     if (message.status === target) return message;
     const steps: string[] = [];
-    if (target === MessageStatus.SENT || target === MessageStatus.DELIVERED || target === MessageStatus.READ) {
-      if (message.status === MessageStatus.QUEUED) steps.push(MessageStatus.SENDING);
-      if (message.status === MessageStatus.QUEUED || message.status === MessageStatus.SENDING) {
+    if (target === MessageStatus.SENDING) {
+      if (message.status === MessageStatus.QUEUED || message.status === MessageStatus.RETRYING) {
+        steps.push(MessageStatus.SENDING);
+      }
+    } else if (target === MessageStatus.SENT || target === MessageStatus.DELIVERED || target === MessageStatus.READ) {
+      if (message.status === MessageStatus.QUEUED || message.status === MessageStatus.RETRYING) {
+        steps.push(MessageStatus.SENDING);
+      }
+      if (
+        message.status === MessageStatus.QUEUED ||
+        message.status === MessageStatus.RETRYING ||
+        message.status === MessageStatus.SENDING
+      ) {
         steps.push(MessageStatus.SENT);
       }
       if (target === MessageStatus.DELIVERED || target === MessageStatus.READ) {

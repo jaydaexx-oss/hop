@@ -1,5 +1,6 @@
 import { ProcessedIdSet } from "./duplicates.js";
 import { createInternetTransport } from "./internetTransport.js";
+import { MAX_OUTBOX_MESSAGES } from "./lifecycle.js";
 import { LocalTransport } from "./localTransport.js";
 import { isExpired } from "./message.js";
 import { DEFAULT_RETRY_POLICY, nextBackoffMs, type RetryPolicy } from "./retry.js";
@@ -12,6 +13,7 @@ import type {
   SendResult,
   Transport,
   TransportId,
+  TransportRoute,
 } from "./transport.js";
 
 /** Live delivery routes. Relay is not selected (unimplemented, no consent). Local is fallback only. */
@@ -72,6 +74,13 @@ export class TransportManager {
       if (await this.canUse(transport, envelope)) return id;
     }
     return null;
+  }
+
+  /** Internet, Nearby BLE, or durable queued-offline. Never encrypts. */
+  async selectRoute(envelope: EncryptedEnvelope): Promise<TransportRoute> {
+    const id = await this.select(envelope);
+    if (id === "internet" || id === "bluetooth") return id;
+    return "queued";
   }
 
   /**
@@ -149,6 +158,9 @@ export class TransportManager {
       }
     }
 
+    if (this.outbound.length >= MAX_OUTBOX_MESSAGES) {
+      return { ok: false, transport: "local", error: "Outbox is full" };
+    }
     this.outbound.push({ envelope, attempts: 0 });
     return { ok: true, transport: "local", error: "Queued for retry" };
   }

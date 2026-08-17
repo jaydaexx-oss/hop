@@ -81,6 +81,7 @@ describe("TransportManager", () => {
     expect(internetSent).toHaveLength(1);
     expect(bleSent).toHaveLength(0);
     expect(await manager.select(envelope)).toBe("internet");
+    expect(await manager.selectRoute(envelope)).toBe("internet");
     expect(await manager.getNetworkStatus()).toBe("Online");
   });
 
@@ -108,6 +109,7 @@ describe("TransportManager", () => {
     expect(result).toMatchObject({ ok: true, transport: "bluetooth" });
     expect(bleSent).toHaveLength(1);
     expect(await manager.select(envelope)).toBe("bluetooth");
+    expect(await manager.selectRoute(envelope)).toBe("bluetooth");
     expect(await manager.getNetworkStatus()).toBe("Nearby");
   });
 
@@ -148,6 +150,7 @@ describe("TransportManager", () => {
     const result = await manager.enqueue(encryptedEnvelope());
     expect(result.ok).toBe(true);
     expect(result.transport).toBe("local");
+    expect(await manager.selectRoute(encryptedEnvelope())).toBe("queued");
     expect(local.length).toBe(1);
     expect(await manager.getNetworkStatus()).toBe("Queued");
   });

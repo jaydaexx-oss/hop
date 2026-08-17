@@ -5,8 +5,10 @@ from typing import Literal
 
 MessageStatus = Literal[
     "CREATED",
+    "ENCRYPTING",
     "ENCRYPTED",
     "QUEUED",
+    "RETRYING",
     "SENDING",
     "SENT",
     "RELAYING",
@@ -17,15 +19,17 @@ MessageStatus = Literal[
 ]
 
 ALLOWED_TRANSITIONS: dict[MessageStatus, tuple[MessageStatus, ...]] = {
-    "CREATED": ("ENCRYPTED", "FAILED", "EXPIRED"),
+    "CREATED": ("ENCRYPTING", "ENCRYPTED", "FAILED", "EXPIRED"),
+    "ENCRYPTING": ("ENCRYPTED", "FAILED", "EXPIRED"),
     "ENCRYPTED": ("QUEUED", "FAILED", "EXPIRED"),
-    "QUEUED": ("SENDING", "FAILED", "EXPIRED"),
-    "SENDING": ("SENT", "QUEUED", "FAILED", "EXPIRED"),
+    "QUEUED": ("SENDING", "RETRYING", "FAILED", "EXPIRED"),
+    "RETRYING": ("SENDING", "FAILED", "EXPIRED"),
+    "SENDING": ("SENT", "QUEUED", "RETRYING", "FAILED", "EXPIRED"),
     "SENT": ("DELIVERED", "RELAYING", "FAILED", "EXPIRED"),
     "RELAYING": ("DELIVERED", "RELAYING", "FAILED", "EXPIRED"),
     "DELIVERED": ("READ",),
     "READ": (),
-    "FAILED": (),
+    "FAILED": ("QUEUED",),
     "EXPIRED": (),
 }
 

@@ -80,5 +80,6 @@ export function withDecryptedPlain(message: StoredMessage, plain: ApplicationPla
     seq: plain.seq,
     total: plain.total,
     part_of: plain.part_of,
+    send_seq: plain.send_seq,
   };
 }

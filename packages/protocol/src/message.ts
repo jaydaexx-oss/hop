@@ -3,8 +3,10 @@ import type { TransportId } from "./transport.js";
 
 export const MessageStatus = {
   CREATED: "CREATED",
+  ENCRYPTING: "ENCRYPTING",
   ENCRYPTED: "ENCRYPTED",
   QUEUED: "QUEUED",
+  RETRYING: "RETRYING",
   SENDING: "SENDING",
   SENT: "SENT",
   RELAYING: "RELAYING",
@@ -64,16 +66,18 @@ export function createMessage(input: CreateMessageInput): HopMessage {
 }
 
 const MESSAGE_STATUS_LABEL: Record<string, string> = {
-  [MessageStatus.CREATED]: "Created",
-  [MessageStatus.ENCRYPTED]: "Encrypted",
+  [MessageStatus.CREATED]: "Queued",
+  [MessageStatus.ENCRYPTING]: "Queued",
+  [MessageStatus.ENCRYPTED]: "Queued",
   [MessageStatus.QUEUED]: "Queued",
+  [MessageStatus.RETRYING]: "Retrying",
   [MessageStatus.SENDING]: "Sending",
   [MessageStatus.SENT]: "Sent",
   [MessageStatus.RELAYING]: "Relaying",
   [MessageStatus.DELIVERED]: "Delivered",
   [MessageStatus.READ]: "Read",
   [MessageStatus.FAILED]: "Failed",
-  [MessageStatus.EXPIRED]: "Expired",
+  [MessageStatus.EXPIRED]: "Failed",
 };
 
 export function formatMessageStatus(status: string): string {

@@ -39,6 +39,7 @@ describe("message state machine", () => {
 
   it("allows SENDING to fall back to QUEUED for retry", () => {
     expect(canTransition(MessageStatus.SENDING, MessageStatus.QUEUED)).toBe(true);
+    expect(canTransition(MessageStatus.SENDING, MessageStatus.RETRYING)).toBe(true);
   });
 
   it("rejects illegal transitions", () => {
@@ -50,8 +51,20 @@ describe("message state machine", () => {
     expect(() => transition(message, MessageStatus.READ)).toThrow(IllegalStateTransitionError);
   });
 
-  it("cannot leave FAILED or EXPIRED", () => {
-    expect(canTransition(MessageStatus.FAILED, MessageStatus.QUEUED)).toBe(false);
+  it("allows explicit retry from FAILED but not EXPIRED", () => {
+    expect(canTransition(MessageStatus.FAILED, MessageStatus.QUEUED)).toBe(true);
+    expect(canTransition(MessageStatus.EXPIRED, MessageStatus.QUEUED)).toBe(false);
     expect(canTransition(MessageStatus.EXPIRED, MessageStatus.CREATED)).toBe(false);
+  });
+
+  it("allows CREATED to ENCRYPTING to ENCRYPTED", () => {
+    let message = createMessage({
+      sender_id: "a",
+      recipient_id: "b",
+      conversation_id: "c",
+    });
+    message = transition(message, MessageStatus.ENCRYPTING);
+    message = transition(message, MessageStatus.ENCRYPTED);
+    expect(message.status).toBe(MessageStatus.ENCRYPTED);
   });
 });

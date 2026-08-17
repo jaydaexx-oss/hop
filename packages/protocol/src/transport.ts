@@ -2,6 +2,9 @@ import type { HopMessage } from "./message.js";
 
 export type TransportId = "internet" | "bluetooth" | "relay" | "local";
 
+/** Live routes plus durable queued-offline. Encryption is independent of this choice. */
+export type TransportRoute = "internet" | "bluetooth" | "queued";
+
 export type NetworkStatus =
   | "Online"
   | "Nearby"

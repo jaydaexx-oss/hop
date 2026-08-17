@@ -24,6 +24,7 @@ export {
   type SendResult,
   type Transport,
   type TransportId,
+  type TransportRoute,
   type TransportRuntimeStatus,
 } from "./transport.js";
 export { LocalTransport } from "./localTransport.js";
@@ -83,6 +84,7 @@ export {
   formatNetworkStatus,
   internetStatusAvailable,
   isFailedMessageStatus,
+  isInFlightOutboundStatus,
   localDirectConversationId,
   nearbyPeerLabel,
   nearbyPeerPresence,
@@ -93,6 +95,17 @@ export {
   type NearbyPeerSnapshot,
 } from "./conversationTransport.js";
 export { TransportManager, defaultTransportManager, LIVE_TRANSPORT_PRIORITY, type QueueItem } from "./transportManager.js";
+export {
+  AckLayer,
+  CanonicalLifecycle,
+  MAX_OUTBOX_MESSAGES,
+  ackLayerFromStatus,
+  canonicalLifecycle,
+  compareConversationMessages,
+  isOutboxStatus,
+  isTransportAcceptedStatus,
+  sortConversationMessages,
+} from "./lifecycle.js";
 export {
   HopSqliteStore,
   SCHEMA_SQL,

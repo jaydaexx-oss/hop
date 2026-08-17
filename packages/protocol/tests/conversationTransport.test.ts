@@ -166,6 +166,9 @@ describe("conversation transport helpers", () => {
     expect(formatMessageStatus(MessageStatus.FAILED)).toBe("Failed");
     expect(formatMessageStatus(MessageStatus.QUEUED, 2)).toBe("Retrying");
     expect(formatMessageStatus(MessageStatus.SENDING, 1)).toBe("Retrying");
+    expect(formatMessageStatus(MessageStatus.ENCRYPTING)).toBe("Queued");
+    expect(formatMessageStatus(MessageStatus.RETRYING)).toBe("Retrying");
+    expect(formatMessageStatus(MessageStatus.CREATED)).toBe("Queued");
   });
 
   it("treats Online and Synchronizing as internet-available", () => {

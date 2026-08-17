@@ -11,12 +11,25 @@ export class IllegalStateTransitionError extends Error {
 }
 
 export const ALLOWED_TRANSITIONS: Record<MessageStatus, readonly MessageStatus[]> = {
-  CREATED: [MessageStatus.ENCRYPTED, MessageStatus.FAILED, MessageStatus.EXPIRED],
+  CREATED: [
+    MessageStatus.ENCRYPTING,
+    MessageStatus.ENCRYPTED,
+    MessageStatus.FAILED,
+    MessageStatus.EXPIRED,
+  ],
+  ENCRYPTING: [MessageStatus.ENCRYPTED, MessageStatus.FAILED, MessageStatus.EXPIRED],
   ENCRYPTED: [MessageStatus.QUEUED, MessageStatus.FAILED, MessageStatus.EXPIRED],
-  QUEUED: [MessageStatus.SENDING, MessageStatus.FAILED, MessageStatus.EXPIRED],
+  QUEUED: [
+    MessageStatus.SENDING,
+    MessageStatus.RETRYING,
+    MessageStatus.FAILED,
+    MessageStatus.EXPIRED,
+  ],
+  RETRYING: [MessageStatus.SENDING, MessageStatus.FAILED, MessageStatus.EXPIRED],
   SENDING: [
     MessageStatus.SENT,
     MessageStatus.QUEUED,
+    MessageStatus.RETRYING,
     MessageStatus.FAILED,
     MessageStatus.EXPIRED,
   ],
@@ -34,7 +47,7 @@ export const ALLOWED_TRANSITIONS: Record<MessageStatus, readonly MessageStatus[]
   ],
   DELIVERED: [MessageStatus.READ],
   READ: [],
-  FAILED: [],
+  FAILED: [MessageStatus.QUEUED],
   EXPIRED: [],
 };
 

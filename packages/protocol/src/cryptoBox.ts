@@ -52,6 +52,8 @@ export interface ApplicationPlaintext {
   codec?: string;
   /** Future chunk index. First slice sends a single clip as seq=0. */
   seq?: number;
+  /** Per-conversation monotonic send sequence. Optional; old messages omit it. */
+  send_seq?: number;
   /** Future chunk count. First slice sends a single clip as total=1. */
   total?: number;
   /** Future stream/session id for multi-chunk PTT. Omitted on a complete single clip. */

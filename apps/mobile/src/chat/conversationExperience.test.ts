@@ -3,6 +3,7 @@ import {
   CHAT_PAGE_SIZE,
   MAX_APPLICATION_TEXT_CHARS,
   MessageStatus,
+  applyOptimisticSendFailure,
   conversationIsActivelyViewed,
   formatMessageStatus,
   formatMessageStatusDescription,
@@ -177,5 +178,14 @@ describe('mobile conversation experience', () => {
       ttl: 1,
       hop_count: 0,
     }).text).toBe('visible');
+  });
+
+  it('does not let a post-send load error mark a SENT bubble Failed', () => {
+    const allocated = chat('msg-1', { status: MessageStatus.ENCRYPTING });
+    const sent = chat('msg-1', { status: MessageStatus.SENT });
+    const recovered = applyOptimisticSendFailure(mergeChatWindow([allocated], [sent]), 'msg-1');
+    expect(recovered).toHaveLength(1);
+    expect(recovered[0]?.status).toBe(MessageStatus.SENT);
+    expect(applyOptimisticSendFailure([allocated], 'msg-1')[0]?.status).toBe(MessageStatus.FAILED);
   });
 });

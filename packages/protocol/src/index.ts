@@ -137,6 +137,7 @@ export {
 export { MessageService, type MessageCrypto, type SendTextInput, type SendVoiceInput } from "./messageService.js";
 export {
   CHAT_PAGE_SIZE,
+  applyOptimisticSendFailure,
   clampComposerText,
   conversationPresenceLabel,
   formatBubbleTimestamp,
@@ -144,6 +145,7 @@ export {
   formatMessageStatusDescription,
   inboxActivityKey,
   isComposerSendable,
+  isOptimisticPreSendStatus,
   isPinnedToLatest,
   isVisibleChatMessage,
   mergeChatWindow,

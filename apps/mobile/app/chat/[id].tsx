@@ -14,6 +14,7 @@ import {
   CHAT_PAGE_SIZE,
   DEFAULT_TTL_MS,
   MAX_APPLICATION_TEXT_CHARS,
+  applyOptimisticSendFailure,
   conversationTransportStatus,
   formatNetworkStatus,
   internetStatusAvailable,
@@ -249,8 +250,9 @@ export default function ChatScreen() {
     pinnedToLatest.current = true;
     setNewIncoming(0);
     let allocatedId: string | undefined;
+    let flushed: StoredMessage | undefined;
     try {
-      const sent = await sendChatText(service, {
+      flushed = await sendChatText(service, {
         conversation_id: id,
         sender_id: me.id,
         recipient_id: recipientId,
@@ -263,16 +265,16 @@ export default function ChatScreen() {
           listRef.current?.scrollToOffset({ offset: 0, animated: true });
         },
       });
-      mergeRows([storedToChat(sent)]);
+      mergeRows([storedToChat(flushed)]);
       await syncNow();
       await loadLatest();
     } catch (err) {
-      if (allocatedId) {
-        setMessages((current) =>
-          current.map((row) => (row.message_id === allocatedId ? { ...row, status: 'FAILED' } : row)),
-        );
+      await loadLatest().catch(() => undefined);
+      const failedId = allocatedId;
+      if (!flushed && failedId) {
+        setMessages((current) => applyOptimisticSendFailure(current, failedId));
       }
-      setError(userFacingSendError(err));
+      setError(flushed ? userFacingLoadError(err) : userFacingSendError(err));
     } finally {
       sendLock.current = false;
       setSending(false);
@@ -283,12 +285,14 @@ export default function ChatScreen() {
     if (!id || !service) return;
     const existing = messages.find((row) => row.message_id === messageId);
     setError(null);
+    let outcome: StoredMessage | undefined;
     try {
       const retried = await service.retryFailed(messageId);
       if (retried) {
+        outcome = retried;
         mergeRows([storedToChat(retried)]);
       } else if (existing?.text) {
-        const sent = await sendChatText(service, {
+        outcome = await sendChatText(service, {
           conversation_id: id,
           sender_id: me.id,
           recipient_id: recipientId,
@@ -297,15 +301,16 @@ export default function ChatScreen() {
           send_seq: existing.send_seq ?? undefined,
           onAllocated: (row) => mergeRows([storedToChat(row)]),
         });
-        mergeRows([storedToChat(sent)]);
+        mergeRows([storedToChat(outcome)]);
       }
       await syncNow();
       await loadLatest();
     } catch (err) {
-      setMessages((current) =>
-        current.map((row) => (row.message_id === messageId ? { ...row, status: 'FAILED' } : row)),
-      );
-      setError(userFacingSendError(err));
+      await loadLatest().catch(() => undefined);
+      if (!outcome) {
+        setMessages((current) => applyOptimisticSendFailure(current, messageId));
+      }
+      setError(outcome ? userFacingLoadError(err) : userFacingSendError(err));
     }
   }
 
@@ -317,8 +322,9 @@ export default function ChatScreen() {
     }
     sendLock.current = true;
     setError(null);
+    let flushed: StoredMessage | undefined;
     try {
-      const sent = await sendChatVoice(service, {
+      flushed = await sendChatVoice(service, {
         conversation_id: id,
         sender_id: me.id,
         recipient_id: recipientId,
@@ -326,13 +332,14 @@ export default function ChatScreen() {
         duration_ms: clip.duration_ms,
         mime: clip.mime,
       });
-      mergeRows([storedToChat(sent)]);
+      mergeRows([storedToChat(flushed)]);
       pinnedToLatest.current = true;
       listRef.current?.scrollToOffset({ offset: 0, animated: true });
       await syncNow();
       await loadLatest();
     } catch (err) {
-      setError(userFacingSendError(err));
+      await loadLatest().catch(() => undefined);
+      setError(flushed ? userFacingLoadError(err) : userFacingSendError(err));
     } finally {
       sendLock.current = false;
     }

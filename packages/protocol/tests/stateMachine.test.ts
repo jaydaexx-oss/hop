@@ -82,5 +82,8 @@ describe("message state machine", () => {
     expect(canTransition(MessageStatus.READ, MessageStatus.DELIVERED)).toBe(false);
     expect(canTransition(MessageStatus.DELIVERED, MessageStatus.SENT)).toBe(false);
     expect(canTransition(MessageStatus.READ, MessageStatus.SENT)).toBe(false);
+    expect(canTransition(MessageStatus.SENT, MessageStatus.READ)).toBe(false);
+    expect(canTransition(MessageStatus.SENT, MessageStatus.DELIVERED)).toBe(true);
+    expect(canTransition(MessageStatus.DELIVERED, MessageStatus.READ)).toBe(true);
   });
 });

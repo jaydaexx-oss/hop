@@ -240,3 +240,28 @@ export function isVisibleChatMessage(row: Pick<StoredMessage, "kind" | "encrypte
   if (row.kind === "delivery_ack") return false;
   return Boolean(row.encrypted_payload || row.local_seal);
 }
+
+/**
+ * Chat catch-path overlay. Only an in-memory CREATED/ENCRYPTING/ENCRYPTED bubble may
+ * become FAILED. Queued, in-flight, and receipt states are store truth — a later
+ * sync/load error must not paint Failed on a message that already left the composer.
+ */
+export function isOptimisticPreSendStatus(status: string | undefined): boolean {
+  return (
+    !status ||
+    status === MessageStatus.CREATED ||
+    status === MessageStatus.ENCRYPTING ||
+    status === MessageStatus.ENCRYPTED
+  );
+}
+
+export function applyOptimisticSendFailure<T extends { message_id: string; status?: string }>(
+  rows: T[],
+  messageId: string,
+): T[] {
+  return rows.map((row) => {
+    if (row.message_id !== messageId) return row;
+    if (!isOptimisticPreSendStatus(row.status)) return row;
+    return { ...row, status: MessageStatus.FAILED };
+  });
+}

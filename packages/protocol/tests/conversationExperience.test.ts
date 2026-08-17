@@ -6,6 +6,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   CHAT_PAGE_SIZE,
   MessageStatus,
+  applyOptimisticSendFailure,
   decryptApplicationMessage,
   encryptApplicationMessage,
   generateIdentityKeyPair,
@@ -534,6 +535,121 @@ describe("production conversation experience", () => {
     const listed = await session.service.listMessages(CONVO);
     expect(listed).toHaveLength(1);
     expect(listed[0]?.message_id).toBe(sent.message_id);
+    session.driver.close();
+  });
+
+  it("does not paint FAILED after a successful send when a later load/sync fails", async () => {
+    const alice = await generateIdentityKeyPair();
+    const bob = await generateIdentityKeyPair();
+    const world = mockHttp(true);
+    const session = await openPeer({
+      file: tempDb(),
+      self: alice,
+      peer: bob,
+      selfId: ALICE_ID,
+      peerId: BOB_ID,
+      http: world.http,
+    });
+    let allocated = "";
+    const sent = await session.service.sendText({
+      conversation_id: CONVO,
+      sender_id: ALICE_ID,
+      recipient_id: BOB_ID,
+      text: "keep-sent",
+      onAllocated: (row) => {
+        allocated = row.message_id;
+      },
+    });
+    expect(sent.status).toBe(MessageStatus.SENT);
+    expect(allocated).toBe(sent.message_id);
+    const overlay = applyOptimisticSendFailure(
+      mergeChatWindow([{ ...sent, status: MessageStatus.ENCRYPTING }], [sent]),
+      allocated,
+    );
+    expect(overlay).toHaveLength(1);
+    expect(overlay[0]?.message_id).toBe(sent.message_id);
+    expect(overlay[0]?.status).toBe(MessageStatus.SENT);
+    expect(world.posts.map((item) => item.message_id)).toEqual([sent.message_id]);
+    session.driver.close();
+  });
+
+  it("does not mark inbound READ from listing, pagination, or an unfocused reload", async () => {
+    const alice = await generateIdentityKeyPair();
+    const bob = await generateIdentityKeyPair();
+    const bobSession = await openPeer({
+      file: tempDb(),
+      self: bob,
+      peer: alice,
+      selfId: BOB_ID,
+      peerId: ALICE_ID,
+      http: mockHttp(true).http,
+    });
+    const inbound = await inboundMessage(bob, alice, {
+      message_id: "33333333-3333-4333-8333-333333333333",
+      sender_id: ALICE_ID,
+      recipient_id: BOB_ID,
+      send_seq: 1,
+      text: "unread",
+    });
+    expect(await bobSession.service.acceptInbound({ ...inbound, status: MessageStatus.DELIVERED })).toBe(true);
+    expect((await bobSession.service.listMessages(CONVO))[0]?.status).toBe(MessageStatus.DELIVERED);
+    expect((await bobSession.service.listMessagesPage(CONVO, { limit: 50 })).rows[0]?.status).toBe(
+      MessageStatus.DELIVERED,
+    );
+    expect(await bobSession.service.unreadCount(CONVO, BOB_ID)).toBe(1);
+    bobSession.driver.close();
+  });
+
+  it("HTTP 200 is SENT, never DELIVERED, and a READ ACK from SENT does not regress", async () => {
+    const alice = await generateIdentityKeyPair();
+    const bob = await generateIdentityKeyPair();
+    const world = mockHttp(true);
+    const session = await openPeer({
+      file: tempDb(),
+      self: alice,
+      peer: bob,
+      selfId: ALICE_ID,
+      peerId: BOB_ID,
+      http: world.http,
+    });
+    const sent = await session.service.sendText({
+      conversation_id: CONVO,
+      sender_id: ALICE_ID,
+      recipient_id: BOB_ID,
+      text: "ack-me",
+    });
+    expect(sent.status).toBe(MessageStatus.SENT);
+    expect(world.server.get(sent.message_id)?.status).toBe("SENT");
+    expect(
+      await session.service.applyValidatedDeliveryAck({
+        kind: "delivery_ack",
+        ack_of: sent.message_id,
+        ack_status: "READ",
+        ack_type: "READ_ACK",
+        ack_v: 1,
+        sender_id: BOB_ID,
+        recipient_id: ALICE_ID,
+        conversation_id: CONVO,
+        message_id: "44444444-4444-4444-8444-444444444444",
+        text: "",
+      }),
+    ).toBe(true);
+    expect((await session.store.getMessage(sent.message_id))?.status).toBe(MessageStatus.READ);
+    expect(
+      await session.service.applyValidatedDeliveryAck({
+        kind: "delivery_ack",
+        ack_of: sent.message_id,
+        ack_status: "DELIVERED",
+        ack_type: "DELIVERED_ACK",
+        ack_v: 1,
+        sender_id: BOB_ID,
+        recipient_id: ALICE_ID,
+        conversation_id: CONVO,
+        message_id: "55555555-5555-4555-8555-555555555555",
+        text: "",
+      }),
+    ).toBe(true);
+    expect((await session.store.getMessage(sent.message_id))?.status).toBe(MessageStatus.READ);
     session.driver.close();
   });
 });

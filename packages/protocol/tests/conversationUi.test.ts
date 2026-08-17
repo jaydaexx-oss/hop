@@ -10,8 +10,10 @@ import {
   formatInboxTimestamp,
   formatMessageStatusDescription,
   isComposerSendable,
+  isOptimisticPreSendStatus,
   isPinnedToLatest,
   isVisibleChatMessage,
+  applyOptimisticSendFailure,
   mergeChatWindow,
   paginateConversationMessages,
   shouldAutoScrollOnIncoming,
@@ -171,5 +173,49 @@ describe("conversation UI helpers", () => {
     expect(userFacingSendError(new Error("network down"))).toBe("You're offline. The message will send when you're back.");
     expect(userFacingSendError(new Error("Bluetooth off"))).toBe("Bluetooth is unavailable.");
     expect(userFacingSendError(new Error("encrypted_payload AAAAA"))).toBe("Could not send this message.");
+  });
+
+  it("does not let a composer catch overlay paint FAILED on SENT, QUEUED, DELIVERED, or READ", () => {
+    const sent = row("msg-1", "alice", 1, "2026-08-16T00:00:00.000Z", MessageStatus.SENT);
+    expect(applyOptimisticSendFailure([sent], "msg-1")[0]?.status).toBe(MessageStatus.SENT);
+    expect(
+      applyOptimisticSendFailure([{ ...sent, status: MessageStatus.QUEUED }], "msg-1")[0]?.status,
+    ).toBe(MessageStatus.QUEUED);
+    expect(
+      applyOptimisticSendFailure([{ ...sent, status: MessageStatus.DELIVERED }], "msg-1")[0]?.status,
+    ).toBe(MessageStatus.DELIVERED);
+    expect(applyOptimisticSendFailure([{ ...sent, status: MessageStatus.READ }], "msg-1")[0]?.status).toBe(
+      MessageStatus.READ,
+    );
+    expect(applyOptimisticSendFailure([{ ...sent, status: MessageStatus.ENCRYPTING }], "msg-1")[0]?.status).toBe(
+      MessageStatus.FAILED,
+    );
+    expect(isOptimisticPreSendStatus(MessageStatus.ENCRYPTING)).toBe(true);
+    expect(isOptimisticPreSendStatus(MessageStatus.SENT)).toBe(false);
+    const overlayThenStore = mergeChatWindow(
+      applyOptimisticSendFailure([{ ...sent, status: MessageStatus.ENCRYPTING }], "msg-1"),
+      [{ ...sent, status: MessageStatus.SENT }],
+    );
+    expect(overlayThenStore).toHaveLength(1);
+    expect(overlayThenStore[0]?.status).toBe(MessageStatus.FAILED);
+    const storeThenOverlay = applyOptimisticSendFailure(
+      mergeChatWindow([{ ...sent, status: MessageStatus.ENCRYPTING }], [{ ...sent, status: MessageStatus.SENT }]),
+      "msg-1",
+    );
+    expect(storeThenOverlay[0]?.status).toBe(MessageStatus.SENT);
+  });
+
+  it("rejects illegal UI status regressions when merging receipt updates", () => {
+    const base = row("msg-1", "alice", 1, "2026-08-16T00:00:00.000Z", MessageStatus.SENT);
+    expect(mergeChatWindow([{ ...base, status: MessageStatus.READ }], [{ ...base, status: MessageStatus.DELIVERED }])[0]?.status).toBe(
+      MessageStatus.READ,
+    );
+    expect(mergeChatWindow([{ ...base, status: MessageStatus.DELIVERED }], [{ ...base, status: MessageStatus.SENT }])[0]?.status).toBe(
+      MessageStatus.DELIVERED,
+    );
+    expect(mergeChatWindow([{ ...base, status: MessageStatus.SENT }], [{ ...base, status: MessageStatus.QUEUED }])[0]?.status).toBe(
+      MessageStatus.SENT,
+    );
+    expect(mergePersistedStatus(MessageStatus.READ, MessageStatus.FAILED)).toBe(MessageStatus.READ);
   });
 });

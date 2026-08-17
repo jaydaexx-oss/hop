@@ -16,18 +16,16 @@ import {
   PublicKeyTofu,
   decryptApplicationMessage,
   encryptApplicationMessage,
-  isCryptoBoxPayload,
   publishIdentityIfAllowed,
   sqlitePeerTrustPersistence,
   type IdentityKeyPair,
   type MessageCrypto,
   type NetworkStatus,
   type StoredConversation,
-  type StoredMessage,
   type TransportManager,
 } from '@hop/protocol';
 
-import { ApiError, api, type ChatMessage, type Conversation } from '@/src/api/hop';
+import { ApiError, api, type Conversation } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { loadOrCreateIdentity } from '@/src/crypto/identity';
 import { createAppTransportManager, createHopHttp } from '@/src/hopRuntime';
@@ -50,24 +48,7 @@ type OfflineState = {
 
 const OfflineContext = createContext<OfflineState | null>(null);
 
-export function storedToChat(row: StoredMessage): ChatMessage {
-  return {
-    message_id: row.message_id,
-    sender_id: row.sender_id,
-    recipient_id: row.recipient_id,
-    conversation_id: row.conversation_id,
-    text: row.text,
-    status: row.status,
-    created_at: row.created_at,
-    e2ee: isCryptoBoxPayload(row.encrypted_payload),
-    encrypted_payload: row.encrypted_payload,
-    kind: row.kind ?? undefined,
-    duration_ms: row.duration_ms,
-    mime: row.mime,
-    audio_b64: row.audio_b64,
-    retry_attempts: row.retry_attempts,
-  };
-}
+export { storedToChat } from '@/src/chat/storedToChat';
 
 function toConversation(row: StoredConversation): Conversation {
   return {

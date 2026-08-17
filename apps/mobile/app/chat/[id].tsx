@@ -1,5 +1,5 @@
-import { useLocalSearchParams, useNavigation, Redirect } from 'expo-router';
-import { useCallback, useEffect, useLayoutEffect, useMemo, useState } from 'react';
+import { useFocusEffect, useLocalSearchParams, useNavigation, Redirect } from 'expo-router';
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
   KeyboardAvoidingView,
@@ -9,20 +9,29 @@ import {
   TextInput,
   AppState,
 } from 'react-native';
+import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
+  CHAT_PAGE_SIZE,
   DEFAULT_TTL_MS,
-  conversationIsActivelyViewed,
+  MAX_APPLICATION_TEXT_CHARS,
   conversationTransportStatus,
-  formatMessageStatus,
+  formatNetworkStatus,
   internetStatusAvailable,
+  isComposerSendable,
   isFailedMessageStatus,
   isInFlightOutboundStatus,
+  isPinnedToLatest,
+  mergeChatWindow,
+  shouldAutoScrollOnIncoming,
+  shouldMarkConversationRead,
+  userFacingLoadError,
+  userFacingSendError,
   type StoredMessage,
 } from '@hop/protocol';
 
+import { MessageBubble } from '@/components/MessageBubble';
 import { PTTButton, type VoiceClip } from '@/components/PTTButton';
 import { Text, View } from '@/components/Themed';
-import { VoiceMessageBubble } from '@/components/VoiceMessageBubble';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { type ChatMessage } from '@/src/api/hop';
@@ -39,14 +48,24 @@ export default function ChatScreen() {
   const { service, store, syncNow, ready: offlineReady, status, queuedCount } = useOffline();
   const { peers, connectedId } = useBle();
   const navigation = useNavigation();
+  const insets = useSafeAreaInsets();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [hasOlder, setHasOlder] = useState(false);
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [recipientId, setRecipientId] = useState(peerId ?? '');
   const [inputMode, setInputMode] = useState<'text' | 'ptt'>('text');
   const [sending, setSending] = useState(false);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [newIncoming, setNewIncoming] = useState(0);
+  const listRef = useRef<FlatList<ChatMessage>>(null);
+  const pinnedToLatest = useRef(true);
+  const sendLock = useRef(false);
+  const focusedRef = useRef(false);
+  const userIdRef = useRef(user?.id);
+  userIdRef.current = user?.id;
 
   const lastOutbound = useMemo(
     () => [...messages].reverse().find((row) => row.sender_id === user?.id),
@@ -69,11 +88,30 @@ export default function ChatScreen() {
     lastOutboundStatus: lastOutbound?.status,
     relaying: lastOutbound?.status === 'RELAYING',
   });
+  const canSend = isComposerSendable(draft, { sending: sendLock.current || sending });
+  const invertedData = useMemo(() => [...messages].reverse(), [messages]);
+
+  const mergeRows = useCallback((incoming: ChatMessage[]) => {
+    setMessages((current) => mergeChatWindow(current, incoming));
+  }, []);
+
+  const markReadIfActive = useCallback(async () => {
+    if (!id || !service || !userIdRef.current) return;
+    if (
+      !shouldMarkConversationRead({
+        isConversationScreenFocused: focusedRef.current,
+        appState: AppState.currentState,
+      })
+    ) {
+      return;
+    }
+    await service.markConversationRead(id, userIdRef.current).catch(() => undefined);
+  }, [id, service]);
 
   useLayoutEffect(() => {
     navigation.setOptions({
       headerTitle: () => (
-        <View style={styles.headerTitle}>
+        <View style={styles.headerTitle} accessibilityRole="header">
           <Text style={styles.headerName} numberOfLines={1}>
             {peer || 'Chat'}
           </Text>
@@ -91,43 +129,52 @@ export default function ChatScreen() {
     };
   }, []);
 
-  const load = useCallback(async () => {
-    if (!id) return;
-    if (service) {
-      const local = await service.listMessages(id);
-      setMessages(local.map(storedToChat));
-    }
-    await syncNow();
-    if (service) {
-      const viewing = conversationIsActivelyViewed({
-        isConversationScreenFocused: true,
-        appState: AppState.currentState,
-      });
-      if (viewing && user?.id) await service.markConversationRead(id, user.id).catch(() => undefined);
-      const local = await service.listMessages(id);
-      setMessages(local.map(storedToChat));
-    }
+  const loadLatest = useCallback(async () => {
+    if (!id || !service) return;
+    const page = await service.listMessagesPage(id, { limit: CHAT_PAGE_SIZE });
+    setHasOlder(page.hasOlder);
+    setMessages((current) => mergeChatWindow(current, page.rows.map(storedToChat)));
     if (!recipientId && store) {
       const convos = await store.listConversations();
       const match = convos.find((row) => row.id === id);
       if (match?.peer_id) setRecipientId(match.peer_id);
     }
-  }, [id, service, store, syncNow, recipientId, user?.id]);
+  }, [id, service, store, recipientId]);
 
   useEffect(() => {
-    load().catch((err) => setError(err instanceof Error ? err.message : 'Could not load messages'));
-  }, [load]);
+    loadLatest()
+      .then(() => syncNow())
+      .then(() => loadLatest())
+      .catch((err) => setError(userFacingLoadError(err)));
+  }, [loadLatest, syncNow]);
+
+  useFocusEffect(
+    useCallback(() => {
+      let alive = true;
+      focusedRef.current = true;
+      const run = () => {
+        if (!alive) return;
+        markReadIfActive().then(() => loadLatest()).catch(() => undefined);
+      };
+      run();
+      const sub = AppState.addEventListener('change', (state) => {
+        if (state === 'active') run();
+      });
+      return () => {
+        alive = false;
+        focusedRef.current = false;
+        sub.remove();
+      };
+    }, [markReadIfActive, loadLatest]),
+  );
 
   useEffect(() => {
-    if (!service || !id || sending || !needsOutboxPoll) return;
+    if (!service || !id || !needsOutboxPoll) return;
     const tick = setInterval(() => {
-      service
-        .listMessages(id)
-        .then((rows) => setMessages(rows.map(storedToChat)))
-        .catch(() => undefined);
+      loadLatest().catch(() => undefined);
     }, 3_000);
     return () => clearInterval(tick);
-  }, [service, id, sending, needsOutboxPoll]);
+  }, [service, id, needsOutboxPoll, loadLatest]);
 
   useHopSocket(token, (event) => {
     const incoming = event.message as (ChatMessage & Partial<StoredMessage>) | undefined;
@@ -146,94 +193,130 @@ export default function ChatScreen() {
       ttl: incoming.ttl ?? DEFAULT_TTL_MS,
       hop_count: incoming.hop_count ?? 0,
     };
+    const fromSelf = incoming.sender_id === userIdRef.current;
     service
       .acceptInbound(stored)
       .then(async () => {
-        const viewing = conversationIsActivelyViewed({
-          isConversationScreenFocused: true,
-          appState: AppState.currentState,
-        });
-        if (viewing && user?.id) await service.markConversationRead(id, user.id).catch(() => undefined);
-        return service.listMessages(id);
+        await markReadIfActive();
+        return service.listMessagesPage(id, { limit: CHAT_PAGE_SIZE });
       })
-      .then((rows) => setMessages(rows.map(storedToChat)))
+      .then((page) => {
+        mergeRows(page.rows.map(storedToChat));
+        const shouldScroll = shouldAutoScrollOnIncoming({
+          fromSelf,
+          pinnedToLatest: pinnedToLatest.current,
+        });
+        if (shouldScroll) {
+          setNewIncoming(0);
+          listRef.current?.scrollToOffset({ offset: 0, animated: true });
+        } else if (!fromSelf) {
+          setNewIncoming((count) => count + 1);
+        }
+      })
       .catch(() => undefined);
   });
+
+  const loadOlder = useCallback(async () => {
+    if (!id || !service || loadingOlder || !hasOlder || messages.length === 0) return;
+    setLoadingOlder(true);
+    try {
+      const page = await service.listMessagesPage(id, {
+        beforeMessageId: messages[0]?.message_id,
+        limit: CHAT_PAGE_SIZE,
+      });
+      setHasOlder(page.hasOlder);
+      mergeRows(page.rows.map(storedToChat));
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [id, service, loadingOlder, hasOlder, messages, mergeRows]);
 
   if (!user) return <Redirect href="/login" />;
   if (!offlineReady) return null;
   const me = user;
 
   async function send() {
-    if (!id || !draft.trim() || !service || sending) return;
+    if (!id || !service || !isComposerSendable(draft, { sending: sendLock.current })) return;
     if (!recipientId || recipientId === me.id) {
       setError('Cannot send without a real recipient');
       return;
     }
     const text = draft.trim();
+    sendLock.current = true;
+    setSending(true);
     setDraft('');
     setError(null);
-    setSending(true);
-    const optimistic: ChatMessage = {
-      message_id: `sending-${Date.now()}`,
-      sender_id: me.id,
-      recipient_id: recipientId,
-      conversation_id: id,
-      text,
-      status: 'SENDING',
-      created_at: new Date().toISOString(),
-      e2ee: true,
-    };
-    setMessages((current) => [...current, optimistic]);
+    pinnedToLatest.current = true;
+    setNewIncoming(0);
+    let allocatedId: string | undefined;
     try {
       const sent = await sendChatText(service, {
         conversation_id: id,
         sender_id: me.id,
         recipient_id: recipientId,
         text,
+        onAllocated: (row) => {
+          allocatedId = row.message_id;
+          sendLock.current = false;
+          setSending(false);
+          mergeRows([storedToChat(row)]);
+          listRef.current?.scrollToOffset({ offset: 0, animated: true });
+        },
       });
-      setMessages((current) => [
-        ...current.filter((row) => row.message_id !== optimistic.message_id && row.message_id !== sent.message_id),
-        storedToChat(sent),
-      ]);
+      mergeRows([storedToChat(sent)]);
       await syncNow();
-      if (service) {
-        const local = await service.listMessages(id);
-        setMessages(local.map(storedToChat));
-      }
+      await loadLatest();
     } catch (err) {
-      setMessages((current) => current.filter((row) => row.message_id !== optimistic.message_id));
-      setDraft(text);
-      setError(err instanceof Error ? err.message : 'Send failed');
+      if (allocatedId) {
+        setMessages((current) =>
+          current.map((row) => (row.message_id === allocatedId ? { ...row, status: 'FAILED' } : row)),
+        );
+      }
+      setError(userFacingSendError(err));
     } finally {
+      sendLock.current = false;
       setSending(false);
     }
   }
 
   async function retryFailed(messageId: string) {
-    if (!id || !service || sending) return;
+    if (!id || !service) return;
+    const existing = messages.find((row) => row.message_id === messageId);
     setError(null);
-    setSending(true);
     try {
-      await service.retryFailed(messageId);
+      const retried = await service.retryFailed(messageId);
+      if (retried) {
+        mergeRows([storedToChat(retried)]);
+      } else if (existing?.text) {
+        const sent = await sendChatText(service, {
+          conversation_id: id,
+          sender_id: me.id,
+          recipient_id: recipientId,
+          text: existing.text,
+          message_id: existing.message_id,
+          send_seq: existing.send_seq ?? undefined,
+          onAllocated: (row) => mergeRows([storedToChat(row)]),
+        });
+        mergeRows([storedToChat(sent)]);
+      }
       await syncNow();
-      const local = await service.listMessages(id);
-      setMessages(local.map(storedToChat));
+      await loadLatest();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Retry failed');
-    } finally {
-      setSending(false);
+      setMessages((current) =>
+        current.map((row) => (row.message_id === messageId ? { ...row, status: 'FAILED' } : row)),
+      );
+      setError(userFacingSendError(err));
     }
   }
 
   async function sendVoice(clip: VoiceClip) {
-    if (!id || !service || sending) return;
+    if (!id || !service || sendLock.current) return;
     if (!recipientId || recipientId === me.id) {
       setError('Cannot send without a real recipient');
       return;
     }
+    sendLock.current = true;
     setError(null);
-    setSending(true);
     try {
       const sent = await sendChatVoice(service, {
         conversation_id: id,
@@ -243,77 +326,89 @@ export default function ChatScreen() {
         duration_ms: clip.duration_ms,
         mime: clip.mime,
       });
-      setMessages((current) => [
-        ...current.filter((row) => row.message_id !== sent.message_id),
-        storedToChat(sent),
-      ]);
+      mergeRows([storedToChat(sent)]);
+      pinnedToLatest.current = true;
+      listRef.current?.scrollToOffset({ offset: 0, animated: true });
       await syncNow();
-      if (service) {
-        const local = await service.listMessages(id);
-        setMessages(local.map(storedToChat));
-      }
+      await loadLatest();
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Voice send failed');
+      setError(userFacingSendError(err));
     } finally {
-      setSending(false);
+      sendLock.current = false;
     }
   }
+
+  const queuedHint =
+    transportView.route === 'queued' || transportView.route === 'offline'
+      ? transportView.route === 'queued'
+        ? 'Queued until a connection is available'
+        : formatNetworkStatus(status) === 'Offline'
+          ? 'Offline — messages stay on this device until you reconnect'
+          : transportView.line
+      : null;
 
   return (
     <KeyboardAvoidingView
       style={{ flex: 1, backgroundColor: colors.background }}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
       keyboardVerticalOffset={80}>
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <FlatList
-        data={messages}
-        keyExtractor={(item) => item.message_id}
-        contentContainerStyle={styles.list}
-        renderItem={({ item }) => {
-          const mine = item.sender_id === me.id;
-          const failed = isFailedMessageStatus(item.status);
-          const canRetry = item.status === 'FAILED';
-          const voice = item.kind === 'voice';
-          return (
-            <View style={[styles.bubbleWrap, mine ? styles.mineWrap : styles.theirsWrap]}>
-              {voice ? (
-                <VoiceMessageBubble
-                  messageId={item.message_id}
-                  audioB64={item.audio_b64}
-                  durationMs={item.duration_ms}
-                  mime={item.mime}
-                  isMe={mine}
-                  tint={colors.tint}
-                  tintForeground="#042f2e"
-                  card={colors.card}
-                  muted={colors.muted}
-                />
-              ) : (
-                <View
-                  style={[
-                    styles.bubble,
-                    { backgroundColor: mine ? colors.tint : colors.card },
-                  ]}>
-                  <Text style={{ color: mine ? '#042f2e' : colors.text }}>{item.text ?? '[encrypted]'}</Text>
-                </View>
-              )}
-              {mine ? (
-                <View style={styles.statusRow}>
-                  <Text style={[styles.status, { color: failed ? '#DC2626' : colors.muted }]}>
-                    {formatMessageStatus(item.status, item.retry_attempts)}
-                  </Text>
-                  {canRetry ? (
-                    <Pressable onPress={() => retryFailed(item.message_id)} hitSlop={8}>
-                      <Text style={[styles.retry, { color: colors.tint }]}>Retry</Text>
-                    </Pressable>
-                  ) : null}
-                </View>
-              ) : null}
-            </View>
-          );
-        }}
-      />
-      <View style={[styles.composer, { backgroundColor: colors.background }]}>
+      {error ? (
+        <Text style={styles.error} accessibilityLiveRegion="polite">
+          {error}
+        </Text>
+      ) : queuedHint ? (
+        <Text style={[styles.hint, { color: colors.muted }]} accessibilityLiveRegion="polite">
+          {queuedHint}
+        </Text>
+      ) : null}
+      <View style={styles.listWrap}>
+        <FlatList
+          ref={listRef}
+          inverted
+          data={invertedData}
+          keyExtractor={(item) => item.message_id}
+          contentContainerStyle={styles.list}
+          initialNumToRender={16}
+          windowSize={8}
+          maxToRenderPerBatch={12}
+          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+          onEndReached={loadOlder}
+          onEndReachedThreshold={0.2}
+          onScroll={(event) => {
+            const pinned = isPinnedToLatest(event.nativeEvent.contentOffset.y);
+            pinnedToLatest.current = pinned;
+            if (pinned && newIncoming) setNewIncoming(0);
+          }}
+          scrollEventThrottle={16}
+          renderItem={({ item }) => (
+            <MessageBubble
+              item={item}
+              mine={item.sender_id === me.id}
+              tint={colors.tint}
+              muted={colors.muted}
+              card={colors.card}
+              textColor={colors.text}
+              onRetry={item.sender_id === me.id && isFailedMessageStatus(item.status) ? retryFailed : undefined}
+            />
+          )}
+        />
+        {newIncoming > 0 ? (
+          <Pressable
+            onPress={() => {
+              setNewIncoming(0);
+              pinnedToLatest.current = true;
+              listRef.current?.scrollToOffset({ offset: 0, animated: true });
+            }}
+            accessibilityRole="button"
+            accessibilityLabel={`${newIncoming} new messages`}
+            style={[styles.newPill, { backgroundColor: colors.tint }]}>
+            <Text style={styles.newPillLabel}>
+              {newIncoming === 1 ? 'New message' : `${newIncoming} new messages`}
+            </Text>
+          </Pressable>
+        ) : null}
+      </View>
+      <View style={[styles.composer, { backgroundColor: colors.background, paddingBottom: Math.max(12, insets.bottom) }]}>
         {inputMode === 'ptt' ? (
           <View style={styles.pttRow}>
             <PTTButton
@@ -325,6 +420,8 @@ export default function ChatScreen() {
             />
             <Pressable
               onPress={() => setInputMode('text')}
+              accessibilityRole="button"
+              accessibilityLabel="Switch to text"
               style={[styles.toggle, { backgroundColor: colors.card }]}>
               <Text style={[styles.toggleLabel, { color: colors.text }]}>Aa</Text>
             </Pressable>
@@ -333,6 +430,8 @@ export default function ChatScreen() {
           <>
             <Pressable
               onPress={() => setInputMode('ptt')}
+              accessibilityRole="button"
+              accessibilityLabel="Switch to push to talk"
               style={[styles.toggle, { backgroundColor: colors.card }]}>
               <Text style={[styles.toggleLabel, { color: colors.tint }]}>PTT</Text>
             </Pressable>
@@ -341,12 +440,18 @@ export default function ChatScreen() {
               onChangeText={setDraft}
               placeholder="Message"
               placeholderTextColor={colors.muted}
+              multiline
+              maxLength={MAX_APPLICATION_TEXT_CHARS}
+              accessibilityLabel="Message"
               style={[styles.input, { color: colors.text, backgroundColor: colors.card }]}
             />
             <Pressable
               onPress={send}
-              disabled={sending}
-              style={[styles.send, { backgroundColor: colors.tint, opacity: sending ? 0.6 : 1 }]}>
+              disabled={!canSend}
+              accessibilityRole="button"
+              accessibilityLabel="Send message"
+              accessibilityState={{ disabled: !canSend }}
+              style={[styles.send, { backgroundColor: colors.tint, opacity: canSend ? 1 : 0.45 }]}>
               <Text style={styles.sendLabel}>Send</Text>
             </Pressable>
           </>
@@ -360,26 +465,34 @@ const styles = StyleSheet.create({
   headerTitle: { alignItems: 'center', backgroundColor: 'transparent', maxWidth: 240 },
   headerName: { fontSize: 17, fontWeight: '700' },
   headerStatus: { fontSize: 12, marginTop: 1 },
+  listWrap: { flex: 1, backgroundColor: 'transparent' },
   list: { padding: 16, gap: 10 },
-  bubbleWrap: { maxWidth: '80%', backgroundColor: 'transparent' },
-  mineWrap: { alignSelf: 'flex-end', alignItems: 'flex-end' },
-  theirsWrap: { alignSelf: 'flex-start' },
-  bubble: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 8 },
-  status: { fontSize: 11, marginTop: 2 },
-  statusRow: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 8,
-    backgroundColor: 'transparent',
-    marginTop: 2,
-  },
-  retry: { fontSize: 11, fontWeight: '700' },
-  composer: { flexDirection: 'row', gap: 8, padding: 12, alignItems: 'center' },
+  composer: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 12, alignItems: 'flex-end' },
   pttRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
-  input: { flex: 1, borderRadius: 16, paddingHorizontal: 14, paddingVertical: 10, fontSize: 16 },
-  send: { borderRadius: 16, paddingHorizontal: 16, paddingVertical: 10 },
+  input: {
+    flex: 1,
+    borderRadius: 16,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 16,
+    maxHeight: 120,
+    minHeight: 44,
+  },
+  send: { borderRadius: 16, paddingHorizontal: 16, minHeight: 44, justifyContent: 'center' },
   sendLabel: { color: '#042f2e', fontWeight: '700' },
-  toggle: { borderRadius: 16, paddingHorizontal: 12, paddingVertical: 10, minHeight: 44, justifyContent: 'center' },
+  toggle: { borderRadius: 16, paddingHorizontal: 12, minHeight: 44, justifyContent: 'center' },
   toggleLabel: { fontWeight: '700', fontSize: 13 },
   error: { color: '#DC2626', paddingHorizontal: 16, paddingTop: 8 },
+  hint: { paddingHorizontal: 16, paddingTop: 8, fontSize: 13 },
+  newPill: {
+    position: 'absolute',
+    alignSelf: 'center',
+    bottom: 12,
+    borderRadius: 999,
+    paddingHorizontal: 14,
+    paddingVertical: 8,
+    minHeight: 44,
+    justifyContent: 'center',
+  },
+  newPillLabel: { color: '#042f2e', fontWeight: '700' },
 });

@@ -1,8 +1,14 @@
-import { useCallback, useEffect, useState } from 'react';
-import { FlatList, Pressable, StyleSheet } from 'react-native';
+import { useCallback, useEffect, useMemo, useState } from 'react';
+import { FlatList, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { conversationTransportStatus, formatUnreadBadge, internetStatusAvailable } from '@hop/protocol';
+import {
+  conversationTransportStatus,
+  internetStatusAvailable,
+  sortInboxConversations,
+  userFacingLoadError,
+} from '@hop/protocol';
 
+import { ConversationRow, inboxTimestamp } from '@/components/ConversationRow';
 import { Text, View } from '@/components/Themed';
 import { StatusBanner } from '@/components/StatusBanner';
 import Colors from '@/constants/Colors';
@@ -13,53 +19,126 @@ import { useBle } from '@/src/ble/BleProvider';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { useHopSocket } from '@/src/ws';
 
+type InboxRow = {
+  id: string;
+  created_at: string;
+  conversation: Conversation;
+  preview: string;
+  unread: number;
+  lastActivityAt: string;
+  lastStatus: string | null;
+  lastSenderId: string | null;
+  lastSendSeq: number | null;
+  lastMessageId: string | null;
+  last?: {
+    message_id: string;
+    sender_id: string;
+    created_at: string;
+    send_seq?: number | null;
+  } | null;
+};
+
+function fromConversation(
+  convo: Conversation,
+  local?: {
+    preview: string;
+    unread: number;
+    last: {
+      message_id: string;
+      sender_id: string;
+      created_at: string;
+      send_seq?: number | null;
+      status?: string;
+    } | null;
+  },
+): InboxRow {
+  return {
+    id: convo.id,
+    created_at: convo.created_at,
+    conversation: convo,
+    preview: local?.preview ?? 'No messages yet',
+    unread: local?.unread ?? 0,
+    lastActivityAt: local?.last?.created_at ?? convo.created_at,
+    lastStatus: local?.last?.status ?? null,
+    lastSenderId: local?.last?.sender_id ?? null,
+    lastSendSeq: local?.last?.send_seq ?? null,
+    lastMessageId: local?.last?.message_id ?? null,
+    last: local?.last
+      ? {
+          message_id: local.last.message_id,
+          sender_id: local.last.sender_id,
+          created_at: local.last.created_at,
+          send_seq: local.last.send_seq,
+        }
+      : null,
+  };
+}
+
 export default function ChatsScreen() {
   const { token, user } = useAuth();
-  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount, conversationPreview, service } =
-    useOffline();
+  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount, service } = useOffline();
   const { peers, connectedId } = useBle();
   const router = useRouter();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
-  const [items, setItems] = useState<Conversation[]>([]);
-  const [previews, setPreviews] = useState<Record<string, string>>({});
-  const [unreads, setUnreads] = useState<Record<string, number>>({});
+  const [items, setItems] = useState<InboxRow[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const refresh = useCallback(async () => {
-    const cached = await listCachedConversations();
-    if (cached.length > 0) {
-      setItems(cached);
-      const cachedPreviews: Record<string, string> = {};
-      for (const convo of cached) {
-        cachedPreviews[convo.id] = await conversationPreview(convo.id);
-      }
-      setPreviews(cachedPreviews);
-      if (service && user?.id) setUnreads(await service.unreadCounts(user.id));
+  const nearbyPeers = useMemo(
+    () =>
+      peers.map((peer) => ({
+        userId: peer.userId,
+        sessionEstablished: peer.sessionEstablished,
+        connected: connectedId === peer.deviceId,
+      })),
+    [peers, connectedId],
+  );
+
+  const loadLocal = useCallback(async (): Promise<InboxRow[]> => {
+    if (service && user?.id) {
+      const inbox = await service.listInbox(user.id);
+      return inbox.map((row) =>
+        fromConversation(
+          {
+            id: row.id,
+            created_at: row.created_at,
+            peer: {
+              id: row.peer_id ?? '',
+              username: row.peer_username ?? 'HOP user',
+              identity_public_key: row.peer_public_key ?? '',
+            },
+          },
+          { preview: row.preview, unread: row.unread, last: row.last },
+        ),
+      );
     }
+    const cached = await listCachedConversations();
+    return cached.map((convo) => fromConversation(convo));
+  }, [service, user?.id, listCachedConversations]);
+
+  const refresh = useCallback(async () => {
+    const local = await loadLocal();
+    if (local.length > 0) setItems(sortInboxConversations(local));
     if (!token) return;
     try {
       const remote = await api.conversations(token);
-      setItems(remote);
-      setError(null);
       for (const convo of remote) {
         await cacheConversation(convo);
       }
       await syncNow();
-      const nextPreviews: Record<string, string> = {};
-      for (const convo of remote) {
-        nextPreviews[convo.id] = await conversationPreview(convo.id);
+      const next = await loadLocal();
+      const byId = new Map(next.map((row) => [row.id, row]));
+      const merged = remote.map((convo) => byId.get(convo.id) ?? fromConversation(convo));
+      for (const row of next) {
+        if (!merged.some((item) => item.id === row.id)) merged.push(row);
       }
-      setPreviews(nextPreviews);
-      if (service && user?.id) setUnreads(await service.unreadCounts(user.id));
+      setItems(sortInboxConversations(merged));
+      setError(null);
     } catch (err) {
-      if (cached.length === 0) {
-        setError(err instanceof Error ? err.message : 'Could not load chats');
-      } else {
-        setError(null);
-      }
+      if (local.length === 0) setError(userFacingLoadError(err));
+      else setError(null);
     }
-  }, [token, user?.id, cacheConversation, listCachedConversations, syncNow, conversationPreview, service]);
+  }, [token, cacheConversation, syncNow, loadLocal]);
 
   useEffect(() => {
     refresh();
@@ -77,43 +156,39 @@ export default function ChatsScreen() {
         data={items}
         keyExtractor={(item) => item.id}
         contentContainerStyle={items.length === 0 ? styles.emptyBox : undefined}
+        initialNumToRender={16}
+        windowSize={8}
         ListEmptyComponent={
           <Text style={{ color: colors.muted }}>No chats yet. Start one from Contacts.</Text>
         }
         renderItem={({ item }) => {
           const transport = conversationTransportStatus({
-            recipientId: item.peer.id,
-            peers: peers.map((peer) => ({
-              userId: peer.userId,
-              sessionEstablished: peer.sessionEstablished,
-              connected: connectedId === peer.deviceId,
-            })),
+            recipientId: item.conversation.peer.id,
+            peers: nearbyPeers,
             internetAvailable: internetStatusAvailable(status),
-            conversationQueued: false,
+            conversationQueued: item.lastStatus === 'QUEUED' || item.lastStatus === 'RETRYING',
             networkQueued: queuedCount > 0,
+            lastOutboundStatus: item.lastSenderId === user?.id ? item.lastStatus : null,
           });
           return (
-            <Pressable
+            <ConversationRow
+              name={item.conversation.peer.username || 'HOP user'}
+              preview={item.preview}
+              timestamp={inboxTimestamp(item.lastActivityAt)}
+              unread={item.unread}
+              route={transport.route}
+              lastOutboundStatus={item.lastSenderId === user?.id ? item.lastStatus : null}
+              lastFromSelf={item.lastSenderId === user?.id}
+              tint={colors.tint}
+              muted={colors.muted}
+              card={colors.card}
+              textColor={colors.text}
               onPress={() =>
-                router.push(`/chat/${item.id}?peer=${item.peer.username}&peerId=${item.peer.id}`)
+                router.push(
+                  `/chat/${item.conversation.id}?peer=${encodeURIComponent(item.conversation.peer.username)}&peerId=${item.conversation.peer.id}`,
+                )
               }
-              style={[styles.row, { backgroundColor: colors.card }]}>
-              <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
-                <Text style={styles.avatarLabel}>{item.peer.username.slice(0, 1).toUpperCase()}</Text>
-              </View>
-              <View style={styles.meta}>
-                <Text style={styles.name}>{item.peer.username}</Text>
-                <Text style={{ color: colors.muted }} numberOfLines={1}>
-                  {previews[item.id] ?? 'No messages yet'}
-                </Text>
-                <Text style={{ color: colors.muted, fontSize: 12 }}>{transport.line}</Text>
-              </View>
-              {formatUnreadBadge(unreads[item.id] ?? 0) ? (
-                <View style={[styles.unread, { backgroundColor: colors.tint }]}>
-                  <Text style={styles.unreadLabel}>{formatUnreadBadge(unreads[item.id] ?? 0)}</Text>
-                </View>
-              ) : null}
-            </Pressable>
+            />
           );
         }}
       />
@@ -123,27 +198,6 @@ export default function ChatsScreen() {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
-  row: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    padding: 14,
-    borderRadius: 16,
-    marginBottom: 10,
-  },
-  avatar: { width: 44, height: 44, borderRadius: 22, alignItems: 'center', justifyContent: 'center' },
-  avatarLabel: { color: '#042f2e', fontWeight: '800', fontSize: 18 },
-  meta: { flex: 1, backgroundColor: 'transparent' },
-  name: { fontSize: 17, fontWeight: '700' },
-  unread: {
-    minWidth: 22,
-    height: 22,
-    borderRadius: 11,
-    alignItems: 'center',
-    justifyContent: 'center',
-    paddingHorizontal: 6,
-  },
-  unreadLabel: { color: '#042f2e', fontWeight: '800', fontSize: 12 },
   emptyBox: { flexGrow: 1, justifyContent: 'center' },
   error: { color: '#DC2626', marginBottom: 8 },
 });

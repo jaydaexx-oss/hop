@@ -32,6 +32,7 @@ export type ChatMessage = {
   mime?: string;
   audio_b64?: string;
   retry_attempts?: number;
+  send_seq?: number | null;
 };
 
 export class ApiError extends Error {

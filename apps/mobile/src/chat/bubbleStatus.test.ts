@@ -7,13 +7,15 @@ import {
 } from '@hop/protocol';
 
 describe('chat bubble delivery labels', () => {
-  it('shows Queued, Sending, Sent, Delivered, Read, Failed', () => {
+  it('shows Queued, Sending, Sent, Delivered, Read, Failed, Retrying', () => {
     expect(formatMessageStatus(MessageStatus.QUEUED)).toBe('Queued');
     expect(formatMessageStatus(MessageStatus.SENDING)).toBe('Sending');
     expect(formatMessageStatus(MessageStatus.SENT)).toBe('Sent');
     expect(formatMessageStatus(MessageStatus.DELIVERED)).toBe('Delivered');
     expect(formatMessageStatus(MessageStatus.READ)).toBe('Read');
     expect(formatMessageStatus(MessageStatus.FAILED)).toBe('Failed');
+    expect(formatMessageStatus(MessageStatus.RETRYING)).toBe('Retrying');
+    expect(formatMessageStatus(MessageStatus.QUEUED, 2)).toBe('Retrying');
   });
 
   it('treats failed bubbles as retryable and queued as in-flight', () => {

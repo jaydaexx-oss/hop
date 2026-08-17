@@ -1,5 +1,5 @@
 import type { ApplicationPlaintext, DecryptOptions } from "./cryptoBox.js";
-import { isCryptoBoxPayload, parseCryptoBoxPayload } from "./cryptoBox.js";
+import { isCryptoBoxPayload, MAX_APPLICATION_TEXT_CHARS, parseCryptoBoxPayload } from "./cryptoBox.js";
 import type { HopHttpClient } from "./http.js";
 import { createMessageId } from "./ids.js";
 import {
@@ -35,6 +35,13 @@ import {
   withDecryptedPlain,
 } from "./voice.js";
 import { conversationPreviewLine } from "./conversationTransport.js";
+import {
+  CHAT_PAGE_SIZE,
+  isVisibleChatMessage,
+  paginateConversationMessages,
+  sortInboxConversations,
+  type ChatPageOptions,
+} from "./conversationUi.js";
 
 export interface SendTextInput {
   conversation_id: string;
@@ -42,6 +49,11 @@ export interface SendTextInput {
   recipient_id: string;
   text: string;
   now?: Date;
+  /** Reuse a canonical id after an in-memory encrypt failure. Never invent a second identity. */
+  message_id?: string;
+  send_seq?: number;
+  /** Fires after the canonical id is allocated and before encrypt/flush. */
+  onAllocated?: (row: StoredMessage) => void;
 }
 
 export interface SendVoiceInput {
@@ -118,17 +130,39 @@ export class MessageService {
       throw new Error("Refusing to send without libsodium crypto_box keys");
     }
     const recipient_id = requirePeerRecipient(input.sender_id, input.recipient_id);
+    const text = input.text.trim();
+    if (!text) {
+      throw new Error("Refusing to encrypt empty plaintext");
+    }
+    if (text.length > MAX_APPLICATION_TEXT_CHARS) {
+      throw new Error("Message is too long");
+    }
+    if (input.message_id) {
+      const existing = await this.store.getMessage(input.message_id);
+      if (existing) {
+        if (existing.sender_id !== input.sender_id || existing.conversation_id !== input.conversation_id) {
+          throw new Error("Could not send this message");
+        }
+        if (existing.status === MessageStatus.FAILED) {
+          const retried = await this.retryFailedUnlocked(existing.message_id, input.now ?? new Date());
+          if (retried) return retried;
+        }
+        const opened = await this.materializePlaintext(existing);
+        this.notifyAllocated({ ...opened, text: opened.text ?? text }, input.onAllocated);
+        return opened;
+      }
+    }
     const now = input.now ?? new Date();
     const created_at = now.toISOString();
     const expires_at = new Date(now.getTime() + DEFAULT_TTL_MS).toISOString();
-    const message_id = createMessageId();
-    const send_seq = await this.store.nextSendSeq(input.conversation_id, input.sender_id);
+    const message_id = input.message_id ?? createMessageId();
+    const send_seq = input.send_seq ?? (await this.store.nextSendSeq(input.conversation_id, input.sender_id));
     const plain: ApplicationPlaintext = {
       message_id,
       sender_id: input.sender_id,
       recipient_id,
       conversation_id: input.conversation_id,
-      text: input.text,
+      text,
       created_at,
       expires_at,
       ttl: DEFAULT_TTL_MS,
@@ -140,7 +174,7 @@ export class MessageService {
       conversation_id: input.conversation_id,
       sender_id: input.sender_id,
       recipient_id,
-      text: input.text,
+      text,
       encrypted_payload: "",
       local_seal: null,
       status: MessageStatus.CREATED,
@@ -153,20 +187,35 @@ export class MessageService {
       kind: "message",
     };
     record = this.withStatus(record, MessageStatus.ENCRYPTING);
-    const encrypted_payload = await this.crypto.encrypt(plain);
-    if (!isCryptoBoxPayload(encrypted_payload)) {
-      throw new Error("encrypt() must return a libsodium crypto_box payload");
+    this.notifyAllocated(record, input.onAllocated);
+    let local_seal: string | null = null;
+    try {
+      if (this.crypto.sealLocal) {
+        local_seal = await this.crypto.sealLocal(plain);
+      }
+      const encrypted_payload = await this.crypto.encrypt(plain);
+      if (!isCryptoBoxPayload(encrypted_payload)) {
+        throw new Error("encrypt() must return a libsodium crypto_box payload");
+      }
+      record = {
+        ...record,
+        encrypted_payload,
+        local_seal,
+      };
+      record = this.withStatus(record, MessageStatus.ENCRYPTED);
+      await this.persistMessage(record);
+      record = this.withStatus(record, MessageStatus.QUEUED);
+      return this.persistAndFlush(record, now, text);
+    } catch (err) {
+      if (local_seal && isCryptoBoxPayload(local_seal)) {
+        const failed = this.withStatus(
+          { ...record, local_seal, text: null, encrypted_payload: "" },
+          MessageStatus.FAILED,
+        );
+        await this.persistMessage(failed);
+      }
+      throw err;
     }
-    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
-    record = {
-      ...record,
-      encrypted_payload,
-      local_seal,
-    };
-    record = this.withStatus(record, MessageStatus.ENCRYPTED);
-    await this.persistMessage(record);
-    record = this.withStatus(record, MessageStatus.QUEUED);
-    return this.persistAndFlush(record, now, input.text);
   }
 
   async sendVoice(input: SendVoiceInput): Promise<StoredMessage> {
@@ -259,18 +308,19 @@ export class MessageService {
   }
 
   async listMessages(conversationId: string): Promise<StoredMessage[]> {
-    const rows = await this.store.listMessages(conversationId);
-    const outbound = await this.store.listOutbound();
-    const attempts = new Map(outbound.map((row) => [row.message_id, row.attempts]));
-    const out: StoredMessage[] = [];
-    for (const row of rows) {
-      if (row.kind === "delivery_ack") continue;
-      if (!row.encrypted_payload && !row.local_seal) continue;
-      const materialized = await this.materializePlaintext(row);
-      if (materialized.kind === "delivery_ack") continue;
-      out.push({ ...materialized, retry_attempts: attempts.get(row.message_id) ?? 0 });
-    }
-    return sortConversationMessages(out);
+    return this.materializeVisible(await this.listVisibleStored(conversationId));
+  }
+
+  async listMessagesPage(
+    conversationId: string,
+    options: ChatPageOptions = {},
+  ): Promise<{ rows: StoredMessage[]; hasOlder: boolean }> {
+    const visible = await this.listVisibleStored(conversationId);
+    const page = paginateConversationMessages(visible, {
+      beforeMessageId: options.beforeMessageId,
+      limit: options.limit ?? CHAT_PAGE_SIZE,
+    });
+    return { rows: await this.materializeVisible(page.rows), hasOlder: page.hasOlder };
   }
 
   async unreadCount(conversationId: string, viewerId: string): Promise<number> {
@@ -282,9 +332,39 @@ export class MessageService {
   }
 
   async previewForConversation(conversationId: string): Promise<string> {
-    const rows = await this.listMessages(conversationId);
-    const last = rows[rows.length - 1];
+    const last = await this.latestVisible(conversationId);
     return conversationPreviewLine(last ?? null);
+  }
+
+  async listInbox(viewerId: string): Promise<
+    Array<{
+      id: string;
+      peer_id: string | null;
+      peer_username: string | null;
+      peer_public_key: string | null;
+      created_at: string;
+      preview: string;
+      unread: number;
+      last: StoredMessage | null;
+    }>
+  > {
+    const convos = await this.store.listConversations();
+    const unreads = await this.unreadCounts(viewerId);
+    const items = [];
+    for (const convo of convos) {
+      const last = await this.latestVisible(convo.id);
+      items.push({
+        id: convo.id,
+        peer_id: convo.peer_id,
+        peer_username: convo.peer_username,
+        peer_public_key: convo.peer_public_key,
+        created_at: convo.created_at,
+        preview: conversationPreviewLine(last ?? null),
+        unread: unreads[convo.id] ?? 0,
+        last,
+      });
+    }
+    return sortInboxConversations(items);
   }
 
   async getNetworkStatus(): Promise<NetworkStatus> {
@@ -413,17 +493,7 @@ export class MessageService {
     const message = await this.store.getMessage(messageId);
     if (!message) return null;
     if (message.status !== MessageStatus.FAILED) return message;
-    return this.enqueueConversation(message.conversation_id, async () => {
-      const latest = await this.store.getMessage(messageId);
-      if (!latest || latest.status !== MessageStatus.FAILED) return latest;
-      if ((await this.store.queuedCount()) >= MAX_OUTBOX_MESSAGES) {
-        return latest;
-      }
-      const queued = { ...this.withStatus(latest, MessageStatus.QUEUED), transport: "local" };
-      await this.persistMessage(queued);
-      await this.store.enqueue(queued.message_id, 0, now.getTime());
-      return this.flushOne(queued, now, true);
-    });
+    return this.enqueueConversation(message.conversation_id, () => this.retryFailedUnlocked(messageId, now));
   }
 
   async markConversationRead(conversationId: string, readerId: string, now = new Date()): Promise<void> {
@@ -933,12 +1003,15 @@ export class MessageService {
   }
 
   private storedRecord(message: StoredMessage): StoredMessage {
+    const sealed =
+      isCryptoBoxPayload(message.encrypted_payload) ||
+      (typeof message.local_seal === "string" && isCryptoBoxPayload(message.local_seal));
     return {
       message_id: message.message_id,
       conversation_id: message.conversation_id,
       sender_id: message.sender_id,
       recipient_id: message.recipient_id,
-      text: isCryptoBoxPayload(message.encrypted_payload) ? null : message.text,
+      text: sealed ? null : message.text,
       encrypted_payload: message.encrypted_payload,
       local_seal: message.local_seal ?? null,
       status: message.status,
@@ -950,6 +1023,71 @@ export class MessageService {
       send_seq: message.send_seq ?? null,
       kind: message.kind ?? null,
     };
+  }
+
+  private notifyAllocated(row: StoredMessage, onAllocated?: (row: StoredMessage) => void): void {
+    if (!onAllocated) return;
+    try {
+      onAllocated(row);
+    } catch {
+      /* UI observers must not fail the send path */
+    }
+  }
+
+  private async listVisibleStored(conversationId: string): Promise<StoredMessage[]> {
+    const rows = await this.store.listMessages(conversationId);
+    return rows.filter((row) => isVisibleChatMessage(row));
+  }
+
+  private async latestVisible(conversationId: string): Promise<StoredMessage | null> {
+    const rows = await this.listVisibleStored(conversationId);
+    const last = rows[rows.length - 1];
+    if (!last) return null;
+    const [opened] = await this.materializeVisible([last]);
+    return opened ?? null;
+  }
+
+  private async materializeVisible(rows: StoredMessage[]): Promise<StoredMessage[]> {
+    const outbound = await this.store.listOutbound();
+    const attempts = new Map(outbound.map((row) => [row.message_id, row.attempts]));
+    const out: StoredMessage[] = [];
+    for (const row of rows) {
+      if (!isVisibleChatMessage(row)) continue;
+      const materialized = await this.materializePlaintext(row);
+      if (materialized.kind === "delivery_ack") continue;
+      out.push({ ...materialized, retry_attempts: attempts.get(row.message_id) ?? 0 });
+    }
+    return sortConversationMessages(out);
+  }
+
+  private async retryFailedUnlocked(messageId: string, now: Date): Promise<StoredMessage | null> {
+    const latest = await this.store.getMessage(messageId);
+    if (!latest || latest.status !== MessageStatus.FAILED) return latest;
+    if ((await this.store.queuedCount()) >= MAX_OUTBOX_MESSAGES) {
+      return latest;
+    }
+    let ready = latest;
+    if (!isCryptoBoxPayload(latest.encrypted_payload) && latest.local_seal && this.crypto) {
+      try {
+        const plain = await this.crypto.decrypt(latest.local_seal, undefined, latest.message_id, {
+          expectedSenderId: latest.sender_id,
+          expectedConversationId: latest.conversation_id,
+          tofu: this.tofu,
+        });
+        const encrypted_payload = await this.crypto.encrypt(plain);
+        if (!isCryptoBoxPayload(encrypted_payload)) return latest;
+        ready = { ...latest, encrypted_payload };
+      } catch {
+        return latest;
+      }
+    }
+    if (!isCryptoBoxPayload(ready.encrypted_payload)) {
+      return latest;
+    }
+    const queued = { ...this.withStatus(ready, MessageStatus.QUEUED), transport: "local" };
+    await this.persistMessage(queued);
+    await this.store.enqueue(queued.message_id, 0, now.getTime());
+    return this.flushOne(queued, now, true);
   }
 
   private async persistMessage(message: StoredMessage): Promise<void> {

@@ -135,6 +135,28 @@ export {
   type StoredMessage,
 } from "./store.js";
 export { MessageService, type MessageCrypto, type SendTextInput, type SendVoiceInput } from "./messageService.js";
+export {
+  CHAT_PAGE_SIZE,
+  clampComposerText,
+  conversationPresenceLabel,
+  formatBubbleTimestamp,
+  formatInboxTimestamp,
+  formatMessageStatusDescription,
+  inboxActivityKey,
+  isComposerSendable,
+  isPinnedToLatest,
+  isVisibleChatMessage,
+  mergeChatWindow,
+  paginateConversationMessages,
+  shouldAutoScrollOnIncoming,
+  shouldMarkConversationRead,
+  sortInboxConversations,
+  userFacingLoadError,
+  userFacingSendError,
+  type ChatPage,
+  type ChatPageOptions,
+  type InboxSortItem,
+} from "./conversationUi.js";
 export { isBoxedEnvelopePayload, refuseUnencryptedPayloadError, requirePeerRecipient } from "./sendGuards.js";
 export {
   DEFAULT_VOICE_CAPTION,
@@ -218,6 +240,7 @@ export {
   generateIdentityKeyPair,
   isCryptoBoxPayload,
   isWellFormedBoxPublicKey,
+  MAX_APPLICATION_TEXT_CHARS,
   parseCryptoBoxPayload,
   readySodium,
   type ApplicationKind,

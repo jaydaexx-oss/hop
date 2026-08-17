@@ -4,7 +4,9 @@ import { MAX_HOPS } from "./message.js";
 
 /** Matches apps/api encrypted_payload max_length / voice.ts MAX_ENCRYPTED_PAYLOAD_BYTES. */
 const MAX_BOX_JSON_CHARS = 65_536;
-const MAX_PLAINTEXT_CHARS = 32_000;
+/** Authenticated application text cap. Composer and send paths must not exceed this. */
+export const MAX_APPLICATION_TEXT_CHARS = 32_000;
+const MAX_PLAINTEXT_CHARS = MAX_APPLICATION_TEXT_CHARS;
 const MAX_ID_CHARS = 128;
 
 /** libsodium NaCl crypto_box (X25519 + XSalsa20-Poly1305). Not a custom construction. */

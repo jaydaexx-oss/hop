@@ -11,6 +11,9 @@ export async function sendChatText(
     sender_id: string;
     recipient_id: string;
     text: string;
+    message_id?: string;
+    send_seq?: number;
+    onAllocated?: (row: StoredMessage) => void;
   },
 ): Promise<StoredMessage> {
   const recipient_id = requirePeerRecipient(input.sender_id, input.recipient_id);

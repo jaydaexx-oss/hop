@@ -32,14 +32,3 @@ export const SCAN_STATE_COPY: Record<AroundUsScanState, string> = {
   peers_found: '',
   connection_failure: 'Couldn’t connect. Try again — internet chat still works if you’re online.',
 };
-
-/** Profile / radar Bluetooth line. Derived from scan state — never hardcoded Active. */
-export const BLUETOOTH_STATUS_COPY: Record<AroundUsScanState, string> = {
-  invisible: 'Invisible — not advertising',
-  bluetooth_off: 'Bluetooth off',
-  permission_needed: 'Bluetooth permission needed',
-  searching: 'Looking around',
-  nobody_nearby: 'Bluetooth on · nobody nearby',
-  peers_found: 'Bluetooth on · people nearby',
-  connection_failure: 'Couldn’t connect',
-};

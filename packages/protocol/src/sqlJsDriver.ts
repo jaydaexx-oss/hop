@@ -23,6 +23,7 @@ type BindValue = number | string | Uint8Array | null;
 export class SqlJsDriver implements SqliteDriver {
   private txDepth = 0;
   private txTail: Promise<void> = Promise.resolve();
+  private dirty = false;
 
   private constructor(
     private readonly db: Database,
@@ -40,7 +41,7 @@ export class SqlJsDriver implements SqliteDriver {
 
   async execute(sql: string, params: unknown[] = []): Promise<void> {
     this.db.run(sql, params as BindValue[]);
-    if (this.txDepth === 0) this.persist();
+    this.dirty = true;
   }
 
   async query<T = Record<string, unknown>>(sql: string, params: unknown[] = []): Promise<T[]> {
@@ -79,7 +80,7 @@ export class SqlJsDriver implements SqliteDriver {
       await fn();
       this.db.run("COMMIT");
       this.txDepth -= 1;
-      this.persist();
+      this.dirty = true;
     } catch (err) {
       try {
         this.db.run("ROLLBACK");
@@ -91,11 +92,17 @@ export class SqlJsDriver implements SqliteDriver {
     }
   }
 
+  /**
+   * Crash-reopen tests call close() before the next open(). Exporting the
+   * whole sql.js Database on every execute/COMMIT is O(size) per write and
+   * made 1000-message host tests quadratic. Production uses ExpoSqliteDriver.
+   */
   persist(): void {
-    if (!this.filePath) return;
+    if (!this.filePath || !this.dirty) return;
     const tmp = `${this.filePath}.tmp`;
     writeFileSync(tmp, Buffer.from(this.db.export()));
     renameSync(tmp, this.filePath);
+    this.dirty = false;
   }
 
   close(): void {

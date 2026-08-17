@@ -2,7 +2,7 @@
 
 **Branch:** `integration/production-stabilization` only. **Do not merge to `dev` or `main`.**  
 **Cursor rule:** `.cursor/rules/hop-production-stabilization.mdc` (always apply).  
-**This scorecard:** Phase 6 (2026-08-16) under the evidence-based rubric. Canonical narrative: `HOP_PHASE6_REPORT.md`.
+**This scorecard:** Phase 7 (2026-08-16) under the evidence-based rubric. Canonical narrative: `HOP_PHASE7_REPORT.md`. Previous: `HOP_PHASE6_REPORT.md` (72). Live HTTPS was **not** verified this phase.
 
 ---
 
@@ -44,15 +44,15 @@ Every stabilization phase must end with:
 | Deployment readiness | 5 |
 | **Total** | **100** |
 
-Sources for this score (not substitutes for hardware or live HTTPS): `HOP_PRODUCTION_AUDIT.md`, `HOP_PHASE2_SECURITY_REPORT.md`, `HOP_PHASE3_REPORT.md`, `HOP_PHASE4_REPORT.md`, `HOP_PHASE5_REPORT.md`, `HOP_PHASE6_REPORT.md`.
+Sources for this score (not substitutes for hardware or live HTTPS): `HOP_PRODUCTION_AUDIT.md`, `HOP_PHASE2_SECURITY_REPORT.md`, `HOP_PHASE3_REPORT.md`, `HOP_PHASE4_REPORT.md`, `HOP_PHASE5_REPORT.md`, `HOP_PHASE6_REPORT.md`, `HOP_PHASE7_REPORT.md`.
 
 Prior scores used a different, unstructured scale (audit **38**, Phase 2 **~46**, Phase 3 **54**). This document **recalculates** on the rubric above. It does not carry those numbers forward.
 
 ---
 
-## Current scorecard (Phase 6)
+## Current scorecard (Phase 7)
 
-Phase 5 was **70 / 100**. Phase 6 is **72 / 100**. Hardware-dependent points remain unavailable. Docs and “code exists” do not add points. Forward secrecy is option B (deferred) and scores **0**. Live HTTPS was **not** proven; local prod-mode startup is not a public TLS host.
+Phase 6 was **72 / 100**. Phase 7 is **72 / 100**. Fly.io config and docs do not add points. Hardware-dependent points remain unavailable. Docs and “code exists” do not add points. Forward secrecy is option B (deferred) and scores **0**. Live HTTPS was **not** proven: no Fly/Render account or public URL in this environment.
 
 ### Core messaging reliability — **14 / 20** (0)
 
@@ -82,13 +82,13 @@ Phase 5 was **70 / 100**. Phase 6 is **72 / 100**. Hardware-dependent points rem
 **Evidence**
 
 - Request correlation ids, well-formed identity keys, registration IntegrityError, push **404** (not offered). **74** pytest passed.
-- `API_PUBLIC_URL` HTTPS/localhost reject is scored under **deployment**, not here: there is still no live Postgres+Redis+HTTPS.
+- `API_PUBLIC_URL` HTTPS/localhost reject is scored under **deployment**, not here: there is still no live Postgres+Redis+HTTPS (Fly files are prep only).
 
 **Why not full credit**
 
 - No live Postgres+Redis+HTTPS in this environment.
 
-### Mobile application stability — **9 / 15** (+1)
+### Mobile application stability — **9 / 15** (0)
 
 **Evidence**
 
@@ -110,13 +110,13 @@ Unchanged software evidence. **Mic/playback/transport/queue not tested on phones
 
 Protocol **195** / API **74** / mobile typecheck / production-readiness gate. Extra tests are counted in deployment/mobile, not a bump here: still no E2E, device farm, or live Prometheus.
 
-### Deployment readiness — **5 / 5** (+1)
+### Deployment readiness — **5 / 5** (0)
 
-`API_PUBLIC_URL` HTTPS and localhost rejected by tests; local `APP_ENV=production` startup serves `/health` and disables docs; `docs/PRODUCTION_DEPLOYMENT.md` + `.env.production.example`. Compose still **not executed** against Let’s Encrypt. No EAS `projectId`. This is the **software ceiling** for the category; a live host cannot add points here and does not unlock internet-messaging credit (that is core/backend).
+Unchanged 5/5 software ceiling from Phase 6. `apps/api/fly.toml` + `docs/FLY_DEPLOYMENT.md` are prep only — no public TLS host was contacted. A live host cannot add points here and does not unlock internet-messaging credit (that is core/backend) until an external HTTPS URL is actually tested.
 
 ---
 
-## Phase 6 end-of-phase block
+## Phase 7 end-of-phase block
 
 ### CURRENT VERIFIED SCORE
 
@@ -138,9 +138,8 @@ This is **not** production-ready. It is **not** > 90. No major product features.
 
 ### WHAT INCREASED THE SCORE
 
-- **+1 deployment:** production public URL must be HTTPS and non-localhost (tests) + local prod-mode `/health` startup. Not live TLS. Category now 5/5.
-- **+1 mobile:** release-build tests that mocks/relay are not on the app send path; `__DEV__` debug/diagnostics/secret gates.
-- **0** phones, live HTTPS, FS, BLE hardware, PTT hardware.
+- **+0** this phase. Fly.io files and docs are not a live host. Score stays 72.
+- Hardware, live HTTPS, FS, BLE, PTT, TestFlight: still 0.
 
 ### WHAT PREVENTS 90+
 
@@ -148,7 +147,7 @@ This is **not** production-ready. It is **not** > 90. No major product features.
 - No two-device internet soak against a **live non-localhost HTTPS** API.
 - PTT not hardware-proven.
 - Identity still unattested TOFU; no forward secrecy; lost key → new account.
-- No TestFlight/EAS `projectId`. Public VPS TLS was not applied in this environment.
+- No TestFlight/EAS `projectId`. No Fly (or other) public HTTPS URL was reachable from this environment.
 
 ### P0 BLOCKERS
 
@@ -179,8 +178,8 @@ No test fakes a physical BLE session. Internet protocol tests mock HTTP. API tes
 
 ### PHYSICAL TESTS STILL REQUIRED
 
-Unchanged from Phase 4/5 (see `HOP_PHASE6_REPORT.md` sections F–I, `docs/IOS_DEVICE_TESTING.md`, `docs/BLE_TESTING.md`). Until recorded pass/fail, do not raise BLE to 15/15, do not give PTT full credit, and do not give internet messaging full credit.
+Unchanged from Phase 4/5 (see `HOP_PHASE7_REPORT.md`, `docs/IOS_DEVICE_TESTING.md`, `docs/BLE_TESTING.md`). Until recorded pass/fail, do not raise BLE to 15/15, do not give PTT full credit, and do not give internet messaging full credit.
 
 ---
 
-*Phase 6 complete. Waiting for approval before any merge to `dev`.*
+*Phase 7 stopped pending a Fly.io account, payment method, and secrets. Waiting for approval before any merge to `dev`.*

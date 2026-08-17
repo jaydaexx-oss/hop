@@ -1,10 +1,12 @@
 # Production deployment (generic VPS + Docker)
 
-**Canonical software path for a live HTTPS API.** This is not a paid-host lock-in. Any Ubuntu (or similar) VPS with Docker Compose, a DNS name, and a TLS terminator works.
+**Canonical software path for a live HTTPS API on a VPS.** This is not a paid-host lock-in. Any Ubuntu (or similar) VPS with Docker Compose, a DNS name, and a TLS terminator works.
 
-Vendor-specific Hostinger notes remain in the repo-root `DEPLOYMENT.md`. Prefer this document. Compose file: `infra/docker-compose.prod.yml`. Env template: `.env.production.example` (this repo) and `infra/.env.example`.
+**Phase 7 recommended host:** Fly.io — `docs/FLY_DEPLOYMENT.md` and `apps/api/fly.toml`. Lowest-friction public HTTPS (`https://<app>.fly.dev`) for FastAPI + Postgres + Redis without buying DNS first. Persistent SQLite is not supported on Fly. Cost and the account/card STOP are in that doc.
 
-**Do not treat this document as proof that HOP is live on HTTPS.** Filling env vars and reading Compose is not a deploy. A local production-mode process startup (`APP_ENV=production` with generated test secrets) is **local validation only**.
+Vendor-specific Hostinger notes remain in the repo-root `DEPLOYMENT.md`. Compose file: `infra/docker-compose.prod.yml`. Env template: `.env.production.example` (this repo) and `infra/.env.example`.
+
+**Do not treat this document as proof that HOP is live on HTTPS.** Filling env vars and reading Compose is not a deploy. A local production-mode process startup (`APP_ENV=production` with generated test secrets) is **local validation only**. A committed `fly.toml` is not a live host.
 
 ---
 
@@ -107,7 +109,7 @@ Access logs are method/path/status/duration + `X-Request-ID`. Bodies, keys, plai
 
 ## What this does not prove
 
-- Live non-localhost HTTPS in the environment that wrote this file.
+- Live non-localhost HTTPS in the environment that wrote this file (Fly.toml is not a deploy).
 - Two-phone BLE.
 - PTT on hardware.
 - EAS `projectId` / TestFlight / App Store.

@@ -1,5 +1,7 @@
 # HOP deployment
 
+**Phase 7 recommended PaaS:** Fly.io — `docs/FLY_DEPLOYMENT.md` (`apps/api/fly.toml`). Automatic HTTPS on `*.fly.dev`. Postgres + Redis required; sqlite is rejected.
+
 **Generic VPS + Docker (no vendor lock-in):** `docs/PRODUCTION_DEPLOYMENT.md` and `.env.production.example`.
 
 The rest of this file is a Hostinger-oriented walkthrough of the same Compose stack (`infra/docker-compose.prod.yml`). The application does not require Hostinger.

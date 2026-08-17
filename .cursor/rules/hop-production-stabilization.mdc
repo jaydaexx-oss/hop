@@ -1,0 +1,34 @@
+---
+description: HOP Production Stabilization Mode — no major features until verified score > 90/100; evidence-based scoring only.
+alwaysApply: true
+---
+
+# HOP Production Stabilization Mode
+
+Work only on `integration/production-stabilization`. **Do not merge to `dev` or `main`.** Canonical policy and scorecard: `HOP_STABILIZATION_MODE.md`.
+
+## Allowed vs postponed
+
+- **No new major product features** until the verified production-readiness score is **> 90/100**.
+- **Postpone:** Event Mode, mesh/multi-hop relay, group PTT, live voice calls, new social features, monetization, major animations/polish that do not improve reliability.
+- **Existing features MAY** be fixed, hardened, completed, tested, or integrated.
+- **Even at 90+:** no new feature work if a **P0 security or data-loss** issue remains.
+
+## Scoring (do not inflate)
+
+Scoring is **evidence-based**. Do not increase the score simply because code exists. A category **cannot receive full credit** when critical behavior is only mocked/simulated.
+
+- **BLE** — not full credit until tested on **physical phones**.
+- **PTT** — not full credit until **mic, playback, transport, and queue** are tested on physical phones.
+- **Internet messaging** — not full credit until tested against a **live non-localhost HTTPS** backend.
+
+Rubric (max 100): Core messaging 20, Security & privacy 20, Backend/API 15, Mobile stability 15, BLE/hybrid 15, PTT/voice 5, Testing & observability 5, Deployment 5.
+
+## End every stabilization phase with
+
+CURRENT VERIFIED SCORE / WHAT INCREASED THE SCORE / WHAT PREVENTS 90+ / P0 BLOCKERS / P1 BLOCKERS / AUTOMATED TEST RESULTS / PHYSICAL TESTS STILL REQUIRED
+
+```text
+❌ BAD: “BLE is implemented, so 15/15.”
+✅ GOOD: “HopBleEngine exists; tests use MockBleLink; no two-phone run → not full credit.”
+```

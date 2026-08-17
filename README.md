@@ -4,6 +4,8 @@ Privacy-first hybrid messenger. **Messages find a way.**
 
 Chat send chooses internet or BLE automatically. Nearby BLE and internet chat both use libsodium `crypto_box` (X25519 + XSalsa20-Poly1305). Controlled peer-relay is **simulated** (A→B→C→D tests); real-world mesh is **not** complete.
 
+**Production stabilization:** see [`HOP_STABILIZATION_MODE.md`](./HOP_STABILIZATION_MODE.md). No new major features until verified score > 90/100.
+
 ## Status (honest)
 
 | Area | Status |

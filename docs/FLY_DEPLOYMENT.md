@@ -148,6 +148,8 @@ curl -sS https://<your-app>.fly.dev/version
 
 Expect `/health` 200, `/ready` 200 with `database=ok` and `redis=ok`. Then reply with **only** the public `https://…fly.dev` hostname (no secrets). Mobile: `EXPO_PUBLIC_API_URL=https://<your-app>.fly.dev`.
 
+This repo’s live app is `hop-uokqmg` (`https://hop-uokqmg.fly.dev`). Set `apps/mobile/.env` from `.env.example`. Do not create or deploy `hop-api`.
+
 ---
 
 ## What this does not do

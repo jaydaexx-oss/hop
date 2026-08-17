@@ -6,24 +6,74 @@ Do **not** use Expo Go. `munim-bluetooth` and the GATT peripheral path are nativ
 
 Generated `apps/mobile/ios/` is gitignored (Expo CNG). `app.json` is the source of truth.
 
+There is **no EAS `projectId`** in `app.json`. Skip TestFlight / `eas build` unless you later add an Expo project and a paid Apple team. Use the USB development-client path below.
+
+## iPhone 16 Pro — copy-paste (production API)
+
+On the Mac, with the iPhone 16 Pro connected by USB, Developer Mode on, and this computer trusted:
+
+```bash
+cd /Users/jaydae/hop
+git checkout integration/production-stabilization
+cp apps/mobile/.env.example apps/mobile/.env
+# Confirm (no secrets in this file):  grep EXPO_PUBLIC_API_URL apps/mobile/.env
+# Expected: EXPO_PUBLIC_API_URL=https://hop-uokqmg.fly.dev
+
+cd apps/mobile
+npm install
+npx expo prebuild --platform ios
+npx expo run:ios --device
+```
+
+If Xcode is not selected yet:
+
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -runFirstLaunch
+export LANG=en_US.UTF-8
+```
+
+If `expo run:ios --device` opens Xcode: choose the iPhone 16 Pro as the run destination, set Signing Team (your Apple ID), bundle id `app.hop.mobile`, then Run. First launch: **Settings → General → VPN & Device Management** → trust the developer.
+
+If Metro is not running after install:
+
+```bash
+cd /Users/jaydae/hop/apps/mobile
+npx expo start --dev-client
+```
+
+Open the installed **HOP** app (not Expo Go). Register: username 3–20 chars, starts with a letter, letters/numbers/`_` only; password ≥ 8 characters. Then Settings → Device diagnostics → API `/health` should show the Fly host, not localhost.
+
 ## What you need
 
 - A Mac with **Xcode** (the full app, not only Command Line Tools)
 - An Apple ID / development team for signing
 - A physical iPhone, USB cable, Developer Mode on, the computer trusted
-- The HOP API reachable from the phone (LAN HTTP or production HTTPS)
+- The HOP API reachable from the phone. For this branch, that is the live Fly HTTPS API (no LAN API required).
 
-## 1. API the phone can actually reach
+## 1. Point the app at the production API
 
-`http://127.0.0.1:8000` is this Mac (or the Simulator). On a physical iPhone, localhost is **the phone**.
+`http://127.0.0.1:8000` is this Mac (or the Simulator). On a physical iPhone, localhost is **the phone** and cannot reach your Mac.
 
-Find the Mac LAN IP:
+**Recommended for iPhone 16 Pro / live e2e:** the Fly app `hop-uokqmg` (never `hop-api`).
+
+Copy `apps/mobile/.env.example` to `apps/mobile/.env` if `.env` is missing. The example already sets:
+
+```bash
+EXPO_PUBLIC_API_URL=https://hop-uokqmg.fly.dev
+```
+
+Native iOS does not use CORS. `fly.toml` `CORS_ORIGINS` is the API origin itself (restrictive HTTPS allow-list). Expo web against this API from `http://localhost:8081` would be blocked; do not test e2e in the browser.
+
+Restart Metro after changing `EXPO_PUBLIC_API_URL` (the value is inlined at bundle time).
+
+### Optional: Mac LAN API instead of production
+
+Only if you are intentionally hitting a local uvicorn, not Fly:
 
 ```bash
 ipconfig getifaddr en0
 ```
-
-Run the API on all interfaces (from `apps/api`, with your usual env / venv):
 
 ```bash
 cd apps/api
@@ -32,19 +82,7 @@ DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=http://localhost:8081 \
   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Allow port 8000 through the Mac firewall if prompted.
-
-In `apps/mobile/.env` (copy from `apps/mobile/.env.example`):
-
-```bash
-EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000
-```
-
-Example: `EXPO_PUBLIC_API_URL=http://192.168.1.23:8000`.
-
-Production / TestFlight must use `https://<API_DOMAIN>` instead. Release builds (`__DEV__ === false`) refuse cleartext HTTP except loopback. Development clients allow RFC1918 LAN HTTP so this LAN path works. iOS ATS `NSAllowsLocalNetworking` is on for that LAN HTTP path.
-
-Restart Metro after changing `EXPO_PUBLIC_API_URL` (the value is inlined at bundle time).
+Then in `apps/mobile/.env`: `EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000` (example `http://192.168.1.23:8000`). Development clients allow RFC1918 LAN HTTP; release builds (`__DEV__ === false`) refuse it.
 
 ## 2. Install the native app (USB)
 

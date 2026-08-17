@@ -71,7 +71,8 @@ Mobile (development client — **not Expo Go**):
 
 ```bash
 cp apps/mobile/.env.example apps/mobile/.env
-# Physical iPhone: set EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000 in apps/mobile/.env
+# Default in .env.example is the live Fly API: https://hop-uokqmg.fly.dev
+# LAN API instead: EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000
 cd apps/mobile
 npm install
 npx expo prebuild --platform ios

@@ -1,13 +1,11 @@
+import { API_URL, assertSafeApiUrl } from './api/client';
 import {
   LocalTransport,
   TransportManager,
   createBluetoothTransport,
   createInternetTransport,
-  createRelayTransport,
   type HopHttpClient,
 } from '@hop/protocol';
-
-import { API_URL, assertSafeApiUrl } from './api/client';
 
 export function createHopHttp(getToken?: () => string | null): HopHttpClient {
   return {
@@ -42,11 +40,14 @@ export function createHopHttp(getToken?: () => string | null): HopHttpClient {
   };
 }
 
+/**
+ * App send path: TransportManager only (internet, then BLE).
+ * Relay/SimulatedNetwork are not registered here. Durable queue is MessageService + SQLite.
+ */
 export function createAppTransportManager(http: HopHttpClient): TransportManager {
   const manager = new TransportManager();
   manager.register(createInternetTransport(http));
   manager.register(createBluetoothTransport());
-  manager.register(createRelayTransport());
   manager.register(new LocalTransport());
   return manager;
 }

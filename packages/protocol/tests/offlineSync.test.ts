@@ -297,4 +297,61 @@ describe("offline persistence and sync", () => {
     expect(raw?.local_seal).not.toContain("secret at rest");
     session.driver.close();
   });
+
+  it("marks FAILED after bounded retry attempts and does not loop forever", async () => {
+    const file = tempDb();
+    const world = mockWorld({ failPost: true });
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const now = new Date("2026-08-16T00:00:00.000Z");
+    const session = await openService(file, world.http, testCrypto(alice, blake.publicKey));
+    const sent = await session.service.sendText({ ...sendInput, text: "give up eventually", now });
+    expect(sent.status).toBe(MessageStatus.QUEUED);
+
+    let cursor = now.getTime();
+    for (let i = 0; i < DEFAULT_RETRY_POLICY.maxAttempts + 2; i++) {
+      cursor += 10 * 60_000;
+      await session.service.retryDue(new Date(cursor));
+    }
+    const row = await session.store.getMessage(sent.message_id);
+    expect(row?.status).toBe(MessageStatus.FAILED);
+    expect(await session.store.queuedCount()).toBe(0);
+    session.driver.close();
+  });
+
+  it("preserves per-conversation outbound order across restart", async () => {
+    const file = tempDb();
+    const world = mockWorld();
+    world.setOnline(false);
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const crypto = testCrypto(alice, blake.publicKey);
+    const t0 = new Date("2026-08-16T00:00:00.000Z");
+    const t1 = new Date("2026-08-16T00:00:01.000Z");
+    const session1 = await openService(file, world.http, crypto);
+    const first = await session1.service.sendText({ ...sendInput, text: "first", now: t0 });
+    const second = await session1.service.sendText({ ...sendInput, text: "second", now: t1 });
+    expect(first.status).toBe(MessageStatus.QUEUED);
+    expect(second.status).toBe(MessageStatus.QUEUED);
+    const queued = await session1.store.listOutbound();
+    expect(queued.map((row) => row.message_id)).toEqual([first.message_id, second.message_id]);
+    session1.driver.close();
+
+    const session2 = await openService(file, world.http, crypto);
+    world.setOnline(true);
+    const order: string[] = [];
+    const originalRequest = world.http.request.bind(world.http);
+    world.http.request = async (path, init) => {
+      if (init?.method === "POST" && path.endsWith("/messages")) {
+        const body = init.body as { message_id: string };
+        order.push(body.message_id);
+      }
+      return originalRequest(path, init);
+    };
+    await session2.service.sync();
+    expect(order).toEqual([first.message_id, second.message_id]);
+    expect((await session2.store.getMessage(first.message_id))?.status).toBe(MessageStatus.SENT);
+    expect((await session2.store.getMessage(second.message_id))?.status).toBe(MessageStatus.SENT);
+    session2.driver.close();
+  });
 });

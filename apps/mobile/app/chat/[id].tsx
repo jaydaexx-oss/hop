@@ -267,7 +267,7 @@ export default function ChatScreen() {
               )}
               {mine ? (
                 <Text style={[styles.status, { color: failed ? '#DC2626' : colors.muted }]}>
-                  {formatMessageStatus(item.status)}
+                  {formatMessageStatus(item.status, item.retry_attempts)}
                 </Text>
               ) : null}
             </View>

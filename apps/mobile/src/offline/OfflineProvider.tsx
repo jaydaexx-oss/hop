@@ -45,6 +45,7 @@ type OfflineState = {
   syncNow: () => Promise<void>;
   cacheConversation: (convo: Conversation) => Promise<void>;
   listCachedConversations: () => Promise<Conversation[]>;
+  conversationPreview: (conversationId: string) => Promise<string>;
 };
 
 const OfflineContext = createContext<OfflineState | null>(null);
@@ -64,6 +65,7 @@ export function storedToChat(row: StoredMessage): ChatMessage {
     duration_ms: row.duration_ms,
     mime: row.mime,
     audio_b64: row.audio_b64,
+    retry_attempts: row.retry_attempts,
   };
 }
 
@@ -251,6 +253,12 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
     return rows.map(toConversation);
   }, []);
 
+  const conversationPreview = useCallback(async (conversationId: string) => {
+    const svc = serviceRef.current;
+    if (!svc) return 'No messages yet';
+    return svc.previewForConversation(conversationId);
+  }, []);
+
   const value = useMemo<OfflineState>(
     () => ({
       ready,
@@ -264,8 +272,9 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
       syncNow,
       cacheConversation,
       listCachedConversations,
+      conversationPreview,
     }),
-    [ready, status, queuedCount, service, store, manager, tofu, identityError, syncNow, cacheConversation, listCachedConversations],
+    [ready, status, queuedCount, service, store, manager, tofu, identityError, syncNow, cacheConversation, listCachedConversations, conversationPreview],
   );
 
   return <OfflineContext.Provider value={value}>{children}</OfflineContext.Provider>;

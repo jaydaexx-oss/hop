@@ -31,6 +31,7 @@ export type ChatMessage = {
   duration_ms?: number;
   mime?: string;
   audio_b64?: string;
+  retry_attempts?: number;
 };
 
 export class ApiError extends Error {

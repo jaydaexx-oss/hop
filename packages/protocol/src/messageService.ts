@@ -20,6 +20,7 @@ import {
   estimateBoxedPayloadBytes,
   withDecryptedPlain,
 } from "./voice.js";
+import { conversationPreviewLine } from "./conversationTransport.js";
 
 export interface SendTextInput {
   conversation_id: string;
@@ -174,13 +175,21 @@ export class MessageService {
 
   async listMessages(conversationId: string): Promise<StoredMessage[]> {
     const rows = await this.store.listMessages(conversationId);
+    const outbound = await this.store.listOutbound();
+    const attempts = new Map(outbound.map((row) => [row.message_id, row.attempts]));
     const out: StoredMessage[] = [];
     for (const row of rows) {
       const materialized = await this.materializePlaintext(row);
       if (materialized.kind === "delivery_ack") continue;
-      out.push(materialized);
+      out.push({ ...materialized, retry_attempts: attempts.get(row.message_id) ?? 0 });
     }
     return out;
+  }
+
+  async previewForConversation(conversationId: string): Promise<string> {
+    const rows = await this.listMessages(conversationId);
+    const last = rows[rows.length - 1];
+    return conversationPreviewLine(last ?? null);
   }
 
   async getNetworkStatus(): Promise<NetworkStatus> {
@@ -277,6 +286,9 @@ export class MessageService {
 
     const queued = (await this.store.listOutbound()).find((row) => row.message_id === message.message_id);
     if (!ignoreBackoff && queued && queued.next_retry_at > now.getTime()) {
+      return message;
+    }
+    if (await this.store.hasEarlierOutbound(message.conversation_id, message.created_at, message.message_id)) {
       return message;
     }
 

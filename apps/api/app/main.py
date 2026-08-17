@@ -8,7 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from app.api import api_router
-from app.config import get_settings
+from app.config import assert_production_config, get_settings
 from app.db import init_db
 from app.logging_config import configure_logging
 from app.metrics import READY, metrics_middleware, metrics_payload
@@ -21,6 +21,7 @@ async def lifespan(_app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_format)
     logger.info("Starting HOP API env=%s version=%s", settings.app_env, settings.app_version)
+    assert_production_config(settings)
     init_db()
     yield
     logger.info("Shutting down HOP API")

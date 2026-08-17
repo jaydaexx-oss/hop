@@ -29,7 +29,7 @@ export class LocalTransport implements Transport {
       id: this.id,
       available: true,
       implemented: true,
-      detail: "In-memory store-and-forward queue. SQLite persistence is not implemented.",
+      detail: "In-memory TransportManager fallback only. Durable persistence is HopSqliteStore, not this class.",
     };
   }
 

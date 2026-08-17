@@ -236,4 +236,65 @@ describe("TransportManager", () => {
     expect(result.ok).toBe(false);
     expect(local.length).toBe(0);
   });
+
+  it("does not crash send when Bluetooth throws; falls through to internet or queue", async () => {
+    const internetSent: EncryptedEnvelope[] = [];
+    const manager = new TransportManager();
+    manager.register(
+      mockTransport("internet", { available: false, sent: internetSent }),
+    );
+    manager.register({
+      id: "bluetooth",
+      async isAvailable() {
+        throw new Error("native BLE module exploded");
+      },
+      async canSend() {
+        throw new Error("native BLE module exploded");
+      },
+      async send() {
+        throw new Error("GATT write exploded");
+      },
+      subscribe() {
+        return () => undefined;
+      },
+      status() {
+        return { id: "bluetooth", available: false, implemented: true, detail: "throwing" };
+      },
+    });
+    manager.register(new LocalTransport());
+
+    const result = await manager.send(encryptedEnvelope());
+    expect(result.ok).toBe(false);
+    expect(result.transport).toBe("local");
+    expect(internetSent).toHaveLength(0);
+
+    const queued = await manager.enqueue(encryptedEnvelope("other"));
+    expect(queued.ok).toBe(true);
+    expect(queued.transport).toBe("local");
+  });
+
+  it("falls through to internet when Bluetooth send throws", async () => {
+    const internetSent: EncryptedEnvelope[] = [];
+    const manager = new TransportManager();
+    manager.register(mockTransport("internet", { available: true, sent: internetSent }));
+    manager.register({
+      id: "bluetooth",
+      async isAvailable() {
+        return true;
+      },
+      async send() {
+        throw new Error("radio died");
+      },
+      subscribe() {
+        return () => undefined;
+      },
+      status() {
+        return { id: "bluetooth", available: true, implemented: true, detail: "throwing" };
+      },
+    });
+
+    const result = await manager.send(encryptedEnvelope());
+    expect(result).toMatchObject({ ok: true, transport: "internet" });
+    expect(internetSent).toHaveLength(1);
+  });
 });

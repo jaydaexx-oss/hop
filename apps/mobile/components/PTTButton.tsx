@@ -55,11 +55,10 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
   const [granted, setGranted] = useState<boolean | null>(null);
   const [recording, setRecording] = useState(false);
   const [elapsed, setElapsed] = useState(0);
-  const [bars, setBars] = useState<number[]>(Array(BAR_COUNT).fill(4));
+  const [error, setError] = useState<string | null>(null);
   const recordingRef = useRef<Audio.Recording | null>(null);
   const startRef = useRef(0);
   const timerIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
-  const waveIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const hapticIdRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const abortRef = useRef(false);
   const stoppingRef = useRef(false);
@@ -68,10 +67,6 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
     if (timerIdRef.current) {
       clearInterval(timerIdRef.current);
       timerIdRef.current = null;
-    }
-    if (waveIdRef.current) {
-      clearInterval(waveIdRef.current);
-      waveIdRef.current = null;
     }
     if (hapticIdRef.current) {
       clearInterval(hapticIdRef.current);
@@ -107,11 +102,13 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
   const handlePressIn = useCallback(async () => {
     if (!granted || Platform.OS === 'web' || stoppingRef.current) return;
     abortRef.current = false;
+    setError(null);
     let rec: Audio.Recording;
     try {
       await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
       ({ recording: rec } = await Audio.Recording.createAsync(SPEECH_RECORDING_OPTIONS));
     } catch {
+      setError('Could not start recording');
       return;
     }
     if (abortRef.current) {
@@ -126,9 +123,6 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
     timerIdRef.current = setInterval(() => {
       setElapsed(Date.now() - startRef.current);
     }, 100);
-    waveIdRef.current = setInterval(() => {
-      setBars(Array(BAR_COUNT).fill(0).map(() => 4 + Math.random() * 24));
-    }, 80);
     hapticIdRef.current = setInterval(() => {
       Haptics.selectionAsync().catch(() => undefined);
     }, 800);
@@ -139,28 +133,35 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
     if (stoppingRef.current) return;
     stoppingRef.current = true;
     clearAllIntervals();
-    setBars(Array(BAR_COUNT).fill(4));
     setRecording(false);
     const duration = Math.min(Date.now() - startRef.current, MAX_VOICE_DURATION_MS);
     const rec = recordingRef.current;
     recordingRef.current = null;
+    let uri: string | null = null;
     try {
       if (!rec || duration < MIN_RECORDING_MS) {
         await rec?.stopAndUnloadAsync().catch(() => undefined);
+        uri = rec?.getURI() ?? null;
         return;
       }
       await rec.stopAndUnloadAsync();
-      const uri = rec.getURI();
-      if (!uri) return;
+      uri = rec.getURI();
+      if (!uri) {
+        setError('Recording produced no audio');
+        return;
+      }
       const audio_b64 = await FileSystem.readAsStringAsync(uri, {
         encoding: FileSystem.EncodingType.Base64,
       });
       const mime = Platform.OS === 'ios' || Platform.OS === 'android' ? 'audio/mp4' : 'audio/webm';
       await onSend({ audio_b64, duration_ms: duration, mime });
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success).catch(() => undefined);
-    } catch {
-      /* recorder stop / read failed */
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Voice send failed');
     } finally {
+      if (uri) {
+        await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
+      }
       stoppingRef.current = false;
     }
   }, [onSend]);
@@ -182,7 +183,9 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
   if (granted === false) {
     return (
       <Pressable onPress={requestMic} style={styles.fallback}>
-        <Text style={[styles.fallbackText, { color: muted }]}>Microphone permission needed</Text>
+        <Text style={[styles.fallbackText, { color: muted }]}>
+          Microphone access denied. Enable it in Settings to send voice notes.
+        </Text>
       </Pressable>
     );
   }
@@ -191,18 +194,21 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
     <View style={styles.root}>
       {recording ? (
         <View style={styles.waveRow}>
-          {bars.map((h, i) => (
-            <View
-              key={i}
-              style={[
-                styles.waveBar,
-                { height: h, backgroundColor: tint, opacity: 0.6 + (h / 28) * 0.4 },
-              ]}
-            />
-          ))}
+          {Array.from({ length: BAR_COUNT }, (_, i) => {
+            const phase = (elapsed / 180 + i * 0.45) % (Math.PI * 2);
+            const h = 8 + Math.abs(Math.sin(phase)) * 16;
+            return (
+              <View key={i} style={[styles.waveBar, { height: h, backgroundColor: tint }]} />
+            );
+          })}
         </View>
       ) : null}
-      {recording ? <Text style={[styles.timer, { color: tint }]}>{fmt(elapsed)}</Text> : null}
+      {recording ? (
+        <Text style={[styles.timer, { color: tint }]}>
+          {fmt(elapsed)} · recording (not a mic meter)
+        </Text>
+      ) : null}
+      {error ? <Text style={[styles.timer, { color: '#DC2626' }]}>{error}</Text> : null}
       <Pressable
         onPressIn={handlePressIn}
         onPressOut={handlePressOut}
@@ -226,8 +232,8 @@ export function PTTButton({ tint, tintForeground, muted, card, onSend }: PTTButt
 
 const styles = StyleSheet.create({
   root: { alignItems: 'center', gap: 8, paddingVertical: 6, flex: 1 },
-  fallback: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, minHeight: 44 },
-  fallbackText: { fontSize: 13 },
+  fallback: { flexDirection: 'row', alignItems: 'center', paddingHorizontal: 12, minHeight: 44, flex: 1 },
+  fallbackText: { fontSize: 13, flex: 1, flexWrap: 'wrap' },
   waveRow: { flexDirection: 'row', alignItems: 'center', gap: 3, height: 32 },
   waveBar: { width: 3, borderRadius: 2, minHeight: 4 },
   timer: { fontSize: 13, fontWeight: '700', letterSpacing: 1 },

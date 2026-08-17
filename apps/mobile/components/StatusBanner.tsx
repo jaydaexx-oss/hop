@@ -4,12 +4,12 @@ import { Text } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useOffline } from '@/src/offline/OfflineProvider';
-import type { NetworkStatus } from '@hop/protocol';
+import { formatNetworkStatus, type NetworkStatus } from '@hop/protocol';
 
-function labelFor(status: NetworkStatus, queuedCount: number): NetworkStatus {
-  if (status === 'Synchronizing') return 'Synchronizing';
+function labelFor(status: NetworkStatus, queuedCount: number): string {
+  if (status === 'Synchronizing') return formatNetworkStatus(status);
   if (queuedCount > 0) return 'Queued';
-  return status;
+  return formatNetworkStatus(status);
 }
 
 export function StatusBanner() {

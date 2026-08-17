@@ -10,6 +10,19 @@
       "ios": {
         "simulator": false
       }
+    },
+    "preview": {
+      "developmentClient": false,
+      "distribution": "internal",
+      "channel": "preview"
+    },
+    "production": {
+      "developmentClient": false,
+      "distribution": "store",
+      "channel": "production"
     }
+  },
+  "submit": {
+    "production": {}
   }
 }

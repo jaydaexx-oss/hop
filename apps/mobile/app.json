@@ -75,6 +75,10 @@
         }
       ]
     ],
+    "extra": {
+      "requiresHttpsApiInRelease": true,
+      "easBuildProfiles": "development (dev client), preview (TestFlight/internal), production (App Store)"
+    },
     "experiments": {
       "typedRoutes": true
     }

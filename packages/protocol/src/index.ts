@@ -55,8 +55,10 @@ export {
 } from "./bleCodec.js";
 export {
   authenticatedNearbyPeer,
+  conversationPreviewLine,
   conversationTransportStatus,
   formatMessageStatus,
+  formatNetworkStatus,
   internetStatusAvailable,
   isFailedMessageStatus,
   localDirectConversationId,
@@ -139,3 +141,10 @@ export {
   type RelayDropReason,
 } from "./relayPolicy.js";
 export { SimulatedNetwork, type SimEvent, type SimulatedNode } from "./simulatedNetwork.js";
+export {
+  assertSafeApiUrl,
+  isLoopbackApiHost,
+  isPrivateLanIpv4,
+  resolveApiUrl,
+  type ApiUrlPolicyOptions,
+} from "./apiUrlPolicy.js";

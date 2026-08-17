@@ -80,6 +80,8 @@ export interface StoredMessage {
   seq?: number;
   total?: number;
   part_of?: string;
+  /** Outbound retry count from outbound_queue. Not a SQLite messages column. */
+  retry_attempts?: number;
 }
 
 export interface OutboundRow {
@@ -215,8 +217,32 @@ export class HopSqliteStore {
 
   async listOutbound(): Promise<OutboundRow[]> {
     return this.db.query<OutboundRow>(
-      "SELECT message_id, attempts, next_retry_at FROM outbound_queue ORDER BY next_retry_at ASC",
+      `SELECT o.message_id, o.attempts, o.next_retry_at
+       FROM outbound_queue o
+       JOIN messages m ON m.message_id = o.message_id
+       ORDER BY m.conversation_id ASC, m.created_at ASC, o.next_retry_at ASC`,
     );
+  }
+
+  async hasEarlierOutbound(conversationId: string, createdAt: string, messageId: string): Promise<boolean> {
+    const rows = await this.db.query<{ message_id: string }>(
+      `SELECT o.message_id
+       FROM outbound_queue o
+       JOIN messages m ON m.message_id = o.message_id
+       WHERE m.conversation_id = ? AND m.created_at < ? AND o.message_id != ?
+       ORDER BY m.created_at ASC
+       LIMIT 1`,
+      [conversationId, createdAt, messageId],
+    );
+    return rows.length > 0;
+  }
+
+  async latestMessage(conversationId: string): Promise<StoredMessage | null> {
+    const rows = await this.db.query<StoredMessage>(
+      "SELECT * FROM messages WHERE conversation_id = ? ORDER BY created_at DESC LIMIT 1",
+      [conversationId],
+    );
+    return rows[0] ?? null;
   }
 
   async removeOutbound(messageId: string): Promise<void> {

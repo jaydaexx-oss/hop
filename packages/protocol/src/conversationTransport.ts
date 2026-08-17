@@ -1,6 +1,8 @@
 import { MessageStatus } from "./message.js";
 import type { NetworkStatus } from "./transport.js";
 import { looksLikeHardwareId, safeNearbyDisplayName } from "./bleCodec.js";
+import { DEFAULT_VOICE_CAPTION } from "./voice.js";
+import type { StoredMessage } from "./store.js";
 
 export type ConversationRoute = "nearby" | "online" | "queued" | "offline" | "relaying";
 
@@ -117,8 +119,33 @@ const MESSAGE_STATUS_LABEL: Record<string, string> = {
   [MessageStatus.EXPIRED]: "Expired",
 };
 
-export function formatMessageStatus(status: string): string {
+export function formatMessageStatus(status: string, retryAttempts = 0): string {
+  if (retryAttempts > 0 && (status === MessageStatus.QUEUED || status === MessageStatus.SENDING)) {
+    return "Retrying";
+  }
   return MESSAGE_STATUS_LABEL[status] ?? status;
+}
+
+/** Banner copy. Synchronizing is shown as Reconnecting — not a new transport. */
+export function formatNetworkStatus(status: NetworkStatus): string {
+  if (status === "Synchronizing") return "Reconnecting";
+  return status;
+}
+
+/**
+ * Chat-list preview. Never returns ciphertext. Null/undecrypted text is an honest placeholder.
+ */
+export function conversationPreviewLine(
+  message: Pick<StoredMessage, "text" | "kind" | "encrypted_payload"> | null | undefined,
+): string {
+  if (!message) return "No messages yet";
+  if (message.kind === "voice") {
+    const caption = message.text?.trim();
+    return caption ? caption : DEFAULT_VOICE_CAPTION;
+  }
+  const text = message.text?.trim();
+  if (text) return text.length > 80 ? `${text.slice(0, 79)}…` : text;
+  return "Encrypted message";
 }
 
 export function isFailedMessageStatus(status: string): boolean {

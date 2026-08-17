@@ -8,8 +8,6 @@ import {
   writeEphemeralPlaybackFile,
 } from '@/src/voice/cache';
 
-const BARS = [8, 14, 22, 18, 28, 12, 24, 16, 10, 20, 26, 14];
-
 type VoiceMessageBubbleProps = {
   messageId: string;
   audioB64?: string;
@@ -111,19 +109,13 @@ export function VoiceMessageBubble({
       <Pressable onPress={togglePlay} style={[styles.playBtn, { backgroundColor: `${iconColor}22` }]}>
         <Text style={[styles.playIcon, { color: iconColor }]}>{playing ? '||' : '>'}</Text>
       </Pressable>
-      <View style={styles.waveRow}>
-        {BARS.map((h, i) => {
-          const filled = progress > 0 && i / BARS.length < progress;
-          return (
-            <View
-              key={i}
-              style={[
-                styles.bar,
-                { height: h, backgroundColor: iconColor, opacity: filled ? 1 : 0.3 },
-              ]}
-            />
-          );
-        })}
+      <View style={[styles.track, { backgroundColor: `${iconColor}33` }]}>
+        <View
+          style={[
+            styles.fill,
+            { width: `${Math.max(4, Math.round(progress * 100))}%`, backgroundColor: iconColor },
+          ]}
+        />
       </View>
       <Text style={[styles.dur, { color: error ? muted : iconColor }]}>
         {error ?? (playing ? fmt(progress * durationMs) : fmt(durationMs))}
@@ -150,7 +142,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   playIcon: { fontSize: 14, fontWeight: '700' },
-  waveRow: { flexDirection: 'row', alignItems: 'center', gap: 2, flex: 1 },
-  bar: { width: 3, borderRadius: 2 },
+  track: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden' },
+  fill: { height: 4, borderRadius: 2 },
   dur: { fontSize: 12, fontWeight: '600', minWidth: 30 },
 });

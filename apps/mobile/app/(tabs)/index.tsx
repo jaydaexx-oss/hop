@@ -15,17 +15,25 @@ import { useHopSocket } from '@/src/ws';
 
 export default function ChatsScreen() {
   const { token } = useAuth();
-  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount } = useOffline();
+  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount, conversationPreview } = useOffline();
   const { peers, connectedId } = useBle();
   const router = useRouter();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const [items, setItems] = useState<Conversation[]>([]);
+  const [previews, setPreviews] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     const cached = await listCachedConversations();
-    if (cached.length > 0) setItems(cached);
+    if (cached.length > 0) {
+      setItems(cached);
+      const cachedPreviews: Record<string, string> = {};
+      for (const convo of cached) {
+        cachedPreviews[convo.id] = await conversationPreview(convo.id);
+      }
+      setPreviews(cachedPreviews);
+    }
     if (!token) return;
     try {
       const remote = await api.conversations(token);
@@ -35,6 +43,11 @@ export default function ChatsScreen() {
         await cacheConversation(convo);
       }
       await syncNow();
+      const nextPreviews: Record<string, string> = {};
+      for (const convo of remote) {
+        nextPreviews[convo.id] = await conversationPreview(convo.id);
+      }
+      setPreviews(nextPreviews);
     } catch (err) {
       if (cached.length === 0) {
         setError(err instanceof Error ? err.message : 'Could not load chats');
@@ -42,7 +55,7 @@ export default function ChatsScreen() {
         setError(null);
       }
     }
-  }, [token, cacheConversation, listCachedConversations, syncNow]);
+  }, [token, cacheConversation, listCachedConversations, syncNow, conversationPreview]);
 
   useEffect(() => {
     refresh();
@@ -86,7 +99,10 @@ export default function ChatsScreen() {
               </View>
               <View style={styles.meta}>
                 <Text style={styles.name}>{item.peer.username}</Text>
-                <Text style={{ color: colors.muted }}>{transport.line}</Text>
+                <Text style={{ color: colors.muted }} numberOfLines={1}>
+                  {previews[item.id] ?? 'No messages yet'}
+                </Text>
+                <Text style={{ color: colors.muted, fontSize: 12 }}>{transport.line}</Text>
               </View>
             </Pressable>
           );

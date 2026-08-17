@@ -1,50 +1,28 @@
-const LOOPBACK_HOSTS = new Set(['127.0.0.1', 'localhost', '10.0.2.2', '::1']);
+import {
+  assertSafeApiUrl as assertSafeApiUrlPolicy,
+  isLoopbackApiHost,
+  isPrivateLanIpv4,
+  resolveApiUrl,
+} from '@hop/protocol';
 
-function ipv4Octets(hostname: string): [number, number, number, number] | null {
-  const parts = hostname.split('.');
-  if (parts.length !== 4) return null;
-  const nums = parts.map((part) => Number(part));
-  if (nums.some((n) => !Number.isInteger(n) || n < 0 || n > 255)) return null;
-  return nums as [number, number, number, number];
-}
-
-export function isLoopbackApiHost(hostname: string): boolean {
-  return LOOPBACK_HOSTS.has(hostname.toLowerCase());
-}
-
-/** RFC1918 only. Used so a physical phone can reach the API on the Mac's LAN in __DEV__. */
-export function isPrivateLanIpv4(hostname: string): boolean {
-  const octets = ipv4Octets(hostname);
-  if (!octets) return false;
-  const [a, b] = octets;
-  if (a === 10) return true;
-  if (a === 172 && b >= 16 && b <= 31) return true;
-  if (a === 192 && b === 168) return true;
-  return false;
-}
-
-function developmentAllowsLanHttp(): boolean {
+function isDevClient(): boolean {
   return typeof __DEV__ !== 'undefined' && __DEV__;
 }
 
-export function assertSafeApiUrl(url: string): void {
-  let parsed: URL;
-  try {
-    parsed = new URL(url);
-  } catch {
-    throw new Error('Invalid API URL');
-  }
-  if (parsed.protocol === 'https:') return;
-  if (parsed.protocol !== 'http:') {
-    throw new Error('Invalid API URL');
-  }
-  const host = parsed.hostname.toLowerCase();
-  if (isLoopbackApiHost(host)) return;
-  if (developmentAllowsLanHttp() && isPrivateLanIpv4(host)) return;
-  throw new Error('Refusing cleartext HTTP API URL outside localhost');
+function allowStagingCleartext(): boolean {
+  return process.env.EXPO_PUBLIC_ALLOW_CLEARTEXT_HTTP === '1';
 }
 
-export const API_URL = process.env.EXPO_PUBLIC_API_URL ?? 'http://127.0.0.1:8000';
+export { isLoopbackApiHost, isPrivateLanIpv4 };
+
+export function assertSafeApiUrl(url: string): void {
+  assertSafeApiUrlPolicy(url, {
+    isDev: isDevClient(),
+    allowCleartextHttp: allowStagingCleartext(),
+  });
+}
+
+export const API_URL = resolveApiUrl(process.env.EXPO_PUBLIC_API_URL, isDevClient());
 assertSafeApiUrl(API_URL);
 
 /** True when the URL would hit this device, not the Mac running the API. */
@@ -70,20 +48,4 @@ export async function getHealth(apiUrl: string = API_URL): Promise<HealthRespons
     throw new Error(`Health check failed: ${response.status}`);
   }
   return (await response.json()) as HealthResponse;
-}
-
-export async function postEnvelope(
-  envelope: Record<string, unknown>,
-  apiUrl: string = API_URL,
-): Promise<unknown> {
-  assertSafeApiUrl(apiUrl);
-  const response = await fetch(`${apiUrl}/messages`, {
-    method: 'POST',
-    headers: { Accept: 'application/json', 'Content-Type': 'application/json' },
-    body: JSON.stringify(envelope),
-  });
-  if (!response.ok) {
-    throw new Error(`Submit failed: ${response.status}`);
-  }
-  return response.json();
 }

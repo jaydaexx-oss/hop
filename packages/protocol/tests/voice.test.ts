@@ -15,6 +15,7 @@ import type { HopHttpClient } from "../src/http.js";
 import { InternetTransport } from "../src/internetTransport.js";
 import { MessageStatus } from "../src/message.js";
 import { MessageService } from "../src/messageService.js";
+import { DEFAULT_RETRY_POLICY } from "../src/retry.js";
 import { SqlJsDriver } from "../src/sqlJsDriver.js";
 import { HopSqliteStore, type StoredMessage } from "../src/store.js";
 import { TransportManager } from "../src/transportManager.js";
@@ -45,7 +46,7 @@ function testCrypto(sender: IdentityKeyPair, recipientPk: string): MessageCrypto
   };
 }
 
-function mockWorld() {
+function mockWorld(options?: { failPost?: boolean }) {
   let online = true;
   const posts: { message_id: string; encrypted_payload: string }[] = [];
   const server = new Map<string, Record<string, unknown>>();
@@ -60,6 +61,9 @@ function mockWorld() {
         throw new Error("network down");
       }
       if (init?.method === "POST" && path.endsWith("/messages")) {
+        if (options?.failPost) {
+          return { ok: false, status: 500, data: { detail: "upstream" } };
+        }
         const body = init.body as { encrypted_payload: string; message_id: string };
         posts.push({ message_id: body.message_id, encrypted_payload: body.encrypted_payload });
         const existing = server.get(body.message_id);
@@ -345,6 +349,33 @@ describe("voice messages", () => {
     expect(listed.map((row) => row.text).sort()).toEqual(["Voice message", "still works"]);
     expect(listed.find((row) => row.text === "still works")?.kind ?? "message").toBe("message");
     expect(listed.find((row) => row.kind === "voice")?.audio_b64).toBe(AUDIO_B64);
+    session.driver.close();
+  });
+
+  it("sets FAILED honestly after voice retries are exhausted", async () => {
+    const file = tempDb();
+    const world = mockWorld({ failPost: true });
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const now = new Date("2026-08-16T00:00:00.000Z");
+    const session = await openService(file, world.http, testCrypto(alice, blake.publicKey));
+    const sent = await session.service.sendVoice({
+      ...sendInput,
+      audio_b64: AUDIO_B64,
+      duration_ms: 500,
+      now,
+    });
+    expect(sent.status).toBe(MessageStatus.QUEUED);
+    let cursor = now.getTime();
+    for (let i = 0; i < DEFAULT_RETRY_POLICY.maxAttempts + 2; i++) {
+      cursor += 10 * 60_000;
+      await session.service.retryDue(new Date(cursor));
+    }
+    expect((await session.store.getMessage(sent.message_id))?.status).toBe(MessageStatus.FAILED);
+    expect(await session.store.queuedCount()).toBe(0);
+    const listed = await session.service.listMessages(CONVO);
+    expect(listed[0]?.status).toBe(MessageStatus.FAILED);
+    expect(listed[0]?.kind).toBe("voice");
     session.driver.close();
   });
 });

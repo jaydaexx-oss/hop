@@ -2,8 +2,10 @@ import { describe, expect, it } from "vitest";
 import { MessageStatus } from "../src/message.js";
 import {
   authenticatedNearbyPeer,
+  conversationPreviewLine,
   conversationTransportStatus,
   formatMessageStatus,
+  formatNetworkStatus,
   internetStatusAvailable,
   localDirectConversationId,
   nearbyPeerLabel,
@@ -162,6 +164,8 @@ describe("conversation transport helpers", () => {
     expect(formatMessageStatus(MessageStatus.DELIVERED)).toBe("Delivered");
     expect(formatMessageStatus(MessageStatus.READ)).toBe("Read");
     expect(formatMessageStatus(MessageStatus.FAILED)).toBe("Failed");
+    expect(formatMessageStatus(MessageStatus.QUEUED, 2)).toBe("Retrying");
+    expect(formatMessageStatus(MessageStatus.SENDING, 1)).toBe("Retrying");
   });
 
   it("treats Online and Synchronizing as internet-available", () => {
@@ -186,5 +190,49 @@ describe("conversation transport helpers", () => {
     expect(nearbyPeerPresence({ connected: true, sessionEstablished: true })).toBe("authenticated");
     expect(nearbyPeerPresence({ connected: true })).toBe("connected");
     expect(nearbyPeerPresence({})).toBe("available");
+  });
+
+  it("maps synchronizing to Reconnecting without inventing a transport", () => {
+    expect(formatNetworkStatus("Synchronizing")).toBe("Reconnecting");
+    expect(formatNetworkStatus("Offline")).toBe("Offline");
+    expect(formatNetworkStatus("Queued")).toBe("Queued");
+  });
+
+  it("previews last caption without leaking ciphertext when text is null", () => {
+    expect(conversationPreviewLine(null)).toBe("No messages yet");
+    expect(
+      conversationPreviewLine({
+        text: "hello there",
+        kind: "message",
+        encrypted_payload: "CIPHERTEXT_MUST_NOT_SHOW",
+      }),
+    ).toBe("hello there");
+    expect(
+      conversationPreviewLine({
+        text: null,
+        kind: "message",
+        encrypted_payload: "CIPHERTEXT_MUST_NOT_SHOW",
+      }),
+    ).toBe("Encrypted message");
+    expect(
+      conversationPreviewLine({
+        text: null,
+        kind: "voice",
+        encrypted_payload: "CIPHERTEXT_MUST_NOT_SHOW",
+      }),
+    ).toBe("Voice message");
+    expect(
+      conversationPreviewLine({
+        text: "Voice message",
+        kind: "voice",
+        encrypted_payload: "CIPHERTEXT_MUST_NOT_SHOW",
+      }),
+    ).toBe("Voice message");
+    expect(
+      conversationPreviewLine({
+        text: null,
+        encrypted_payload: "CIPHERTEXT_MUST_NOT_SHOW",
+      }).includes("CIPHERTEXT"),
+    ).toBe(false);
   });
 });

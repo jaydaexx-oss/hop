@@ -51,8 +51,13 @@ export class TransportManager {
   }
 
   async canUse(transport: Transport, envelope: EncryptedEnvelope): Promise<boolean> {
-    if (transport.canSend) return transport.canSend(envelope);
-    return transport.isAvailable();
+    try {
+      if (transport.canSend) return await transport.canSend(envelope);
+      return await transport.isAvailable();
+    } catch {
+      // Bluetooth off / native throw must not crash send. Fall through to the next route or queue.
+      return false;
+    }
   }
 
   /** First live route that can carry this envelope, or null to queue locally. */
@@ -82,9 +87,17 @@ export class TransportManager {
       const transport = this.transports.get(id);
       if (!transport) continue;
       if (!(await this.canUse(transport, envelope))) continue;
-      const result = await transport.send({ ...envelope, transport: transport.id });
-      if (result.ok) return result;
-      last = result;
+      try {
+        const result = await transport.send({ ...envelope, transport: transport.id });
+        if (result.ok) return result;
+        last = result;
+      } catch (err) {
+        last = {
+          ok: false,
+          transport: id,
+          error: err instanceof Error ? err.message : "Transport failed",
+        };
+      }
     }
     return last.ok ? last : { ok: false, transport: "local", error: last.error ?? "No transport available" };
   }

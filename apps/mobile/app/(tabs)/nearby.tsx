@@ -118,7 +118,8 @@ export default function NearbyScreen() {
       <Text style={styles.title}>Nearby</Text>
       <Text style={[styles.lead, { color: colors.muted }]}>
         Discover HOP users over Bluetooth. Chat picks Bluetooth or internet automatically — you never
-        choose a transport.
+        choose a transport. If Bluetooth is off or permission is denied, internet chat and the offline
+        queue still work.
       </Text>
 
       <View style={[styles.card, { backgroundColor: colors.card }]}>

@@ -71,6 +71,8 @@ export {
   looksLikeHardwareId,
   newHandshakeNonce,
   safeNearbyDisplayName,
+  sanitizeAdvertisementDiscoveryId,
+  sanitizeUntrustedLabel,
   type BleHandshake,
 } from "./bleCodec.js";
 export {

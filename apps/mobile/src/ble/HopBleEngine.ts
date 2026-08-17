@@ -10,6 +10,7 @@ import {
   HOP_BLE_SERVICE_UUID,
   ProcessedIdSet,
   advertiseLocalName,
+  sanitizeAdvertisementDiscoveryId,
   bleSendRefusal,
   bleSessionStale,
   bytesToHex,
@@ -109,6 +110,7 @@ export class HopBleEngine implements BleLink {
   private scanOnTimer: ReturnType<typeof setTimeout> | null = null;
   private scanOffTimer: ReturnType<typeof setTimeout> | null = null;
   private staleTimer: ReturnType<typeof setInterval> | null = null;
+  private dutyGen = 0;
   private detail = 'BLE engine is idle.';
   private gattRegistered = false;
   private lastMtu: number | null = null;
@@ -240,7 +242,7 @@ export class HopBleEngine implements BleLink {
     try {
       await native.startAdvertising({
         serviceUUIDs: [HOP_BLE_SERVICE_UUID],
-        localName: advertiseLocalName(options.discoveryId ?? options.username),
+        localName: advertiseLocalName(sanitizeAdvertisementDiscoveryId(options.discoveryId)),
       });
       this.advertising = true;
       this.advertisingSupported = true;
@@ -288,6 +290,7 @@ export class HopBleEngine implements BleLink {
     this.handshakePhase = 'idle';
     this.connected.clear();
     this.session = null;
+    this.peers.clear();
     this.reassemblers.clear();
     this.sessionActivity.clear();
     this.pendingHandshake.clear();
@@ -664,21 +667,29 @@ export class HopBleEngine implements BleLink {
   }
 
   private handleDeviceFound(device: NativeDevice): void {
-    if (!device?.id) return;
-    const uuids = (device.serviceUUIDs ?? []).map((uuid) => uuid.toLowerCase());
-    if (uuids.length > 0 && !uuids.includes(HOP_BLE_SERVICE_UUID)) return;
-    const existing = this.peers.get(device.id);
-    const displayName = displayNameFromAdvertisement(device.localName, device.name);
-    this.peers.set(device.id, {
-      deviceId: device.id,
-      displayName: existing?.userId ? existing.displayName : displayName,
-      userId: existing?.userId,
-      publicKey: existing?.publicKey,
-      sessionEstablished: existing?.sessionEstablished,
-      rssi: typeof device.rssi === 'number' ? device.rssi : existing?.rssi,
-      lastSeenAt: Date.now(),
-    });
-    this.emitPeers();
+    try {
+      if (!device?.id || typeof device.id !== 'string') return;
+      const uuids = (device.serviceUUIDs ?? []).map((uuid) => String(uuid).toLowerCase());
+      if (uuids.length > 0 && !uuids.includes(HOP_BLE_SERVICE_UUID)) return;
+      const existing = this.peers.get(device.id);
+      const displayName = displayNameFromAdvertisement(
+        typeof device.localName === 'string' ? device.localName : null,
+        typeof device.name === 'string' ? device.name : null,
+      );
+      const rssi = typeof device.rssi === 'number' && Number.isFinite(device.rssi) ? device.rssi : existing?.rssi;
+      this.peers.set(device.id, {
+        deviceId: device.id,
+        displayName: existing?.sessionEstablished ? existing.displayName : displayName,
+        userId: existing?.sessionEstablished ? existing.userId : undefined,
+        publicKey: existing?.sessionEstablished ? existing.publicKey : undefined,
+        sessionEstablished: existing?.sessionEstablished,
+        rssi,
+        lastSeenAt: Date.now(),
+      });
+      this.emitPeers();
+    } catch {
+      /* malformed native payloads must not crash discovery */
+    }
   }
 
   private async handleInboxWrite(centralId: string, hex: string): Promise<void> {
@@ -800,21 +811,39 @@ export class HopBleEngine implements BleLink {
 
   private startDutyCycle(native: NativeBle): void {
     this.clearScanTimers();
+    const gen = ++this.dutyGen;
+    try {
+      native.stopScan?.();
+    } catch {
+      /* previous scan may already be stopped */
+    }
+    this.scanning = false;
     const pulse = async () => {
-      if (!this.session) return;
+      if (!this.session || this.dutyGen !== gen) return;
       try {
         await native.startScan({
           serviceUUIDs: [HOP_BLE_SERVICE_UUID],
           allowDuplicates: true,
           scanMode: this.scanMode,
         });
+        if (!this.session || this.dutyGen !== gen) {
+          try {
+            await native.stopScan?.();
+          } catch {
+            /* ignore */
+          }
+          this.scanning = false;
+          return;
+        }
         this.scanning = true;
       } catch (err) {
+        if (this.dutyGen !== gen) return;
         this.scanning = false;
         this.detail = `Scan failed: ${err instanceof Error ? err.message : String(err)}`;
         return;
       }
       this.scanOnTimer = setTimeout(() => {
+        if (this.dutyGen !== gen) return;
         native.stopScan?.();
         this.scanning = false;
         this.scanOffTimer = setTimeout(() => {
@@ -870,6 +899,7 @@ export class HopBleEngine implements BleLink {
   }
 
   private clearTimers(): void {
+    this.dutyGen += 1;
     this.clearScanTimers();
     if (this.staleTimer) clearInterval(this.staleTimer);
     this.staleTimer = null;

@@ -18,6 +18,7 @@ import { EventModeService, formatEventRemaining } from './EventModeService';
 import { NearbyService } from './NearbyService';
 import { createEphemeralDiscoveryId } from './ephemeralId';
 import { createPersistentKv } from './kvStore';
+import { discoveryProfileFor, isEventModeAllowed, shouldRunNearbyDiscovery } from './nearbyPolicy';
 import { loadPrivacyMode, savePrivacyMode } from './privacyStore';
 import type { AroundUsPeer, AroundUsScanState, EventModeSnapshot, NearbyPrivacyMode } from './types';
 import { DEFAULT_EVENT_DURATION_MS } from './types';
@@ -49,7 +50,6 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
   const {
     engine,
     status,
-    peers: rawPeers,
     connectedId,
     busy,
     error,
@@ -71,6 +71,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     }),
   );
   const discoveryIdRef = useRef(createEphemeralDiscoveryId());
+  const discoveryEpochRef = useRef(0);
   const [ready, setReady] = useState(false);
   const [privacyMode, setPrivacyModeState] = useState<NearbyPrivacyMode>('invisible');
   const [eventMode, setEventMode] = useState<EventModeSnapshot>({
@@ -102,7 +103,11 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     const off = service.onPeersChanged(project);
     project();
     return off;
-  }, [project, rawPeers, status, tick]);
+  }, [project]);
+
+  useEffect(() => {
+    project();
+  }, [project, status.bluetoothOn, status.permissionGranted, status.scanning, status.advertising]);
 
   useEffect(() => {
     if (!user) {
@@ -116,6 +121,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
         sessionId: null,
         eventCode: null,
       });
+      discoveryEpochRef.current += 1;
       stopNearby().catch(() => undefined);
       return;
     }
@@ -172,38 +178,86 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
 
   const startDiscovery = useCallback(
     async (mode: NearbyPrivacyMode, eventEnabled: boolean) => {
-      if (mode === 'invisible') return;
+      const snap = engine.status();
+      if (
+        !shouldRunNearbyDiscovery({
+          privacyMode: mode,
+          appActive: AppState.currentState === 'active',
+          bluetoothOn: snap.bluetoothOn,
+          permissionGranted: snap.permissionGranted,
+        })
+      ) {
+        return;
+      }
+      const epoch = discoveryEpochRef.current;
+      const profile = discoveryProfileFor(mode, eventEnabled);
       const options: StartNearbyOptions = {
         discoveryId: discoveryIdRef.current,
-        scanMode: eventEnabled ? 'lowLatency' : 'balanced',
-        discoveryProfile: eventEnabled ? 'event' : 'standard',
+        scanMode: profile === 'event' ? 'lowLatency' : 'balanced',
+        discoveryProfile: profile,
       };
       if (sessionActive) {
         setDiscoveryProfile(options.discoveryProfile!);
         return;
       }
       await startNearby(options);
+      if (discoveryEpochRef.current !== epoch) {
+        await stopNearby();
+      }
     },
-    [sessionActive, setDiscoveryProfile, startNearby],
+    [engine, sessionActive, setDiscoveryProfile, startNearby, stopNearby],
   );
+
+  const haltDiscovery = useCallback(async () => {
+    discoveryEpochRef.current += 1;
+    await stopNearby();
+    setDiscoveryProfile('standard');
+  }, [setDiscoveryProfile, stopNearby]);
 
   useEffect(() => {
     if (!ready) return;
-    if (privacyMode === 'invisible') {
-      if (sessionActive) stopNearby().catch(() => undefined);
+    if (
+      !shouldRunNearbyDiscovery({
+        privacyMode,
+        appActive: AppState.currentState === 'active',
+        bluetoothOn: status.bluetoothOn,
+        permissionGranted: status.permissionGranted,
+      })
+    ) {
+      if (sessionActive) haltDiscovery().catch(() => undefined);
       return;
     }
-    if (AppState.currentState !== 'active') return;
     startDiscovery(privacyMode, eventMode.enabled).catch(() => undefined);
-  }, [eventMode.enabled, privacyMode, ready, sessionActive, startDiscovery, stopNearby]);
+  }, [
+    eventMode.enabled,
+    haltDiscovery,
+    privacyMode,
+    ready,
+    sessionActive,
+    startDiscovery,
+    status.bluetoothOn,
+    status.permissionGranted,
+  ]);
 
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state !== 'active' || !ready || privacyMode === 'invisible') return;
-      startDiscovery(privacyMode, eventMode.enabled).catch(() => undefined);
+      if (state !== 'active' || !ready || !user) return;
+      void (async () => {
+        const next = await eventServiceRef.current.tick(user.id);
+        setEventMode(next);
+        if (!next.enabled) setDiscoveryProfile('standard');
+        await startDiscovery(privacyMode, next.enabled);
+      })();
     });
     return () => sub.remove();
-  }, [eventMode.enabled, privacyMode, ready, startDiscovery]);
+  }, [privacyMode, ready, setDiscoveryProfile, startDiscovery, user]);
+
+  useEffect(() => {
+    return () => {
+      discoveryEpochRef.current += 1;
+      stopNearby().catch(() => undefined);
+    };
+  }, [stopNearby]);
 
   useEffect(() => {
     if (!eventMode.enabled) return;
@@ -227,18 +281,22 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
       }
       setPrivacyModeState(mode);
       await savePrivacyMode(kvRef.current, user.id, mode);
-      if (mode === 'invisible' && eventMode.enabled) {
-        const next = await eventServiceRef.current.disable(user.id);
-        setEventMode(next);
+      if (mode === 'invisible') {
+        discoveryEpochRef.current += 1;
+        if (eventMode.enabled) {
+          const next = await eventServiceRef.current.disable(user.id);
+          setEventMode(next);
+        }
+        await stopNearby();
         setDiscoveryProfile('standard');
       }
     },
-    [eventMode.enabled, privacyMode, setDiscoveryProfile, user],
+    [eventMode.enabled, privacyMode, setDiscoveryProfile, stopNearby, user],
   );
 
   const enableEventMode = useCallback(async () => {
     if (!user) return;
-    if (privacyMode === 'invisible') {
+    if (!isEventModeAllowed(privacyMode)) {
       throw new Error('Turn on Contacts only or Everyone nearby before Event Mode.');
     }
     const next = await eventServiceRef.current.enable(user.id, DEFAULT_EVENT_DURATION_MS);

@@ -45,7 +45,17 @@ export class NearbyService {
 
   setSessionActive(active: boolean, startedAt?: number | null): void {
     this.sessionActive = active;
-    this.sessionStartedAt = active ? (startedAt ?? this.now()) : null;
+    if (!active) {
+      this.sessionStartedAt = null;
+      return;
+    }
+    if (startedAt !== undefined) {
+      this.sessionStartedAt = startedAt;
+      return;
+    }
+    if (this.sessionStartedAt === null) {
+      this.sessionStartedAt = this.now();
+    }
   }
 
   setConnectionError(error: string | null): void {
@@ -54,7 +64,9 @@ export class NearbyService {
 
   rememberIdentity(userId: string, username: string, publicKey?: string): void {
     if (!userId || !username) return;
-    this.identities.set(userId, { username, publicKey });
+    const clean = username.trim();
+    if (!clean) return;
+    this.identities.set(userId, { username: clean, publicKey });
   }
 
   onPeersChanged(handler: () => void): () => void {

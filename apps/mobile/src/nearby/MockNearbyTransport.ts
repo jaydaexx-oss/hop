@@ -16,6 +16,8 @@ export class MockNearbyTransport implements NearbyTransport {
   started: BleSessionOptions | null = null;
   scanMode: BleScanMode = 'balanced';
   profile: BleDiscoveryProfile = 'standard';
+  startCount = 0;
+  stopCount = 0;
   private readonly peerListeners = new Set<() => void>();
 
   status(): BleLinkStatus {
@@ -36,6 +38,9 @@ export class MockNearbyTransport implements NearbyTransport {
   }
 
   async startSession(options: BleSessionOptions): Promise<void> {
+    if (!this.currentStatus.bluetoothOn) throw new Error('Bluetooth is off');
+    if (!this.currentStatus.permissionGranted) throw new Error('Bluetooth permission was denied.');
+    this.startCount += 1;
     this.started = options;
     this.scanMode = options.scanMode;
     this.currentStatus = {
@@ -48,13 +53,17 @@ export class MockNearbyTransport implements NearbyTransport {
   }
 
   async stopSession(): Promise<void> {
+    this.stopCount += 1;
     this.started = null;
+    this.profile = 'standard';
+    this.scanMode = 'balanced';
     this.currentStatus = {
       ...this.currentStatus,
       advertising: false,
       scanning: false,
       detail: 'mock stopped',
     };
+    this.peers = [];
     this.emit();
   }
 
@@ -70,6 +79,36 @@ export class MockNearbyTransport implements NearbyTransport {
 
   async requestPermission(): Promise<boolean> {
     return this.currentStatus.permissionGranted && this.currentStatus.bluetoothOn;
+  }
+
+  setBluetoothOn(on: boolean): void {
+    this.currentStatus = {
+      ...this.currentStatus,
+      bluetoothOn: on,
+      advertising: on ? this.currentStatus.advertising : false,
+      scanning: on ? this.currentStatus.scanning : false,
+      detail: on ? this.currentStatus.detail : 'mock bluetooth off',
+    };
+    if (!on) {
+      this.started = null;
+      this.profile = 'standard';
+    }
+    this.emit();
+  }
+
+  setPermissionGranted(granted: boolean): void {
+    this.currentStatus = {
+      ...this.currentStatus,
+      permissionGranted: granted,
+      advertising: granted ? this.currentStatus.advertising : false,
+      scanning: granted ? this.currentStatus.scanning : false,
+      detail: granted ? this.currentStatus.detail : 'mock permission denied',
+    };
+    if (!granted) {
+      this.started = null;
+      this.profile = 'standard';
+    }
+    this.emit();
   }
 
   async connect(deviceId: string): Promise<BlePeer> {

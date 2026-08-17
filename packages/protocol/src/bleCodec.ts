@@ -232,6 +232,16 @@ export function advertiseLocalName(username: string): string {
 const MAC_RE = /^([0-9a-f]{2}[:-]){5}[0-9a-f]{2}$/i;
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const LONG_HEX_RE = /^[0-9a-f]{12,}$/i;
+const MAX_UNTRUSTED_LABEL = 32;
+
+/** Strip control chars / angle brackets and bound length for untrusted BLE strings. */
+export function sanitizeUntrustedLabel(value: string, max = MAX_UNTRUSTED_LABEL): string {
+  return value
+    .replace(/[\u0000-\u001F\u007F-\u009F]/g, "")
+    .replace(/[<>]/g, "")
+    .trim()
+    .slice(0, max);
+}
 
 /** True for MAC addresses, OS BLE UUIDs, and long hex hardware identifiers. */
 export function looksLikeHardwareId(value: string): boolean {
@@ -242,18 +252,33 @@ export function looksLikeHardwareId(value: string): boolean {
   return LONG_HEX_RE.test(hex) && hex.length >= 12;
 }
 
+/**
+ * Discovery localName payload. Never a user UUID, MAC, or other hardware id.
+ * Unknown / unsafe values become the generic "user" label — not a username.
+ */
+export function sanitizeAdvertisementDiscoveryId(id?: string | null): string {
+  if (!id || typeof id !== "string") return "user";
+  const trimmed = id.trim();
+  if (!trimmed || looksLikeHardwareId(trimmed)) return "user";
+  const compact = trimmed.replace(/[^a-z0-9]/gi, "").slice(0, 8).toLowerCase();
+  if (compact.length < 6 || looksLikeHardwareId(compact)) return "user";
+  return compact;
+}
+
 export function safeNearbyDisplayName(displayName?: string | null): string {
-  const name = (displayName ?? "").trim();
+  const name = sanitizeUntrustedLabel(typeof displayName === "string" ? displayName : "");
   if (!name || looksLikeHardwareId(name)) return "HOP user";
   return name;
 }
 
 export function displayNameFromAdvertisement(localName?: string | null, deviceName?: string | null): string {
-  const raw = (localName || deviceName || "").trim();
+  const local = typeof localName === "string" ? localName : "";
+  const device = typeof deviceName === "string" ? deviceName : "";
+  const raw = sanitizeUntrustedLabel(local || device, 48);
   if (raw.startsWith("HOP:")) {
-    const rest = raw.slice(4).trim();
+    const rest = sanitizeUntrustedLabel(raw.slice(4));
     if (rest && !looksLikeHardwareId(rest)) return rest;
   }
-  if (raw && !looksLikeHardwareId(raw)) return raw;
+  if (raw && !looksLikeHardwareId(raw)) return sanitizeUntrustedLabel(raw);
   return "HOP user";
 }

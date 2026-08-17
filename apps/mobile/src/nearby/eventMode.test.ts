@@ -4,6 +4,7 @@ import { EventModeService, formatEventRemaining } from './EventModeService';
 import { MemoryKvStore } from './kvStore';
 import { NearbyService } from './NearbyService';
 import { MockNearbyTransport, mockBlePeer } from './MockNearbyTransport';
+import { discoveryProfileFor, isEventModeAllowed } from './nearbyPolicy';
 import { loadPrivacyMode, savePrivacyMode } from './privacyStore';
 import { DEFAULT_EVENT_DURATION_MS } from './types';
 
@@ -30,6 +31,39 @@ describe('Event Mode expiration', () => {
 
     const reloaded = await service.load('user-1');
     expect(reloaded.enabled).toBe(false);
+  });
+
+  it('expires while the app is backgrounded (clock advances without ticks, then a foreground tick)', async () => {
+    const store = new MemoryKvStore();
+    let now = 2_000_000;
+    const service = new EventModeService(store, () => now);
+    await service.enable('user-1', DEFAULT_EVENT_DURATION_MS);
+    now += DEFAULT_EVENT_DURATION_MS + 5_000;
+    const foreground = await service.tick('user-1');
+    expect(foreground.enabled).toBe(false);
+    expect(foreground.remainingMs).toBe(0);
+    expect(foreground.sessionId).toBeNull();
+  });
+
+  it('cannot reactivate Event Mode after expiry across a simulated restart', async () => {
+    const store = new MemoryKvStore();
+    let now = 3_000_000;
+    const first = new EventModeService(store, () => now);
+    await first.enable('user-1', 1_000);
+    now += 1_001;
+    const restarted = new EventModeService(store, () => now);
+    const loaded = await restarted.load('user-1');
+    expect(loaded.enabled).toBe(false);
+    expect(JSON.parse((await store.get('hop.eventMode.user-1')) ?? '{}').enabled).toBe(false);
+    const stillOff = await restarted.load('user-1');
+    expect(stillOff.enabled).toBe(false);
+  });
+
+  it('treats corrupt persisted Event Mode as off', async () => {
+    const store = new MemoryKvStore();
+    await store.set('hop.eventMode.user-1', '{not-json');
+    const service = new EventModeService(store, () => 10);
+    expect((await service.load('user-1')).enabled).toBe(false);
   });
 
   it('can be turned off before expiry and stays off after restart', async () => {
@@ -108,5 +142,59 @@ describe('privacy persistence and mocked NearbyService', () => {
     transport.setDiscoveryProfile('event');
     expect(transport.profile).toBe('event');
     expect(transport.scanMode).toBe('lowLatency');
+  });
+
+  it('does not let Event Mode show identified strangers in Contacts only', async () => {
+    const transport = new MockNearbyTransport();
+    const service = new NearbyService(transport, () => 20_000);
+    service.setSelfUserId('me');
+    service.setPrivacyMode('contacts');
+    service.setContactIds(['friend']);
+    service.setSessionActive(true, 20_000);
+    transport.setDiscoveryProfile('event');
+    transport.setPeers([
+      mockBlePeer({
+        deviceId: 'friend-dev',
+        displayName: 'sam',
+        userId: 'friend',
+        sessionEstablished: true,
+        lastSeenAt: 20_000,
+      }),
+      mockBlePeer({
+        deviceId: 'other-dev',
+        displayName: 'rio',
+        userId: 'stranger',
+        sessionEstablished: true,
+        lastSeenAt: 20_000,
+      }),
+    ]);
+    expect(discoveryProfileFor('contacts', true)).toBe('event');
+    expect(service.listPeers().map((p) => p.displayName)).toEqual(['sam']);
+  });
+
+  it('keeps Event Mode from advertising while Invisible', async () => {
+    expect(isEventModeAllowed('invisible')).toBe(false);
+    const store = new MemoryKvStore();
+    const events = new EventModeService(store, () => 9_000);
+    await events.enable('user-1');
+    const transport = new MockNearbyTransport();
+    const nearby = new NearbyService(transport, () => 9_000);
+    nearby.setPrivacyMode('invisible');
+    await transport.startSession({
+      userId: 'user-1',
+      username: 'jaydae',
+      scanMode: 'lowLatency',
+      identityPublicKey: 'pk',
+      discoveryId: 'k7m2p9qx',
+    });
+    transport.setDiscoveryProfile('event');
+    transport.setPeers([mockBlePeer({ deviceId: 'dev-1', lastSeenAt: 9_000 })]);
+    expect(nearby.listPeers()).toEqual([]);
+    expect(nearby.scanState()).toBe('invisible');
+    await transport.stopSession();
+    const disabled = await events.disable('user-1');
+    expect(disabled.enabled).toBe(false);
+    expect(transport.profile).toBe('standard');
+    expect(transport.currentStatus.scanning).toBe(false);
   });
 });

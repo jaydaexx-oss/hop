@@ -230,4 +230,18 @@ describe('scan states', () => {
       }),
     ).toBe('connection_failure');
   });
+
+  it('stays Invisible even when Bluetooth is on and peers exist', () => {
+    expect(
+      deriveScanState({
+        privacyMode: 'invisible',
+        status,
+        sessionActive: true,
+        peerCount: 4,
+        connectionError: null,
+        now: 20_000,
+        sessionStartedAt: 10_000,
+      }),
+    ).toBe('invisible');
+  });
 });

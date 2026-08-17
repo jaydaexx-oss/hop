@@ -1,4 +1,4 @@
-import { looksLikeHardwareId, nearbyPeerLabel, type BlePeer } from '@hop/protocol';
+import { looksLikeHardwareId, nearbyPeerLabel, sanitizeUntrustedLabel, type BlePeer } from '@hop/protocol';
 
 import { createEphemeralDiscoveryId, looksLikeEphemeralDiscoveryLabel, opaquePeerToken } from './ephemeralId';
 import type { AroundUsPeer, NearbyIdentity, NearbyPrivacyMode, ProximityBand } from './types';
@@ -10,6 +10,8 @@ const PROXIMITY_RANK: Record<ProximityBand, number> = {
   farther: 2,
 };
 
+const MAX_DISPLAY_NAME = 32;
+
 export function rssiToProximity(rssi?: number): ProximityBand {
   if (typeof rssi !== 'number' || !Number.isFinite(rssi)) return 'farther';
   if (rssi >= -60) return 'very_close';
@@ -17,8 +19,14 @@ export function rssiToProximity(rssi?: number): ProximityBand {
   return 'farther';
 }
 
+export function sanitizePeerDisplayName(value: string): string {
+  const name = sanitizeUntrustedLabel(value, MAX_DISPLAY_NAME);
+  if (!name || looksLikeHardwareId(name)) return 'HOP user';
+  return name;
+}
+
 export function avatarInitials(displayName: string): string {
-  const name = displayName.trim();
+  const name = sanitizePeerDisplayName(displayName);
   if (!name || name === 'HOP user') return '?';
   const parts = name.split(/\s+/).filter(Boolean);
   if (parts.length >= 2) {
@@ -34,9 +42,26 @@ export function pruneStalePeers(
   connectedId?: string | null,
 ): BlePeer[] {
   return peers.filter((peer) => {
+    if (!peer || typeof peer.deviceId !== 'string' || !peer.deviceId) return false;
     if (connectedId && peer.deviceId === connectedId) return true;
-    return now - peer.lastSeenAt <= staleMs;
+    const seen = typeof peer.lastSeenAt === 'number' && Number.isFinite(peer.lastSeenAt) ? peer.lastSeenAt : 0;
+    return now - seen <= staleMs;
   });
+}
+
+export function dedupePeersByDeviceId(peers: BlePeer[]): BlePeer[] {
+  const byId = new Map<string, BlePeer>();
+  for (const peer of peers) {
+    if (!peer || typeof peer.deviceId !== 'string' || !peer.deviceId) continue;
+    const existing = byId.get(peer.deviceId);
+    const seen = typeof peer.lastSeenAt === 'number' && Number.isFinite(peer.lastSeenAt) ? peer.lastSeenAt : 0;
+    const existingSeen =
+      existing && typeof existing.lastSeenAt === 'number' && Number.isFinite(existing.lastSeenAt)
+        ? existing.lastSeenAt
+        : -1;
+    if (!existing || seen >= existingSeen) byId.set(peer.deviceId, peer);
+  }
+  return [...byId.values()];
 }
 
 export function sortAroundUsPeers(peers: AroundUsPeer[]): AroundUsPeer[] {
@@ -51,15 +76,24 @@ export function resolveDisplayName(
   peer: BlePeer,
   identities: Map<string, NearbyIdentity>,
 ): string {
-  if (peer.userId) {
+  if (peer.sessionEstablished && peer.userId) {
     const known = identities.get(peer.userId);
-    if (known?.username && !looksLikeHardwareId(known.username) && known.username !== 'HOP user') {
-      return known.username;
+    if (known?.username) {
+      const sanitized = sanitizePeerDisplayName(known.username);
+      if (sanitized !== 'HOP user') return sanitized;
     }
+    const handshakeName = sanitizePeerDisplayName(typeof peer.displayName === 'string' ? peer.displayName : '');
+    if (handshakeName !== 'HOP user') return handshakeName;
   }
-  const label = nearbyPeerLabel(peer);
-  if (looksLikeEphemeralDiscoveryLabel(label) || looksLikeHardwareId(label)) return 'HOP user';
-  return label;
+  return 'HOP user';
+}
+
+function advertisedDiscoveryLabel(peer: BlePeer): string {
+  const raw = typeof peer.displayName === 'string' ? peer.displayName.trim() : '';
+  const fromLabel = nearbyPeerLabel(peer);
+  if (looksLikeEphemeralDiscoveryLabel(fromLabel)) return fromLabel;
+  if (looksLikeEphemeralDiscoveryLabel(raw)) return raw;
+  return '';
 }
 
 export function toAroundUsPeer(
@@ -68,26 +102,25 @@ export function toAroundUsPeer(
   identities: Map<string, NearbyIdentity>,
 ): AroundUsPeer {
   const displayName = resolveDisplayName(peer, identities);
-  const advertised = nearbyPeerLabel(peer);
-  const ephemeralId = looksLikeEphemeralDiscoveryLabel(advertised)
-    ? advertised
-    : opaquePeerToken(peer.deviceId);
+  const advertised = advertisedDiscoveryLabel(peer);
   const connected = connectedId === peer.deviceId;
   const encrypted = Boolean(peer.sessionEstablished);
+  const lastSeenAt =
+    typeof peer.lastSeenAt === 'number' && Number.isFinite(peer.lastSeenAt) ? peer.lastSeenAt : 0;
   return {
     token: opaquePeerToken(peer.deviceId),
-    ephemeralId,
+    ephemeralId: advertised || opaquePeerToken(peer.deviceId),
     deviceId: peer.deviceId,
     displayName,
     avatarInitials: avatarInitials(displayName),
-    userId: peer.userId,
-    publicKey: peer.publicKey ?? identities.get(peer.userId ?? '')?.publicKey,
+    userId: encrypted ? peer.userId : undefined,
+    publicKey: encrypted ? (peer.publicKey ?? identities.get(peer.userId ?? '')?.publicKey) : undefined,
     proximity: rssiToProximity(peer.rssi),
-    lastSeenAt: peer.lastSeenAt,
+    lastSeenAt,
     discovered: true,
     encrypted,
     connected,
-    canMessage: Boolean(peer.userId && encrypted),
+    canMessage: Boolean(encrypted && peer.userId),
   };
 }
 
@@ -115,7 +148,8 @@ export function projectNearbyPeers(input: {
   now: number;
   staleMs?: number;
 }): AroundUsPeer[] {
-  const live = pruneStalePeers(input.peers, input.now, input.staleMs, input.connectedId);
+  const unique = dedupePeersByDeviceId(input.peers);
+  const live = pruneStalePeers(unique, input.now, input.staleMs, input.connectedId);
   const mapped = live.map((peer) => toAroundUsPeer(peer, input.connectedId, input.identities));
   const visible = mapped.filter((peer) =>
     isPeerVisible(peer, input.privacyMode, input.selfUserId, input.contactIds),

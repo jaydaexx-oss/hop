@@ -9,6 +9,7 @@ import {
   displayNameFromAdvertisement,
   encodeEnvelope,
   encodeHandshake,
+  sanitizeAdvertisementDiscoveryId,
 } from "../src/bleCodec.js";
 import { createMessage } from "../src/message.js";
 import { toEnvelope } from "../src/transport.js";
@@ -39,6 +40,24 @@ describe("BLE codec", () => {
     expect(displayNameFromAdvertisement(null, "AA:BB:CC:DD:EE:FF")).toBe("HOP user");
     expect(displayNameFromAdvertisement("00:11:22:33:44:55", null)).toBe("HOP user");
     expect(hex.length).toBeGreaterThan(0);
+  });
+
+  it("never treats a user UUID or MAC as an advertisement discovery id", () => {
+    expect(sanitizeAdvertisementDiscoveryId("11111111-2222-3333-4444-555555555555")).toBe("user");
+    expect(sanitizeAdvertisementDiscoveryId("AA:BB:CC:DD:EE:FF")).toBe("user");
+    expect(sanitizeAdvertisementDiscoveryId("k7m2p9qx")).toBe("k7m2p9qx");
+    expect(sanitizeAdvertisementDiscoveryId(undefined)).toBe("user");
+    expect(advertiseLocalName(sanitizeAdvertisementDiscoveryId("k7m2p9qx"))).toBe("HOP:k7m2p9qx");
+    expect(advertiseLocalName(sanitizeAdvertisementDiscoveryId("11111111-2222-3333-4444-555555555555"))).toBe("HOP:user");
+  });
+
+  it("bounds malformed advertisement names without throwing", () => {
+    const huge = `HOP:${"A".repeat(10_000)}\u0000<script>`;
+    const parsed = displayNameFromAdvertisement(huge, { not: "a name" } as unknown as string);
+    expect(parsed.length).toBeLessThanOrEqual(32);
+    expect(parsed).not.toContain("<");
+    expect(parsed).not.toContain("\u0000");
+    expect(displayNameFromAdvertisement(undefined, undefined)).toBe("HOP user");
   });
 
   it("drops malformed envelopes and oversized handshake fields", () => {

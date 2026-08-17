@@ -1,15 +1,17 @@
 # Forward secrecy design (not implemented)
 
-**Status:** design only. **Phase 4 choice: option B — defer.** Do not replace `crypto_box`. Do not award forward-secrecy rubric points. A homegrown ratchet is forbidden.
+**Status:** design only. **Phase 5 choice: option B — defer.** Do not replace `crypto_box`. Do not award forward-secrecy rubric points. A homegrown ratchet is forbidden.
 
-Phase 2–4 keep libsodium `crypto_box_easy` (X25519 + XSalsa20-Poly1305) to the peer’s long-term identity public key. `docs/IDENTITY_TRUST.md` describes TOFU identity; this document describes the future session-key migration only.
+Phase 2–5 keep libsodium `crypto_box_easy` (X25519 + XSalsa20-Poly1305) to the peer’s long-term identity public key. `docs/IDENTITY_TRUST.md` describes TOFU identity; this document describes the future session-key migration only.
 
-## Phase 4 decision (option B)
+## Phase 5 decision (option B, unchanged)
 
-| Option | What it is | Phase 4 |
+libsodium-wrappers in this repo exposes `crypto_box`, `crypto_auth`, and `crypto_box_beforenm`. It does **not** implement Double Ratchet / X3DH. No libsignal (or other reviewed ratchet) package is installed in `packages/protocol` or `apps/mobile`. Therefore Phase 5 does not add forward secrecy.
+
+| Option | What it is | Phase 5 |
 |---|---|---|
-| **A** | Adopt a **mature** library (libsignal / a reviewed Double Ratchet implementation) beside today’s identity keys | **Rejected this phase.** Adding libsignal is a product+schema+BLE-MTU migration, not a drop-in. No reviewed TypeScript/React Native libsignal integration is wired in this repo. |
-| **B** | Keep `crypto_box`. Document the exact later migration. Do not invent a mini-ratchet. | **Chosen.** |
+| **A** | Adopt a **mature** library (libsignal / a reviewed Double Ratchet implementation) beside today’s identity keys | **Rejected this phase.** Still a product+schema+BLE-MTU migration. |
+| **B** | Keep `crypto_box`. Document the exact later migration. Do not invent a mini-ratchet. | **Chosen again.** |
 
 **Do not** implement a custom ratchet, “epoch key”, or hash-chain of `crypto_box` keys. That would be a homemade protocol.
 
@@ -47,7 +49,7 @@ Do this only after production-readiness > 90 **or** as a dedicated crypto milest
 | Identity 409 immutability | Rotation of long-term identity is intentionally blocked. A ratchet migration must not require silent identity replacement. |
 | Voice clips ≤ 8s / 64KiB API cap | Extra ratchet headers compete with `audio_b64` budget. |
 
-## Explicit non-goals (Phase 4 and earlier)
+## Explicit non-goals (Phase 5 and earlier)
 
 - No replacement of `crypto_box`
 - No custom “mini-ratchet”

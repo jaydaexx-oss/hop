@@ -2,7 +2,7 @@
 
 **Branch:** `integration/production-stabilization` only. **Do not merge to `dev` or `main`.**  
 **Cursor rule:** `.cursor/rules/hop-production-stabilization.mdc` (always apply).  
-**This scorecard:** Phase 4 (2026-08-16) under the evidence-based rubric. Canonical narrative: `HOP_PHASE4_REPORT.md`.
+**This scorecard:** Phase 5 (2026-08-16) under the evidence-based rubric. Canonical narrative: `HOP_PHASE5_REPORT.md`.
 
 ---
 
@@ -44,98 +44,100 @@ Every stabilization phase must end with:
 | Deployment readiness | 5 |
 | **Total** | **100** |
 
-Sources for this score (not substitutes for hardware or live HTTPS): `HOP_PRODUCTION_AUDIT.md`, `HOP_PHASE2_SECURITY_REPORT.md`, `HOP_PHASE3_REPORT.md`, `HOP_PHASE4_REPORT.md`.
+Sources for this score (not substitutes for hardware or live HTTPS): `HOP_PRODUCTION_AUDIT.md`, `HOP_PHASE2_SECURITY_REPORT.md`, `HOP_PHASE3_REPORT.md`, `HOP_PHASE4_REPORT.md`, `HOP_PHASE5_REPORT.md`.
 
 Prior scores used a different, unstructured scale (audit **38**, Phase 2 **~46**, Phase 3 **54**). This document **recalculates** on the rubric above. It does not carry those numbers forward.
 
 ---
 
-## Current scorecard (Phase 4)
+## Current scorecard (Phase 5)
 
-Phase 3 baseline under this rubric was **56 / 100**. Phase 4 is **62 / 100**. Hardware-dependent points remain unavailable. Docs and “code exists” do not add points. Forward secrecy is option B (deferred) and scores **0**.
+Phase 4 was **62 / 100**. Phase 5 is **70 / 100**. Hardware-dependent points remain unavailable. Docs and “code exists” do not add points. Forward secrecy is option B (deferred) and scores **0**.
 
-### Core messaging reliability — **13 / 20** (+1)
+### Core messaging reliability — **14 / 20** (+1)
 
 **Evidence**
 
 - Unchanged 1:1 path: Chat → `MessageService` → `TransportManager` → opaque `crypto_box`.
-- Phase 4 torture tests (`phase4Reliability.test.ts`): internet send, internet lost, BLE-selected-then-fail → internet retry, both down → encrypted queue, restart+flush, retry/FAILED, crypto ACK once, duplicate inbound, out-of-order, corrupt ciphertext, wrong peer key, KEY_CHANGED refuse, HTTP 4xx/5xx/timeout, concurrent sends, PTT queued offline. No false **DELIVERED** from HTTP.
+- ACK before local SENT cannot become DELIVERED. Unboxed inbound is dropped. Concurrent send ids stay unique. No false **DELIVERED** from HTTP.
 
 **Why not full credit**
 
 - Still mocked HTTP / sql.js. No live non-localhost HTTPS. No `expo-sqlite` process-kill proof.
 
-### Security & privacy — **12 / 20** (+1)
+### Security & privacy — **14 / 20** (+2)
 
 **Evidence**
 
-- Phase 2 invariants preserved. `publishIdentityIfAllowed` never PUTs on mismatch; HTTP 409 → `SERVER_KEY_LOCKED`. Matching PUT is idempotent. Fingerprint display helpers exist (`formatPersistedFingerprint`); `markVerified` unchanged.
-- API: member isolation, recipient-only HTTP acks, `message_id` uniqueness, oversized 413/422, production CORS must be HTTPS non-localhost, Redis required for rate limits (no silent widen).
+- Identity adversarial tests: 409 `SERVER_KEY_LOCKED`, KEY_CHANGED, SQLite fingerprint persist, fail-closed loss, malformed keys, cross-account pk refuse. No unauthenticated rotation.
+- BLE handshake MAC after both pks known (`crypto_auth` + `crypto_box_beforenm`). First GATT pk remains TOFU.
 
 **Why not full credit**
 
-- Still unattested TOFU. No FS (`docs/FORWARD_SECRECY_DESIGN.md` option B). Lost secret → new account (documented, not weakened). BLE first-packet pk still plaintext GATT.
+- Still unattested TOFU. No FS. Lost secret → new account. First-packet pk still plaintext GATT.
 
-### Backend/API production readiness — **10 / 15** (+2)
+### Backend/API production readiness — **11 / 15** (+1)
 
 **Evidence**
 
-- `init_db()` skips `create_all` in production (Alembic-only). Request size cap 256 KiB. Conversation create is one transaction. **51** pytest passed including isolation/duplicate/oversize/production validation.
+- Request correlation ids, well-formed identity keys, registration IntegrityError, push **404** (not offered). **67** pytest passed.
 
 **Why not full credit**
 
-- No live Postgres+Redis+HTTPS in this environment. Push still 501.
+- No live Postgres+Redis+HTTPS in this environment.
 
 ### Mobile application stability — **8 / 15** (0)
 
 Unchanged evidence. Typecheck passed. No device crash/soak.
 
-### BLE / hybrid transport — **11 / 15** (0)
+### BLE / hybrid transport — **12 / 15** (+1)
 
-Protocol hardening (chunk/envelope limits, handshake nonce replay, idle session timeout, `bleSendRefusal` on KEY_CHANGED) is tested in-process. **Still no two-phone radio proof.** Score does not rise.
+Authenticated handshake is tested in-process (replay/stale/downgrade/KEY_CHANGED). **Still no two-phone radio proof.** The 4 hardware-locked points stay locked.
 
-### PTT / voice — **2 / 5** (0)
+### PTT / voice — **3 / 5** (+1)
 
-More unit coverage (encrypt failure, corrupt inbound, mic-denied helper, ephemeral filename cleanup). **Mic/playback/transport/queue not tested on phones.**
+Crypto-safe temp names, leftover `hop-voice*` cleanup on startup, encrypted persist only. **Mic/playback/transport/queue not tested on phones.**
 
-### Testing & observability — **3 / 5** (+1)
+### Testing & observability — **4 / 5** (+1)
 
-Protocol **162** / API **51** / mobile typecheck. Still no E2E, device farm, or live Prometheus.
+Protocol **190** / API **67** / mobile typecheck / redact + request-id tests / production-readiness gate. Still no E2E, device farm, or live Prometheus.
 
-### Deployment readiness — **3 / 5** (+1)
+### Deployment readiness — **4 / 5** (+1)
 
-`create_all` disabled in prod; nginx `client_max_body_size 256k`; Redis fail-closed documented. Compose still **not executed** here. No EAS `projectId`.
+`scripts/production-readiness-gate.sh` + CI job. Push not advertised. Compose still **not executed** here. No EAS `projectId`.
 
 ---
 
-## Phase 4 end-of-phase block
+## Phase 5 end-of-phase block
 
 ### CURRENT VERIFIED SCORE
 
-**62 / 100**
+**70 / 100**
 
 | Category | Score |
 |---|---|
-| Core messaging reliability | 13 / 20 |
-| Security & privacy | 12 / 20 |
-| Backend/API production readiness | 10 / 15 |
+| Core messaging reliability | 14 / 20 |
+| Security & privacy | 14 / 20 |
+| Backend/API production readiness | 11 / 15 |
 | Mobile application stability | 8 / 15 |
-| BLE / hybrid transport | 11 / 15 |
-| PTT / voice | 2 / 5 |
-| Testing & observability | 3 / 5 |
-| Deployment readiness | 3 / 5 |
-| **Total** | **62 / 100** |
+| BLE / hybrid transport | 12 / 15 |
+| PTT / voice | 3 / 5 |
+| Testing & observability | 4 / 5 |
+| Deployment readiness | 4 / 5 |
+| **Total** | **70 / 100** |
 
 This is **not** production-ready. It is **not** > 90. No major product features.
 
 ### WHAT INCREASED THE SCORE
 
-- **+2 backend:** isolation tests, `create_all` off in production, Redis fail-closed, request size limits, HTTPS/non-localhost CORS validation.
-- **+1 security:** 409/KEY_MISMATCH/SERVER_KEY_LOCKED tested; client does not PUT on mismatch.
-- **+1 core messaging:** torture tests (fallback, queue survive, no false DELIVERED).
-- **+1 testing:** 162 protocol + 51 API (from 131 + 40).
-- **+1 deployment:** Alembic-only prod schema + body limits in compose/nginx.
-- **0** BLE/PTT/mobile/FS (no phones, no ratchet, no crash soak).
+- **+2 security:** identity adversarial tests (409, KEY_CHANGED persist, fail-closed, malformed, cross-account).
+- **+1 core messaging:** no ACK-before-SENT DELIVERED; unboxed inbound dropped.
+- **+1 BLE protocol:** authenticated handshake tests (not hardware).
+- **+1 PTT software:** crypto-safe temps + crash leftover cleanup.
+- **+1 backend:** request ids + identity key validation.
+- **+1 testing:** 190 protocol + 67 API + gate.
+- **+1 deployment:** gate script/CI + push 404.
+- **0** phones, live HTTPS, FS, mobile soak.
 
 ### WHAT PREVENTS 90+
 
@@ -156,26 +158,25 @@ This is **not** production-ready. It is **not** > 90. No major product features.
 ### P1 BLOCKERS
 
 - No forward secrecy (option B).
-- BLE handshake still plaintext GATT (nonce is replay defense, not first-packet auth).
-- Voice ephemeral plaintext playback file.
-- `/push/register` is 501. No privacy manifest.
-- `alg: none` helpers still in the protocol package (production send refuses).
+- First BLE GATT pk still TOFU (MAC after both pks known).
+- Voice ephemeral plaintext playback file (short-lived).
 - Expo/metro `image-size` / `uuid` audit findings are toolchain transitives; `--force` would break Expo 57.
+- QR / safety-number UI not built.
 
 ### AUTOMATED TEST RESULTS
 
 | Suite | Command | Result |
 |---|---|---|
-| Protocol | `cd packages/protocol && npm test -- --run` | **162 passed**, 0 failed (23 files) |
-| API | `cd apps/api && .venv/bin/pytest` | **51 passed**, 0 failed |
+| Protocol | `cd packages/protocol && npm test -- --run` | **190 passed**, 0 failed (26 files) |
+| API | `cd apps/api && .venv/bin/pytest` | **67 passed**, 0 failed |
 | Mobile | `cd apps/mobile && npm run typecheck` | **passed** |
 
 No test fakes a physical BLE session. Internet protocol tests mock HTTP. API tests use `TestClient`.
 
 ### PHYSICAL TESTS STILL REQUIRED
 
-Unchanged from Phase 3 (see `HOP_PHASE4_REPORT.md` section I). Until recorded pass/fail, do not raise BLE above the low teens, do not give PTT full credit, and do not give internet messaging full credit.
+Unchanged from Phase 4 (see `HOP_PHASE5_REPORT.md` section 14). Until recorded pass/fail, do not raise BLE to 15/15, do not give PTT full credit, and do not give internet messaging full credit.
 
 ---
 
-*Phase 4 complete. Waiting for approval before any merge to `dev`.*
+*Phase 5 complete. Waiting for approval before any merge to `dev`.*

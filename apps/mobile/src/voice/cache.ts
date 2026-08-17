@@ -1,4 +1,4 @@
-import { isEphemeralVoicePlaybackName } from '@hop/protocol';
+import { isEphemeralVoicePlaybackName, newEphemeralVoiceFileId } from '@hop/protocol';
 import * as FileSystem from 'expo-file-system/legacy';
 
 const PLAYBACK_PREFIX = 'hop-voice-play-';
@@ -28,7 +28,7 @@ export function voiceDataUri(audioB64: string, mime = 'audio/mp4'): string {
 export async function writeEphemeralPlaybackFile(audioB64: string, mime?: string): Promise<string> {
   const dir = cacheRoot();
   if (!dir) return voiceDataUri(audioB64, mime);
-  const id = `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  const id = await newEphemeralVoiceFileId();
   const path = `${dir}${PLAYBACK_PREFIX}${id}.${extensionFor(mime)}`;
   await FileSystem.writeAsStringAsync(path, audioB64, {
     encoding: FileSystem.EncodingType.Base64,
@@ -41,7 +41,7 @@ export async function deleteEphemeralPlaybackFile(uri: string | null | undefined
   await FileSystem.deleteAsync(uri, { idempotent: true }).catch(() => undefined);
 }
 
-/** Delete playback temps and the legacy hop-voice/ plaintext cache directory. */
+/** Delete leftover hop-voice temps (playback, crash leftovers, legacy plaintext dir). */
 export async function clearVoicePlaybackTemps(): Promise<void> {
   const dir = cacheRoot();
   if (!dir) return;

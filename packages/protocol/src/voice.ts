@@ -51,7 +51,20 @@ export function microphoneDeniedMessage(granted: boolean | null): string | null 
 }
 
 export function isEphemeralVoicePlaybackName(name: string): boolean {
-  return name.startsWith("hop-voice-play-") || name === "hop-voice";
+  const base = name.split("/").pop() ?? name;
+  return (
+    base.startsWith("hop-voice-play-") ||
+    base.startsWith("hop-voice-rec-") ||
+    base === "hop-voice" ||
+    base.startsWith("hop-voice.")
+  );
+}
+
+/** Crypto-safe id for ephemeral voice temp files. Not Math.random. */
+export async function newEphemeralVoiceFileId(): Promise<string> {
+  const { readySodium } = await import("./cryptoBox.js");
+  const s = await readySodium();
+  return s.to_hex(s.randombytes_buf(16));
 }
 
 export function withDecryptedPlain(message: StoredMessage, plain: ApplicationPlaintext): StoredMessage {

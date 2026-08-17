@@ -260,6 +260,9 @@ export class MessageService {
       await this.persistMessage(merged);
       return false;
     }
+    if (this.crypto && !isCryptoBoxPayload(message.encrypted_payload)) {
+      return false;
+    }
     if (isCryptoBoxPayload(message.encrypted_payload) && this.crypto && !opened.plain) {
       return false;
     }
@@ -343,6 +346,15 @@ export class MessageService {
     if (plain.conversation_id && plain.conversation_id !== existing.conversation_id) return false;
     if (plain.sender_id && plain.sender_id !== existing.recipient_id) return false;
     if (plain.recipient_id && plain.recipient_id !== existing.sender_id) return false;
+    const status = existing.status;
+    if (
+      status !== MessageStatus.SENT &&
+      status !== MessageStatus.RELAYING &&
+      status !== MessageStatus.DELIVERED &&
+      status !== MessageStatus.READ
+    ) {
+      return false;
+    }
     if (senderPk) {
       const trusted = await this.store.peerPublicKey(existing.recipient_id);
       if (trusted && trusted !== senderPk) return false;

@@ -79,9 +79,11 @@ Rate limited (`429`) by client IP.
 |---|---|---|
 | WebSocket | `/ws` | First-frame auth; `hello`, `message`, `ack` events |
 
-## Stubs (501)
+## Stubs
 
-`/devices`, `/sync`, `/push/register` — not implemented.
+`/devices` and `/sync` return **501** (not implemented).
+
+`POST /push/register` returns **404**. Push notifications are **not offered**. The route is omitted from OpenAPI.
 
 ## Message payload format
 

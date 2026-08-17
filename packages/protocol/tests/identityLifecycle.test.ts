@@ -104,11 +104,13 @@ describe("identity lifecycle", () => {
   });
 
   it("does not PUT when the server already has a different key", async () => {
+    const a = await (await import("../src/cryptoBox.js")).generateIdentityKeyPair();
+    const b = await (await import("../src/cryptoBox.js")).generateIdentityKeyPair();
     let putCalls = 0;
     await expect(
       publishIdentityIfAllowed({
-        localPublicKey: PAIR_A.publicKey,
-        serverPublicKey: PAIR_B.publicKey,
+        localPublicKey: a.publicKey,
+        serverPublicKey: b.publicKey,
         put: async () => {
           putCalls += 1;
         },
@@ -121,10 +123,11 @@ describe("identity lifecycle", () => {
   });
 
   it("maps HTTP 409 to SERVER_KEY_LOCKED and does not retry", async () => {
+    const a = await (await import("../src/cryptoBox.js")).generateIdentityKeyPair();
     let putCalls = 0;
     await expect(
       publishIdentityIfAllowed({
-        localPublicKey: PAIR_A.publicKey,
+        localPublicKey: a.publicKey,
         serverPublicKey: "",
         put: async () => {
           putCalls += 1;
@@ -138,17 +141,28 @@ describe("identity lifecycle", () => {
   });
 
   it("skips PUT when the published key already matches", async () => {
+    const a = await (await import("../src/cryptoBox.js")).generateIdentityKeyPair();
     let putCalls = 0;
     await expect(
       publishIdentityIfAllowed({
-        localPublicKey: PAIR_A.publicKey,
-        serverPublicKey: PAIR_A.publicKey,
+        localPublicKey: a.publicKey,
+        serverPublicKey: a.publicKey,
         put: async () => {
           putCalls += 1;
         },
       }),
     ).resolves.toBe("skipped");
     expect(putCalls).toBe(0);
+  });
+
+  it("refuses to publish a malformed public key", async () => {
+    await expect(
+      publishIdentityIfAllowed({
+        localPublicKey: "not-a-key",
+        serverPublicKey: "",
+        put: async () => undefined,
+      }),
+    ).rejects.toMatchObject({ code: "KEY_MISMATCH" });
   });
 });
 

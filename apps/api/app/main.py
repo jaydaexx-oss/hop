@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import time
+import uuid
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, Response
@@ -49,11 +50,21 @@ app.add_middleware(
     allow_origins=["*"] if allow_all else origins,
     allow_credentials=not allow_all,
     allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
-    allow_headers=["Authorization", "Content-Type", "Accept"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "X-Request-ID"],
+    expose_headers=["X-Request-ID"],
 )
 
 if settings.metrics_enabled:
     app.middleware("http")(metrics_middleware())
+
+
+@app.middleware("http")
+async def request_correlation_id(request: Request, call_next):
+    rid = request.headers.get("x-request-id") or str(uuid.uuid4())
+    request.state.request_id = rid
+    response = await call_next(request)
+    response.headers["X-Request-ID"] = rid
+    return response
 
 
 @app.middleware("http")
@@ -71,15 +82,19 @@ async def limit_request_body(request: Request, call_next):
 
 @app.middleware("http")
 async def access_log_without_bodies(request: Request, call_next):
+    rid = request.headers.get("x-request-id") or getattr(request.state, "request_id", None) or str(uuid.uuid4())
+    request.state.request_id = rid
     started = time.perf_counter()
     response = await call_next(request)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
+    response.headers["X-Request-ID"] = rid
     logger.info(
         "http %s %s %s %sms",
         request.method,
         request.url.path,
         response.status_code,
         elapsed_ms,
+        extra={"request_id": rid},
     )
     return response
 

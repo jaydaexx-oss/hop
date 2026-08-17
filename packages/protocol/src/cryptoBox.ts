@@ -3,6 +3,23 @@ import sodium from "libsodium-wrappers";
 /** libsodium NaCl crypto_box (X25519 + XSalsa20-Poly1305). Not a custom construction. */
 
 export const CRYPTO_BOX_ALG = "crypto_box_xsalsa20poly1305";
+export const CRYPTO_BOX_PUBLICKEYBYTES = 32;
+
+/** Sync structural check: standard base64 of exactly 32 bytes. Does not prove possession. */
+export function isWellFormedBoxPublicKey(pk: string): boolean {
+  if (typeof pk !== "string" || !pk) return false;
+  if (pk.trim() !== pk) return false;
+  if (/[\s]/.test(pk)) return false;
+  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(pk)) return false;
+  try {
+    const binary = globalThis.atob(pk);
+    if (binary.length !== CRYPTO_BOX_PUBLICKEYBYTES) return false;
+    const roundtrip = globalThis.btoa(binary);
+    return roundtrip === pk || roundtrip.replace(/=+$/, "") === pk.replace(/=+$/, "");
+  } catch {
+    return false;
+  }
+}
 
 export interface IdentityKeyPair {
   publicKey: string;

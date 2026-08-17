@@ -100,6 +100,7 @@ export {
   estimateBoxedPayloadBytes,
   isEphemeralVoicePlaybackName,
   microphoneDeniedMessage,
+  newEphemeralVoiceFileId,
   voiceAudioB64,
   withDecryptedPlain,
 } from "./voice.js";
@@ -108,6 +109,7 @@ export {
   IdentityError,
   assertIdentityPublishHasNoSecret,
   assertPublishedIdentityMatches,
+  assertWellFormedPublishKey,
   decideIdentityPublish,
   identityPublishBody,
   isHttpConflict,
@@ -124,7 +126,29 @@ export {
   BLE_KEY_CHANGED_REFUSAL,
   HandshakeReplayGuard,
   bleSendRefusal,
+  bleSessionStale,
 } from "./bleGuard.js";
+export {
+  BLE_HANDSHAKE_CONTEXT,
+  BLE_HANDSHAKE_DOWNGRADE,
+  BLE_HANDSHAKE_MAX_SKEW_MS,
+  BLE_HANDSHAKE_VERSION,
+  BleHandshakeExchange,
+  decodeAuthenticatedHandshake,
+  decodeHandshakeAnnouncement,
+  encodeAuthenticatedHandshake,
+  encodeHandshakeAnnouncement,
+  handshakeDowngradeReason,
+  newAuthHandshakeNonce,
+  parseHandshakeJson,
+  verifyAuthenticatedHandshake,
+  type BleAuthenticatedHandshake,
+  type BleHandshakeAnnouncement,
+  type HandshakeVerifyFailure,
+  type HandshakeVerifyResult,
+} from "./bleHandshake.js";
+export { redactForLog, redactString, looksLikeSecretDump } from "./redact.js";
+export { categorizeTransportFailure, type TransportFailureCategory } from "./transportErrors.js";
 export {
   readWithSecretPolicy,
   shouldFailClosedSecretStore,
@@ -139,10 +163,12 @@ export {
 } from "./bleAck.js";
 export {
   CRYPTO_BOX_ALG,
+  CRYPTO_BOX_PUBLICKEYBYTES,
   decryptApplicationMessage,
   encryptApplicationMessage,
   generateIdentityKeyPair,
   isCryptoBoxPayload,
+  isWellFormedBoxPublicKey,
   parseCryptoBoxPayload,
   readySodium,
   type ApplicationKind,

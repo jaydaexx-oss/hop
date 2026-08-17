@@ -7,6 +7,7 @@ from sqlmodel import Session, select
 from app.db import get_engine
 from app.models.tables import Message, User, utcnow
 from app.rate_limit import SlidingWindowLimiter, reset_limiters
+from tests.keys import box_pk
 
 
 BOXED = json.dumps(
@@ -155,7 +156,7 @@ def test_identity_public_key_is_published(client: TestClient) -> None:
     token_b, _ = _auth(client, "keyb")
     headers_a = {"Authorization": f"Bearer {token_a}"}
     headers_b = {"Authorization": f"Bearer {token_b}"}
-    pk = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    pk = box_pk("keyb-published")
     published = client.put("/users/me/identity", json={"public_key": pk}, headers=headers_b)
     assert published.status_code == 200
     assert published.json()["identity_public_key"] == pk
@@ -205,8 +206,8 @@ def test_new_passwords_use_argon2id(client: TestClient) -> None:
 def test_identity_public_key_cannot_change(client: TestClient) -> None:
     token, _ = _auth(client, "immutable")
     headers = {"Authorization": f"Bearer {token}"}
-    pk_a = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-    pk_b = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+    pk_a = box_pk("immutable-a")
+    pk_b = box_pk("immutable-b")
     first = client.put("/users/me/identity", json={"public_key": pk_a}, headers=headers)
     assert first.status_code == 200
     second = client.put("/users/me/identity", json={"public_key": pk_b}, headers=headers)
@@ -216,7 +217,7 @@ def test_identity_public_key_cannot_change(client: TestClient) -> None:
 def test_identity_put_rejects_secret_key_field(client: TestClient) -> None:
     token, _ = _auth(client, "nosecret")
     headers = {"Authorization": f"Bearer {token}"}
-    pk = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    pk = box_pk("nosecret-pk")
     leaked = client.put(
         "/users/me/identity",
         json={"public_key": pk, "secret_key": "must-never-be-accepted"},
@@ -233,7 +234,7 @@ def test_get_user_by_id_returns_identity_key(client: TestClient) -> None:
     token_a, id_a = _auth(client, "lookupa")
     token_b, _ = _auth(client, "lookupb")
     headers_b = {"Authorization": f"Bearer {token_b}"}
-    pk = "CCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCCC="
+    pk = box_pk("lookupb-pk")
     client.put("/users/me/identity", json={"public_key": pk}, headers=headers_b)
     found = client.get(f"/users/id/{id_a}", headers=headers_b)
     assert found.status_code == 200

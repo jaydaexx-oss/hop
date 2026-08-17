@@ -3,6 +3,7 @@ import json
 from fastapi.testclient import TestClient
 
 from app.config import MAX_REQUEST_BYTES
+from tests.keys import box_pk
 
 
 BOXED = json.dumps(
@@ -139,7 +140,7 @@ def test_duplicate_message_id_from_other_user_is_409(client: TestClient) -> None
 def test_identity_matching_key_put_is_idempotent(client: TestClient) -> None:
     token, _ = _auth(client, "samekey")
     headers = _headers(token)
-    pk = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+    pk = box_pk("samekey-user")
     first = client.put("/users/me/identity", json={"public_key": pk}, headers=headers)
     second = client.put("/users/me/identity", json={"public_key": pk}, headers=headers)
     assert first.status_code == 200
@@ -151,8 +152,8 @@ def test_identity_matching_key_put_is_idempotent(client: TestClient) -> None:
 def test_identity_different_key_is_409_server_key_locked(client: TestClient) -> None:
     token, _ = _auth(client, "locked")
     headers = _headers(token)
-    pk_a = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-    pk_b = "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
+    pk_a = box_pk("locked-a")
+    pk_b = box_pk("locked-b")
     assert client.put("/users/me/identity", json={"public_key": pk_a}, headers=headers).status_code == 200
     second = client.put("/users/me/identity", json={"public_key": pk_b}, headers=headers)
     assert second.status_code == 409

@@ -34,7 +34,8 @@ export interface BleSessionOptions {
   /** Resolve a peer's server-published identity key for BLE handshake attestation. */
   resolveServerPublicKey?: (userId: string) => Promise<string | null | undefined>;
   /**
-   * Local identity used to MAC BLE GATT ACKs. Handshake still publishes only the public key.
+   * Local identity used to MAC BLE GATT ACKs and authenticated handshake proofs.
+   * Advertisements stay discoverable; the first GATT read may still expose pk (TOFU).
    * Secret key must never be written to a GATT characteristic.
    */
   ackIdentity?: IdentityKeyPair;

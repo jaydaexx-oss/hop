@@ -42,8 +42,12 @@ export function createHopHttp(getToken?: () => string | null): HopHttpClient {
 
 /**
  * App send path: TransportManager only (internet, then BLE).
- * Relay/SimulatedNetwork are not registered here. Durable queue is MessageService + SQLite.
+ * Unimplemented relay and in-process network simulators are not registered here.
+ * Durable queue is MessageService + SQLite.
+ * LocalTransport is the in-process last-resort queue adapter, not a mock network.
  */
+export const APP_TRANSPORT_IDS = ['internet', 'bluetooth', 'local'] as const;
+
 export function createAppTransportManager(http: HopHttpClient): TransportManager {
   const manager = new TransportManager();
   manager.register(createInternetTransport(http));

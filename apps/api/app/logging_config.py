@@ -5,6 +5,8 @@ import logging
 import sys
 from datetime import datetime, timezone
 
+from app.redact import redact_string
+
 
 class JsonFormatter(logging.Formatter):
     def format(self, record: logging.LogRecord) -> str:
@@ -12,11 +14,19 @@ class JsonFormatter(logging.Formatter):
             "ts": datetime.now(timezone.utc).isoformat(),
             "level": record.levelname,
             "logger": record.name,
-            "message": record.getMessage(),
+            "message": redact_string(record.getMessage()),
         }
+        request_id = getattr(record, "request_id", None)
+        if request_id:
+            payload["request_id"] = request_id
         if record.exc_info:
-            payload["exc_info"] = self.formatException(record.exc_info)
+            payload["exc_info"] = redact_string(self.formatException(record.exc_info))
         return json.dumps(payload, ensure_ascii=False)
+
+
+class TextFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        return redact_string(super().format(record))
 
 
 def configure_logging(level: str, log_format: str) -> None:
@@ -29,7 +39,7 @@ def configure_logging(level: str, log_format: str) -> None:
         handler.setFormatter(JsonFormatter())
     else:
         handler.setFormatter(
-            logging.Formatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"),
+            TextFormatter("%(asctime)s %(levelname)s [%(name)s] %(message)s"),
         )
     root.addHandler(handler)
 

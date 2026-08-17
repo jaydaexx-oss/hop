@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.db import get_session
+from app.identity_keys import is_well_formed_box_public_key
 from app.models.tables import BlockedUser, Device, User
 from app.schemas import BlockIn, IdentityIn, UserOut
 from app.security import get_current_user, validate_username
@@ -33,8 +35,11 @@ def put_identity(
     user: User = Depends(get_current_user),
 ) -> UserOut:
     public_key = body.public_key.strip()
-    if not public_key or "\n" in public_key or " " in public_key:
-        raise HTTPException(status_code=400, detail="Invalid identity public key")
+    if not is_well_formed_box_public_key(public_key):
+        raise HTTPException(status_code=400, detail="Malformed identity public key")
+    taken = session.exec(select(Device).where(Device.identity_public_key == public_key)).first()
+    if taken is not None and taken.user_id != user.id:
+        raise HTTPException(status_code=409, detail="Identity public key already published by another account")
     device = session.exec(select(Device).where(Device.user_id == user.id)).first()
     if device is None:
         device = Device(user_id=user.id, platform="mobile", identity_public_key=public_key)
@@ -51,7 +56,14 @@ def put_identity(
     else:
         device.identity_public_key = public_key
         session.add(device)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(
+            status_code=409,
+            detail="SERVER_KEY_LOCKED: this account already published a different identity public key.",
+        ) from None
     return _user_out(session, user)
 
 

@@ -36,10 +36,10 @@ def test_version_endpoint(client: TestClient) -> None:
     assert response.json()["service"] == "hop-api"
 
 
-def test_unimplemented_push_returns_501(client: TestClient) -> None:
+def test_unimplemented_push_returns_404_not_offered(client: TestClient) -> None:
     response = client.post("/push/register")
-    assert response.status_code == 501
-    assert response.json()["detail"] == "Not implemented"
+    assert response.status_code == 404
+    assert "not offered" in response.json()["detail"].lower()
 
 
 def test_unimplemented_devices_and_sync_return_501(client: TestClient) -> None:

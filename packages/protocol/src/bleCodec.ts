@@ -17,12 +17,13 @@ export const BLE_MAX_HANDSHAKE_FIELD = 128;
 export const BLE_MAX_HANDSHAKE_BYTES = 512;
 
 export interface BleHandshake {
-  v: 2;
+  v: 2 | 3;
   user_id: string;
   username: string;
   pk: string;
-  /** Session nonce. Optional for older advertisers; first-packet pk remains TOFU. */
+  /** Session nonce. Required for v3 announcements. */
   n?: string;
+  ts?: number;
 }
 
 const MAGIC_BYTES = new TextEncoder().encode(BLE_CHUNK_MAGIC);
@@ -68,23 +69,29 @@ function boundedField(value: unknown, max = BLE_MAX_HANDSHAKE_FIELD): string | n
 }
 
 export function encodeHandshake(handshake: BleHandshake): string {
-  return bytesToHex(utf8ToBytes(JSON.stringify(handshake)));
+  return JSON.stringify(handshake);
 }
 
-export function decodeHandshake(hex: string): BleHandshake | null {
+export function decodeHandshake(raw: string): BleHandshake | null {
   try {
-    const raw = hexToBytes(hex);
-    if (raw.length === 0 || raw.length > BLE_MAX_HANDSHAKE_BYTES) return null;
-    const data = JSON.parse(bytesToUtf8(raw)) as Partial<BleHandshake>;
-    if (data.v !== 2) return null;
+    let data: Partial<BleHandshake>;
+    try {
+      data = JSON.parse(raw) as Partial<BleHandshake>;
+    } catch {
+      const bytes = hexToBytes(raw);
+      if (bytes.length === 0 || bytes.length > BLE_MAX_HANDSHAKE_BYTES) return null;
+      data = JSON.parse(bytesToUtf8(bytes)) as Partial<BleHandshake>;
+    }
+    if (data.v !== 2 && data.v !== 3) return null;
     const user_id = boundedField(data.user_id, 64);
     const username = boundedField(data.username, 20);
     const pk = boundedField(data.pk, BLE_MAX_HANDSHAKE_FIELD);
     if (!user_id || !username || !pk) return null;
-    const nonce = data.n === undefined ? undefined : boundedField(data.n, 64);
+    const nonce = data.n === undefined ? undefined : boundedField(data.n, 88);
     if (data.n !== undefined && !nonce) return null;
-    const handshake: BleHandshake = { v: 2, user_id, username, pk };
+    const handshake: BleHandshake = { v: data.v, user_id, username, pk };
     if (nonce) handshake.n = nonce;
+    if (typeof data.ts === "number" && Number.isFinite(data.ts)) handshake.ts = data.ts;
     return handshake;
   } catch {
     return null;

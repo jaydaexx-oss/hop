@@ -221,14 +221,29 @@ describe("offline persistence and sync", () => {
     const alice = await generateIdentityKeyPair();
     const blake = await generateIdentityKeyPair();
     const crypto = testCrypto(alice, blake.publicKey);
+    const packed = await encryptApplicationMessage(
+      {
+        message_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+        sender_id: RECIPIENT,
+        recipient_id: SENDER,
+        conversation_id: CONVO,
+        text: "from peer",
+        created_at: new Date().toISOString(),
+        expires_at: new Date(Date.now() + 86_400_000).toISOString(),
+        ttl: 86_400_000,
+        hop_count: 0,
+      },
+      alice.publicKey,
+      blake,
+    );
     const inbound: StoredMessage = {
       message_id: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
       conversation_id: CONVO,
       sender_id: RECIPIENT,
       recipient_id: SENDER,
-      text: "from peer",
-      encrypted_payload: "e30=",
-      status: MessageStatus.DELIVERED,
+      text: null,
+      encrypted_payload: packed,
+      status: MessageStatus.SENT,
       transport: "internet",
       created_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + 86_400_000).toISOString(),

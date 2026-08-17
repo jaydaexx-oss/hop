@@ -8,6 +8,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider, useAuth } from '@/src/auth/AuthProvider';
 import { BleProvider } from '@/src/ble/BleProvider';
 import { OfflineProvider } from '@/src/offline/OfflineProvider';
+import { clearVoicePlaybackTemps } from '@/src/voice/cache';
 
 export { ErrorBoundary } from 'expo-router';
 
@@ -25,6 +26,10 @@ export default function RootLayout() {
   useEffect(() => {
     if (error) throw error;
   }, [error]);
+
+  useEffect(() => {
+    clearVoicePlaybackTemps().catch(() => undefined);
+  }, []);
 
   useEffect(() => {
     if (loaded) SplashScreen.hideAsync();

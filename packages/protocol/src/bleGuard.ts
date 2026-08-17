@@ -1,3 +1,4 @@
+import { BLE_SESSION_IDLE_MS } from "./bleCodec.js";
 import type { PublicKeyTofu } from "./tofu.js";
 
 export const BLE_KEY_CHANGED_REFUSAL = "Peer identity key changed; re-verify before sending";
@@ -17,6 +18,15 @@ export function bleSendRefusal(
     return BLE_KEY_CHANGED_REFUSAL;
   }
   return null;
+}
+
+export function bleSessionStale(
+  lastActivityAt: number | undefined,
+  now = Date.now(),
+  idleMs = BLE_SESSION_IDLE_MS,
+): boolean {
+  if (!lastActivityAt) return true;
+  return now - lastActivityAt > idleMs;
 }
 
 /** Reject replayed handshake nonces for the same user_id within a TTL window. */

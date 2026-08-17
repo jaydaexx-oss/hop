@@ -50,3 +50,29 @@ jobs:
       - name: Typecheck mobile
         working-directory: apps/mobile
         run: npm ci && npm run typecheck
+
+  production-gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: |
+            packages/protocol/package-lock.json
+            apps/mobile/package-lock.json
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install protocol
+        working-directory: packages/protocol
+        run: npm ci
+      - name: Install API test deps
+        working-directory: apps/api
+        run: pip install -r requirements-test.txt
+      - name: Install mobile deps
+        working-directory: apps/mobile
+        run: npm ci
+      - name: Production-readiness gate (software only)
+        run: bash scripts/production-readiness-gate.sh

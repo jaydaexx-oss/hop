@@ -1,4 +1,4 @@
-import { generateIdentityKeyPair, type IdentityKeyPair } from "./cryptoBox.js";
+import { generateIdentityKeyPair, isWellFormedBoxPublicKey, type IdentityKeyPair } from "./cryptoBox.js";
 
 export const IDENTITY_SECRET_PREFIX = "hop.box.";
 export const IDENTITY_MARKER_PREFIX = "hop.box.marker.";
@@ -28,6 +28,12 @@ export interface SecretBackend {
 /** PUT /users/me/identity body. Never include secretKey. */
 export function identityPublishBody(publicKey: string): { public_key: string } {
   return { public_key: publicKey };
+}
+
+export function assertWellFormedPublishKey(publicKey: string): void {
+  if (!isWellFormedBoxPublicKey(publicKey)) {
+    throw new IdentityError("KEY_MISMATCH", "Malformed identity public key");
+  }
 }
 
 export type IdentityPublishAction = "publish" | "skip" | "mismatch";
@@ -65,6 +71,13 @@ export async function publishIdentityIfAllowed(input: {
   serverPublicKey: string | null | undefined;
   put: (body: { public_key: string }) => Promise<void>;
 }): Promise<"ok" | "skipped"> {
+  if (!isWellFormedBoxPublicKey(input.localPublicKey)) {
+    throw new IdentityError("KEY_MISMATCH", "Malformed identity public key");
+  }
+  const published = (input.serverPublicKey ?? "").trim();
+  if (published && !isWellFormedBoxPublicKey(published)) {
+    throw new IdentityError("KEY_MISMATCH", "Server-published identity public key is malformed");
+  }
   const action = decideIdentityPublish(input.localPublicKey, input.serverPublicKey);
   if (action === "mismatch") {
     assertPublishedIdentityMatches(input.localPublicKey, input.serverPublicKey);

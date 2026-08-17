@@ -64,6 +64,10 @@ export class PublicKeyTofu {
    */
   observe(userId: string, publicKey: string): PeerTrustState {
     if (!userId || !publicKey) return "UNKNOWN";
+    if (this.publicKeyBoundToOtherUser(userId, publicKey)) {
+      const existing = this.records.get(userId);
+      if (!existing || existing.publicKey === publicKey) return "UNKNOWN";
+    }
     const existing = this.records.get(userId);
     if (!existing) {
       const rec: PeerTrustRecord = { userId, publicKey, state: "TOFU_TRUSTED" };
@@ -121,6 +125,16 @@ export class PublicKeyTofu {
 
   snapshot(): PeerTrustRecord[] {
     return [...this.records.values()];
+  }
+
+  /** Same X25519 pk claimed by a different user id — refuse to bind (no persist). */
+  private publicKeyBoundToOtherUser(userId: string, publicKey: string): boolean {
+    for (const rec of this.records.values()) {
+      if (rec.userId === userId) continue;
+      if (rec.publicKey !== publicKey) continue;
+      if (rec.state === "TOFU_TRUSTED" || rec.state === "VERIFIED") return true;
+    }
+    return false;
   }
 
   private queueSave(record: PeerTrustRecord): void {

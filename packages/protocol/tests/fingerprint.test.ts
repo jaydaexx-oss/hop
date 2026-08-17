@@ -28,6 +28,7 @@ describe("PTT helpers", () => {
 
   it("identifies ephemeral playback files for cleanup", () => {
     expect(isEphemeralVoicePlaybackName("hop-voice-play-1.m4a")).toBe(true);
+    expect(isEphemeralVoicePlaybackName("hop-voice-rec-deadbeef.m4a")).toBe(true);
     expect(isEphemeralVoicePlaybackName("hop-voice")).toBe(true);
     expect(isEphemeralVoicePlaybackName("messages.db")).toBe(false);
   });

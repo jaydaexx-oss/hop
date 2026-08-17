@@ -4,6 +4,7 @@ from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
+from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.db import get_session
@@ -43,7 +44,11 @@ def register(body: RegisterIn, request: Request, session: Session = Depends(get_
         raise HTTPException(status_code=409, detail="Username already taken")
     user = User(username=username, password_hash=hash_password(body.password))
     session.add(user)
-    session.commit()
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Username already taken") from None
     session.refresh(user)
     token = issue_token(session, user)
     return AuthOut(token=token, user=user_out(session, user))

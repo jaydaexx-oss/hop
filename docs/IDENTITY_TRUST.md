@@ -49,4 +49,6 @@ Until that exists, lost secrets are a **new account**. Local `replaceIdentityExp
 
 ## BLE handshake
 
-Advertisements and the first GATT handshake (`user_id`, username, pk, optional session nonce) are **plaintext** for discoverability. After a pk is TOFU-bound, a changed handshake pk is `KEY_CHANGED` and send is refused. A handshake nonce rejects replays of the same `(user_id, n)` pair. This is **not** an authenticated first packet.
+Advertisements stay plaintext (discoverability: local name only). The first GATT **read** of the handshake characteristic may still expose `user_id`, username, pk, nonce, and timestamp so a peer can TOFU-bind the pk. That announcement is **not** a session.
+
+Session establishment requires a **v3 authenticated** GATT write: `auth = crypto_auth(transcript, key)` where `key` is `crypto_generichash` of `crypto_box_beforenm(local_sk, peer_pk)` (same libsodium primitives as BLE ACKs). The transcript binds both public keys, user_id, username, nonce, and timestamp. An attacker who spoofs a pk cannot compute the MAC without that pk's secret. Missing `auth`, v1, or v2 plaintext handshakes are **rejected** (no downgrade). Replayed nonces, stale timestamps, malformed payloads, and `KEY_CHANGED` identities are rejected. First-contact authenticity of the pk itself remains TOFU.

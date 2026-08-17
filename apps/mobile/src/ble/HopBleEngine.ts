@@ -11,23 +11,26 @@ import {
   ProcessedIdSet,
   advertiseLocalName,
   bleSendRefusal,
+  bleSessionStale,
   bytesToHex,
   chunkBytes,
   decodeEnvelope,
-  decodeHandshake,
+  decodeHandshakeAnnouncement,
   displayNameFromAdvertisement,
   encodeEnvelope,
-  encodeHandshake,
+  encodeAuthenticatedHandshake,
+  encodeHandshakeAnnouncement,
   encodeAuthenticatedBleAck,
   hexToBytes,
   isCryptoBoxPayload,
   isUnauthenticatedBleAck,
-  newHandshakeNonce,
+  newAuthHandshakeNonce,
   parseCryptoBoxPayload,
   PublicKeyTofu,
   sendWithAckRetry,
   decideRelay,
   verifyAuthenticatedBleAck,
+  verifyAuthenticatedHandshake,
   type AckAttempt,
   type BleLink,
   type BleLinkStatus,
@@ -85,6 +88,8 @@ export class HopBleEngine implements BleLink {
   private readonly reassemblers = new Map<string, BleReassembler>();
   private readonly handshakeReplay = new HandshakeReplayGuard();
   private handshakeNonce = '';
+  private handshakeTs = 0;
+  private readonly pendingHandshake = new Map<string, { resolve: (raw: string) => void; reject: (err: Error) => void }>();
   private readonly sessionActivity = new Map<string, number>();
   private readonly pendingAcks = new Map<
     string,
@@ -153,14 +158,16 @@ export class HopBleEngine implements BleLink {
     this.session = options;
     this.scanMode = options.scanMode;
     this.bindNativeEvents(native);
-    this.handshakeNonce = newHandshakeNonce();
+    this.handshakeNonce = await newAuthHandshakeNonce();
+    this.handshakeTs = Date.now();
 
-    const handshake = encodeHandshake({
-      v: 2,
+    const handshake = encodeHandshakeAnnouncement({
+      v: 3,
       user_id: options.userId,
       username: options.username,
       pk: options.identityPublicKey,
       n: this.handshakeNonce,
+      ts: this.handshakeTs,
     });
     await native.setServices([
       {
@@ -168,7 +175,7 @@ export class HopBleEngine implements BleLink {
         characteristics: [
           {
             uuid: HOP_BLE_HANDSHAKE_UUID,
-            properties: ['read'],
+            properties: ['read', 'write'],
             value: handshake,
           },
           {
@@ -235,6 +242,7 @@ export class HopBleEngine implements BleLink {
     this.session = null;
     this.reassemblers.clear();
     this.sessionActivity.clear();
+    this.pendingHandshake.clear();
     this.detail = 'Nearby is stopped.';
     this.emitPeers();
   }
@@ -270,13 +278,18 @@ export class HopBleEngine implements BleLink {
     } catch {
       /* ack notify is best-effort */
     }
-    const peer = await this.readHandshake(native, deviceId);
-    if (!peer.publicKey) {
+    try {
+      await native.subscribeToCharacteristic(deviceId, HOP_BLE_SERVICE_UUID, HOP_BLE_HANDSHAKE_UUID);
+    } catch {
+      /* handshake notify used for authenticated proof */
+    }
+    const peer = await this.establishAuthenticatedSession(native, deviceId);
+    if (!peer.publicKey || !peer.sessionEstablished) {
       this.connected.delete(deviceId);
       await Promise.resolve(native.disconnect(deviceId)).catch(() => undefined);
-      throw new Error('Secure session failed: peer did not publish a libsodium public key.');
+      throw new Error(peer.userId ? 'Authenticated BLE handshake failed.' : 'Secure session failed: peer did not publish a libsodium public key.');
     }
-    peer.sessionEstablished = true;
+    this.touchSession(deviceId);
     this.peers.set(deviceId, peer);
     this.emitPeers();
     return peer;
@@ -318,6 +331,9 @@ export class HopBleEngine implements BleLink {
     const refused = bleSendRefusal(this.tofu, peer.userId, peer.publicKey);
     if (refused) {
       return { ok: false, transport: 'bluetooth', error: refused };
+    }
+    if (bleSessionStale(this.sessionActivity.get(deviceId))) {
+      return { ok: false, transport: 'bluetooth', error: 'BLE session is stale' };
     }
     this.touchSession(deviceId);
 
@@ -391,42 +407,101 @@ export class HopBleEngine implements BleLink {
     });
   }
 
-  private async readHandshake(native: NativeBle, deviceId: string): Promise<BlePeer> {
+  private async establishAuthenticatedSession(native: NativeBle, deviceId: string): Promise<BlePeer> {
     const existing = this.peers.get(deviceId);
-    try {
-      const raw = await native.readCharacteristic(deviceId, HOP_BLE_SERVICE_UUID, HOP_BLE_HANDSHAKE_UUID);
-      const hex = typeof raw === 'string' ? raw : raw.value;
-      const handshake = decodeHandshake(hex);
-      if (handshake) {
-        if (!this.handshakeReplay.remember(handshake.user_id, handshake.n)) {
-          throw new Error('BLE handshake nonce replayed');
-        }
-        if (handshake.user_id && handshake.pk && !this.tofu.bind(handshake.user_id, handshake.pk)) {
-          throw new Error('Peer identity key changed; re-verify before sending');
-        }
-        if (handshake.user_id && handshake.pk) {
-          await this.verifyServerIdentity(handshake.user_id, handshake.pk);
-        }
-        return {
-          deviceId,
-          displayName: handshake.username,
-          userId: handshake.user_id,
-          publicKey: handshake.pk,
-          sessionEstablished: true,
-          rssi: existing?.rssi,
-          lastSeenAt: Date.now(),
-        };
-      }
-    } catch {
-      /* fall through to advertisement name */
+    const identity = this.session?.ackIdentity;
+    if (!identity || !this.session) {
+      throw new Error('Secure session requires a local identity secret.');
+    }
+    const raw = await native.readCharacteristic(deviceId, HOP_BLE_SERVICE_UUID, HOP_BLE_HANDSHAKE_UUID);
+    const value = typeof raw === 'string' ? raw : raw.value;
+    const announcement = decodeHandshakeAnnouncement(value);
+    if (!announcement) {
+      throw new Error('Peer BLE handshake is missing authenticated v3 identity.');
+    }
+    if (!this.tofu.bind(announcement.user_id, announcement.pk)) {
+      throw new Error('Peer identity key changed; re-verify before sending');
+    }
+    await this.verifyServerIdentity(announcement.user_id, announcement.pk);
+
+    const proof = await encodeAuthenticatedHandshake({
+      local: identity,
+      userId: this.session.userId,
+      username: this.session.username,
+      nonce: this.handshakeNonce,
+      ts: Date.now(),
+      peerPublicKey: announcement.pk,
+    });
+    const inbound = this.waitForHandshakeProof(deviceId);
+    await native.writeCharacteristic(
+      deviceId,
+      HOP_BLE_SERVICE_UUID,
+      HOP_BLE_HANDSHAKE_UUID,
+      proof,
+      'write',
+    );
+    const peerRaw = await withTimeout(inbound, DEFAULT_CONNECT_TIMEOUT_MS, 'BLE handshake auth');
+    const verified = await verifyAuthenticatedHandshake({
+      raw: peerRaw,
+      local: identity,
+      replay: this.handshakeReplay,
+      tofu: this.tofu,
+    });
+    if (!verified.ok) {
+      throw new Error(`Authenticated BLE handshake rejected (${verified.reason}).`);
+    }
+    if (verified.handshake.pk !== announcement.pk || verified.handshake.user_id !== announcement.user_id) {
+      throw new Error('Authenticated BLE handshake identity does not match the announcement.');
     }
     return {
       deviceId,
-      displayName: existing?.displayName ?? 'HOP user',
-      userId: existing?.userId,
+      displayName: verified.handshake.username,
+      userId: verified.handshake.user_id,
+      publicKey: verified.handshake.pk,
+      sessionEstablished: true,
       rssi: existing?.rssi,
       lastSeenAt: Date.now(),
     };
+  }
+
+  private waitForHandshakeProof(deviceId: string): Promise<string> {
+    return new Promise((resolve, reject) => {
+      this.pendingHandshake.set(deviceId, { resolve, reject });
+    });
+  }
+
+  private async handleHandshakeWrite(centralId: string, raw: string): Promise<void> {
+    const identity = this.session?.ackIdentity;
+    const native = this.native;
+    if (!identity || !this.session || !native) return;
+    const verified = await verifyAuthenticatedHandshake({
+      raw,
+      local: identity,
+      replay: this.handshakeReplay,
+      tofu: this.tofu,
+    });
+    if (!verified.ok) return;
+    const existing = this.peers.get(centralId);
+    this.peers.set(centralId, {
+      deviceId: centralId,
+      displayName: verified.handshake.username,
+      userId: verified.handshake.user_id,
+      publicKey: verified.handshake.pk,
+      sessionEstablished: true,
+      rssi: existing?.rssi,
+      lastSeenAt: Date.now(),
+    });
+    this.touchSession(centralId);
+    this.emitPeers();
+    const reply = await encodeAuthenticatedHandshake({
+      local: identity,
+      userId: this.session.userId,
+      username: this.session.username,
+      nonce: this.handshakeNonce,
+      ts: Date.now(),
+      peerPublicKey: verified.handshake.pk,
+    });
+    await native.updateCharacteristicValue?.(HOP_BLE_SERVICE_UUID, HOP_BLE_HANDSHAKE_UUID, reply, true);
   }
 
   private async verifyServerIdentity(userId: string, handshakePk: string): Promise<void> {
@@ -465,17 +540,30 @@ export class HopBleEngine implements BleLink {
     this.subscriptions.push(
       native.addEventListener('peripheralWriteRequest', (payload) => {
         const characteristicUUID = String(payload.characteristicUUID ?? '').toLowerCase();
-        if (characteristicUUID !== HOP_BLE_INBOX_UUID) return;
         const centralId = String(payload.centralId ?? 'unknown');
         const value = String(payload.value ?? '');
+        if (characteristicUUID === HOP_BLE_HANDSHAKE_UUID) {
+          this.handleHandshakeWrite(centralId, value).catch(() => undefined);
+          return;
+        }
+        if (characteristicUUID !== HOP_BLE_INBOX_UUID) return;
         this.handleInboxWrite(centralId, value).catch(() => undefined);
       }),
     );
     this.subscriptions.push(
       native.addEventListener('characteristicValueChanged', (payload) => {
         const characteristicUUID = String(payload.characteristicUUID ?? '').toLowerCase();
-        if (characteristicUUID !== HOP_BLE_ACK_UUID) return;
         const hex = String(payload.value ?? '');
+        const deviceId = String(payload.deviceId ?? payload.id ?? '');
+        if (characteristicUUID === HOP_BLE_HANDSHAKE_UUID) {
+          const pending = this.pendingHandshake.get(deviceId) ?? [...this.pendingHandshake.values()][0];
+          if (pending) {
+            this.pendingHandshake.delete(deviceId);
+            pending.resolve(hex);
+          }
+          return;
+        }
+        if (characteristicUUID !== HOP_BLE_ACK_UUID) return;
         void this.handleAckNotify(hex);
       }),
     );

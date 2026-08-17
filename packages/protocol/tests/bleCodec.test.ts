@@ -9,7 +9,6 @@ import {
   displayNameFromAdvertisement,
   encodeEnvelope,
   encodeHandshake,
-  hexToBytes,
 } from "../src/bleCodec.js";
 import { createMessage } from "../src/message.js";
 import { toEnvelope } from "../src/transport.js";
@@ -38,7 +37,7 @@ describe("BLE codec", () => {
     expect(displayNameFromAdvertisement("HOP:alex", "AA:BB:CC:DD:EE:FF")).toBe("alex");
     expect(displayNameFromAdvertisement(null, "AA:BB:CC:DD:EE:FF")).toBe("HOP user");
     expect(displayNameFromAdvertisement("00:11:22:33:44:55", null)).toBe("HOP user");
-    expect(hexToBytes(hex).length).toBeGreaterThan(0);
+    expect(hex.length).toBeGreaterThan(0);
   });
 
   it("drops malformed envelopes and oversized handshake fields", () => {

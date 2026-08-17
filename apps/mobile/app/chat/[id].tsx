@@ -7,9 +7,11 @@ import {
   Pressable,
   StyleSheet,
   TextInput,
+  AppState,
 } from 'react-native';
 import {
   DEFAULT_TTL_MS,
+  conversationIsActivelyViewed,
   conversationTransportStatus,
   formatMessageStatus,
   internetStatusAvailable,
@@ -97,7 +99,11 @@ export default function ChatScreen() {
     }
     await syncNow();
     if (service) {
-      if (user?.id) await service.markConversationRead(id, user.id).catch(() => undefined);
+      const viewing = conversationIsActivelyViewed({
+        isConversationScreenFocused: true,
+        appState: AppState.currentState,
+      });
+      if (viewing && user?.id) await service.markConversationRead(id, user.id).catch(() => undefined);
       const local = await service.listMessages(id);
       setMessages(local.map(storedToChat));
     }
@@ -143,7 +149,11 @@ export default function ChatScreen() {
     service
       .acceptInbound(stored)
       .then(async () => {
-        if (user?.id) await service.markConversationRead(id, user.id).catch(() => undefined);
+        const viewing = conversationIsActivelyViewed({
+          isConversationScreenFocused: true,
+          appState: AppState.currentState,
+        });
+        if (viewing && user?.id) await service.markConversationRead(id, user.id).catch(() => undefined);
         return service.listMessages(id);
       })
       .then((rows) => setMessages(rows.map(storedToChat)))

@@ -57,14 +57,29 @@ describe("message state machine", () => {
     expect(canTransition(MessageStatus.EXPIRED, MessageStatus.CREATED)).toBe(false);
   });
 
-  it("allows CREATED to ENCRYPTING to ENCRYPTED", () => {
+  it("allows FAILED to DELIVERED when a late crypto ACK arrives", () => {
+    expect(canTransition(MessageStatus.FAILED, MessageStatus.DELIVERED)).toBe(true);
     let message = createMessage({
       sender_id: "a",
       recipient_id: "b",
       conversation_id: "c",
     });
-    message = transition(message, MessageStatus.ENCRYPTING);
-    message = transition(message, MessageStatus.ENCRYPTED);
-    expect(message.status).toBe(MessageStatus.ENCRYPTED);
+    for (const next of [
+      MessageStatus.ENCRYPTED,
+      MessageStatus.QUEUED,
+      MessageStatus.SENDING,
+      MessageStatus.SENT,
+      MessageStatus.FAILED,
+    ] as const) {
+      message = transition(message, next);
+    }
+    message = transition(message, MessageStatus.DELIVERED);
+    expect(message.status).toBe(MessageStatus.DELIVERED);
+  });
+
+  it("does not allow READ to regress", () => {
+    expect(canTransition(MessageStatus.READ, MessageStatus.DELIVERED)).toBe(false);
+    expect(canTransition(MessageStatus.DELIVERED, MessageStatus.SENT)).toBe(false);
+    expect(canTransition(MessageStatus.READ, MessageStatus.SENT)).toBe(false);
   });
 });

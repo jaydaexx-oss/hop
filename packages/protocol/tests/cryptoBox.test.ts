@@ -131,6 +131,46 @@ describe("libsodium crypto_box application messages", () => {
     );
     expect(isCryptoBoxPayload(packed)).toBe(true);
   });
+
+  it("round-trips a compact DELIVERED_ACK without message content", async () => {
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const ack = {
+      ...plain,
+      message_id: "ack-aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      kind: "delivery_ack" as const,
+      text: "",
+      ack_of: plain.message_id,
+      ack_status: "DELIVERED" as const,
+    };
+    const packed = await encryptApplicationMessage(ack, blake.publicKey, alice);
+    expect(packed).not.toContain("hello over ble");
+    const opened = await decryptApplicationMessage(packed, blake, alice.publicKey, ack.message_id);
+    expect(opened.kind).toBe("delivery_ack");
+    expect(opened.ack_of).toBe(plain.message_id);
+    expect(opened.ack_type).toBe("DELIVERED_ACK");
+    expect(opened.ack_v).toBe(1);
+    expect(opened.text).toBe("");
+  });
+
+  it("refuses content-bearing and unknown-version receipts", async () => {
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    await expect(
+      encryptApplicationMessage(
+        { ...plain, kind: "delivery_ack", text: "leaked body", ack_of: plain.message_id, ack_status: "READ" },
+        blake.publicKey,
+        alice,
+      ),
+    ).rejects.toThrow(/malformed/i);
+    await expect(
+      encryptApplicationMessage(
+        { ...plain, kind: "delivery_ack", text: "", ack_of: plain.message_id, ack_status: "DELIVERED", ack_v: 9 },
+        blake.publicKey,
+        alice,
+      ),
+    ).rejects.toThrow(/malformed/i);
+  });
 });
 
 describe("BLE ack retry", () => {

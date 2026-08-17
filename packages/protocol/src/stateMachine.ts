@@ -47,7 +47,7 @@ export const ALLOWED_TRANSITIONS: Record<MessageStatus, readonly MessageStatus[]
   ],
   DELIVERED: [MessageStatus.READ],
   READ: [],
-  FAILED: [MessageStatus.QUEUED],
+  FAILED: [MessageStatus.QUEUED, MessageStatus.DELIVERED],
   EXPIRED: [],
 };
 
@@ -56,6 +56,7 @@ export function canTransition(from: MessageStatus, to: MessageStatus): boolean {
 }
 
 export function transition(message: HopMessage, to: MessageStatus, now = new Date()): HopMessage {
+  if (message.status === to) return message;
   if (isExpired(message, now) && to !== MessageStatus.EXPIRED) {
     throw new IllegalStateTransitionError(message.status, to);
   }

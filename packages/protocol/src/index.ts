@@ -1,5 +1,20 @@
 export { createMessageId } from "./ids.js";
 export {
+  ACK_PROTOCOL_VERSION,
+  AckType,
+  ackStatusFromType,
+  ackTypeFromStatus,
+  compactAckPlaintext,
+  conversationIsActivelyViewed,
+  countUnread,
+  formatUnreadBadge,
+  isUnreadInbound,
+  mergePersistedStatus,
+  parseAckPlain,
+  receiptRank,
+  type ValidatedAck,
+} from "./acks.js";
+export {
   DEFAULT_TTL_MS,
   MAX_HOPS,
   MessageStatus,
@@ -109,6 +124,8 @@ export {
 export {
   HopSqliteStore,
   SCHEMA_SQL,
+  type InboundReceiptRow,
+  type OutboundAckRow,
   type OutboundRow,
   type SqliteDriver,
   type StoredConversation,

@@ -4,6 +4,7 @@ import pytest
 
 from app.messaging.state_machine import (
     IllegalStateTransitionError,
+    apply_receipt_status,
     can_transition,
     should_stop_forwarding,
     transition,
@@ -35,3 +36,16 @@ def test_forwarding_stops() -> None:
     assert should_stop_forwarding(8, now + timedelta(days=1), now) is True
     assert should_stop_forwarding(0, now - timedelta(seconds=1), now) is True
     assert should_stop_forwarding(0, now + timedelta(days=1), now) is False
+
+
+def test_late_ack_after_failed() -> None:
+    assert can_transition("FAILED", "DELIVERED") is True
+    assert transition("FAILED", "DELIVERED") == "DELIVERED"
+
+
+def test_receipts_never_regress() -> None:
+    assert apply_receipt_status("READ", "DELIVERED") == "READ"
+    assert apply_receipt_status("READ", "SENT") == "READ"
+    assert apply_receipt_status("DELIVERED", "SENT") == "DELIVERED"
+    assert apply_receipt_status("FAILED", "DELIVERED") == "DELIVERED"
+    assert apply_receipt_status("SENT", "DELIVERED") == "DELIVERED"

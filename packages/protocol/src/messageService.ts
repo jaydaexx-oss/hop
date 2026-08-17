@@ -3,6 +3,13 @@ import { isCryptoBoxPayload, parseCryptoBoxPayload } from "./cryptoBox.js";
 import type { HopHttpClient } from "./http.js";
 import { createMessageId } from "./ids.js";
 import {
+  ACK_PROTOCOL_VERSION,
+  AckType,
+  ackStatusFromType,
+  ackTypeFromStatus,
+  parseAckPlain,
+} from "./acks.js";
+import {
   MAX_OUTBOX_MESSAGES,
   isOutboxStatus,
   isTransportAcceptedStatus,
@@ -127,6 +134,7 @@ export class MessageService {
       ttl: DEFAULT_TTL_MS,
       hop_count: 0,
       send_seq,
+      kind: "message",
     };
     record = this.withStatus(record, MessageStatus.ENCRYPTING);
     const encrypted_payload = await this.crypto.encrypt(plain);
@@ -197,6 +205,7 @@ export class MessageService {
       ttl: DEFAULT_TTL_MS,
       hop_count: 0,
       send_seq,
+      kind: "voice",
     };
     record = this.withStatus(record, MessageStatus.ENCRYPTING);
     const encrypted_payload = await this.crypto.encrypt(plain);
@@ -217,7 +226,8 @@ export class MessageService {
     now: Date,
     displayText: string | null,
   ): Promise<StoredMessage> {
-    if ((await this.store.queuedCount()) >= MAX_OUTBOX_MESSAGES) {
+    await this.rememberSelf(record.sender_id);
+    if (record.kind !== "delivery_ack" && (await this.store.queuedCount()) >= MAX_OUTBOX_MESSAGES) {
       const failed = this.withStatus(record, MessageStatus.FAILED);
       await this.persistMessage(failed);
       return displayText ? { ...failed, text: displayText } : failed;
@@ -234,11 +244,20 @@ export class MessageService {
     const attempts = new Map(outbound.map((row) => [row.message_id, row.attempts]));
     const out: StoredMessage[] = [];
     for (const row of rows) {
+      if (row.kind === "delivery_ack") continue;
       const materialized = await this.materializePlaintext(row);
       if (materialized.kind === "delivery_ack") continue;
       out.push({ ...materialized, retry_attempts: attempts.get(row.message_id) ?? 0 });
     }
     return sortConversationMessages(out);
+  }
+
+  async unreadCount(conversationId: string, viewerId: string): Promise<number> {
+    return this.store.unreadCount(conversationId, viewerId);
+  }
+
+  async unreadCounts(viewerId: string): Promise<Record<string, number>> {
+    return this.store.unreadCounts(viewerId);
   }
 
   async previewForConversation(conversationId: string): Promise<string> {
@@ -323,6 +342,11 @@ export class MessageService {
         await this.store.removeOutbound(item.message_id);
       }
     }
+    await this.recoverPendingOutboundAcks(now);
+    for (const ackOf of await this.store.listInboundReceiptTargets()) {
+      await this.applyPendingInboundReceipts(ackOf);
+    }
+    await this.store.pruneProcessed();
   }
 
   async retryFailed(messageId: string, now = new Date()): Promise<StoredMessage | null> {
@@ -343,58 +367,74 @@ export class MessageService {
   }
 
   async markConversationRead(conversationId: string, readerId: string, now = new Date()): Promise<void> {
+    await this.rememberSelf(readerId);
     const rows = await this.store.listMessages(conversationId);
     for (const row of rows) {
       if (row.sender_id === readerId) continue;
+      if (row.kind === "delivery_ack") continue;
       if (row.status === MessageStatus.READ) continue;
       if (row.status !== MessageStatus.DELIVERED) continue;
       const opened = await this.openInbound(row);
       if (!opened.plain || opened.plain.kind === "delivery_ack") continue;
       const next = this.withStatus(row, MessageStatus.READ);
       await this.persistMessage(next);
-      await this.sendAck(opened.plain, "READ", now).catch(() => undefined);
+      await this.queueAck(opened.plain, AckType.READ_ACK, now);
     }
+    await this.flushPendingAcks(now);
   }
+
   async acceptInbound(message: StoredMessage, now = new Date()): Promise<boolean> {
-    if (isExpired(message, now)) return false;
-    const opened = await this.openInbound(message);
-    if (opened.plain?.kind === "delivery_ack") {
-      return this.acceptCryptoDeliveryAck(message, opened.plain, now);
-    }
-    if (opened.plain && !(await this.inboundParticipantsAllowed(message, opened.plain))) {
-      return false;
-    }
-    const existing = await this.store.getMessage(message.message_id);
-    if (existing) {
-      const merged = {
-        ...existing,
+    try {
+      if (isExpired(message, now)) return false;
+      const opened = await this.openInbound(message);
+      if (opened.plain?.kind === "delivery_ack") {
+        return this.acceptCryptoDeliveryAck(message, opened.plain, now);
+      }
+      if (opened.plain && !(await this.inboundParticipantsAllowed(message, opened.plain))) {
+        return false;
+      }
+      const existing = await this.store.getMessage(message.message_id);
+      if (existing) {
+        const merged = {
+          ...existing,
+          text: null,
+          encrypted_payload: opened.record.encrypted_payload || existing.encrypted_payload,
+          transport: message.transport || existing.transport,
+          send_seq: existing.send_seq ?? opened.record.send_seq ?? opened.plain?.send_seq ?? null,
+          kind: existing.kind ?? opened.plain?.kind ?? opened.record.kind ?? "message",
+          status: cryptographicStatusFromServer(existing.status, message.status),
+        };
+        await this.persistMessage(merged);
+        return false;
+      }
+      if (this.crypto && !isCryptoBoxPayload(message.encrypted_payload)) {
+        return false;
+      }
+      if (isCryptoBoxPayload(message.encrypted_payload) && this.crypto && !opened.plain) {
+        return false;
+      }
+      await this.rememberSelf(message.recipient_id);
+      await this.persistMessage({
+        ...opened.record,
         text: null,
-        encrypted_payload: opened.record.encrypted_payload || existing.encrypted_payload,
-        transport: message.transport || existing.transport,
-        send_seq: existing.send_seq ?? opened.record.send_seq ?? opened.plain?.send_seq ?? null,
-        status: cryptographicStatusFromServer(existing.status, message.status),
-      };
-      await this.persistMessage(merged);
+        send_seq: opened.plain?.send_seq ?? opened.record.send_seq ?? null,
+        kind: opened.plain?.kind === "voice" ? "voice" : "message",
+        status: opened.plain ? MessageStatus.DELIVERED : message.status,
+      });
+      const fresh = await this.store.rememberProcessed(message.message_id, now);
+      if (!fresh) return false;
+      if (opened.plain) {
+        await this.queueAck(opened.plain, AckType.DELIVERED_ACK, now);
+        const mapping = await this.store.getOutboundAck(opened.plain.message_id, AckType.DELIVERED_ACK);
+        if (mapping) {
+          const ackRow = await this.store.getMessage(mapping.ack_message_id);
+          if (ackRow) await this.flushOne(ackRow, now, true);
+        }
+      }
+      return true;
+    } catch {
       return false;
     }
-    if (this.crypto && !isCryptoBoxPayload(message.encrypted_payload)) {
-      return false;
-    }
-    if (isCryptoBoxPayload(message.encrypted_payload) && this.crypto && !opened.plain) {
-      return false;
-    }
-    await this.persistMessage({
-      ...opened.record,
-      text: null,
-      send_seq: opened.plain?.send_seq ?? opened.record.send_seq ?? null,
-      status: opened.plain ? MessageStatus.DELIVERED : message.status,
-    });
-    const fresh = await this.store.rememberProcessed(message.message_id, now);
-    if (!fresh) return false;
-    if (opened.plain) {
-      void this.sendAck(opened.plain, "DELIVERED", now).catch(() => undefined);
-    }
-    return true;
   }
 
   private async inboundParticipantsAllowed(
@@ -431,12 +471,13 @@ export class MessageService {
       return message;
     }
     if (
-      await this.store.hasEarlierOutbound(
+      message.kind !== "delivery_ack" &&
+      (await this.store.hasEarlierOutbound(
         message.conversation_id,
         message.created_at,
         message.message_id,
         message.send_seq,
-      )
+      ))
     ) {
       return message;
     }
@@ -455,6 +496,9 @@ export class MessageService {
       await this.persistMessage(sent);
       await this.store.removeOutbound(sent.message_id);
       await this.store.rememberProcessed(sent.message_id, now);
+      if (sent.kind === "delivery_ack") {
+        await this.store.deleteMessage(sent.message_id);
+      }
       return sent;
     }
 
@@ -482,34 +526,84 @@ export class MessageService {
 
   async applyValidatedDeliveryAck(
     plain: Pick<ApplicationPlaintext, "kind" | "ack_of"> &
-      Partial<Pick<ApplicationPlaintext, "ack_status" | "sender_id" | "recipient_id" | "conversation_id">>,
+      Partial<
+        Pick<
+          ApplicationPlaintext,
+          "ack_status" | "ack_type" | "ack_v" | "sender_id" | "recipient_id" | "conversation_id" | "message_id" | "text"
+        >
+      >,
     senderPk?: string,
   ): Promise<boolean> {
-    if (plain.kind !== "delivery_ack" || !plain.ack_of) return false;
-    if (plain.ack_status && plain.ack_status !== "DELIVERED" && plain.ack_status !== "READ") return false;
-    const existing = await this.store.getMessage(plain.ack_of);
-    if (!existing) return false;
-    if (plain.conversation_id && plain.conversation_id !== existing.conversation_id) return false;
-    if (plain.sender_id && plain.sender_id !== existing.recipient_id) return false;
-    if (plain.recipient_id && plain.recipient_id !== existing.sender_id) return false;
-    const status = existing.status;
-    if (
-      status !== MessageStatus.SENT &&
-      status !== MessageStatus.RELAYING &&
-      status !== MessageStatus.DELIVERED &&
-      status !== MessageStatus.READ
-    ) {
+    try {
+      if (plain.kind !== "delivery_ack" || !plain.ack_of) return false;
+      if (plain.ack_status && plain.ack_status !== "DELIVERED" && plain.ack_status !== "READ") return false;
+      const parsed =
+        plain.sender_id && plain.recipient_id && plain.conversation_id
+          ? parseAckPlain({
+              message_id: plain.message_id ?? `local-ack:${plain.ack_of}`,
+              sender_id: plain.sender_id,
+              recipient_id: plain.recipient_id,
+              conversation_id: plain.conversation_id,
+              text: plain.text ?? "",
+              created_at: "",
+              expires_at: "",
+              ttl: 0,
+              hop_count: 0,
+              kind: "delivery_ack",
+              ack_of: plain.ack_of,
+              ack_status: plain.ack_status,
+              ack_type: plain.ack_type,
+              ack_v: plain.ack_v ?? ACK_PROTOCOL_VERSION,
+            })
+          : null;
+      if (senderPk && plain.sender_id && !parsed) return false;
+      const ackType = parsed?.ack_type ?? (plain.ack_status === "READ" ? AckType.READ_ACK : AckType.DELIVERED_ACK);
+      const ackStatus = parsed?.ack_status ?? ackStatusFromType(ackType);
+      const existing = await this.store.getMessage(plain.ack_of);
+      if (parsed) {
+        if (existing) {
+          if (parsed.conversation_id !== existing.conversation_id) return false;
+          if (parsed.sender_id !== existing.recipient_id) return false;
+          if (parsed.recipient_id !== existing.sender_id) return false;
+        }
+        await this.store.saveInboundReceipt({
+          ack_of: parsed.ack_of,
+          ack_type: parsed.ack_type,
+          conversation_id: parsed.conversation_id,
+          sender_id: parsed.sender_id,
+          sender_pk: senderPk ?? null,
+        });
+        if (!existing) return true;
+      } else if (plain.conversation_id && existing && plain.conversation_id !== existing.conversation_id) {
+        return false;
+      } else if (plain.sender_id && existing && plain.sender_id !== existing.recipient_id) {
+        return false;
+      } else if (plain.recipient_id && existing && plain.recipient_id !== existing.sender_id) {
+        return false;
+      }
+      if (!existing) return false;
+      const status = existing.status;
+      if (
+        status !== MessageStatus.SENT &&
+        status !== MessageStatus.RELAYING &&
+        status !== MessageStatus.DELIVERED &&
+        status !== MessageStatus.READ &&
+        status !== MessageStatus.FAILED
+      ) {
+        return false;
+      }
+      if (senderPk) {
+        const trusted = await this.store.peerPublicKey(existing.recipient_id);
+        if (trusted && trusted !== senderPk) return false;
+        if (this.tofu && !this.tofu.bind(existing.recipient_id, senderPk)) return false;
+      }
+      const target = ackStatus === "READ" ? MessageStatus.READ : MessageStatus.DELIVERED;
+      const next = this.advanceToward(existing, target);
+      await this.persistMessage(next);
+      return next.status === MessageStatus.DELIVERED || next.status === MessageStatus.READ;
+    } catch {
       return false;
     }
-    if (senderPk) {
-      const trusted = await this.store.peerPublicKey(existing.recipient_id);
-      if (trusted && trusted !== senderPk) return false;
-      if (this.tofu && !this.tofu.bind(existing.recipient_id, senderPk)) return false;
-    }
-    const target = plain.ack_status === "READ" ? MessageStatus.READ : MessageStatus.DELIVERED;
-    const next = this.advanceToward(existing, target);
-    await this.persistMessage(next);
-    return next.status === MessageStatus.DELIVERED || next.status === MessageStatus.READ;
   }
 
   private async acceptCryptoDeliveryAck(
@@ -517,20 +611,25 @@ export class MessageService {
     plain: ApplicationPlaintext,
     now: Date,
   ): Promise<boolean> {
-    const fresh = await this.store.rememberProcessed(message.message_id, now);
-    if (!fresh) return false;
-    const senderPk = parseCryptoBoxPayload(message.encrypted_payload)?.sender_pk;
-    const applied = await this.applyValidatedDeliveryAck(plain, senderPk);
-    await this.persistMessage({ ...message, text: null, status: MessageStatus.SENT });
-    return applied;
+    try {
+      const senderPk = parseCryptoBoxPayload(message.encrypted_payload)?.sender_pk;
+      const applied = await this.applyValidatedDeliveryAck(plain, senderPk);
+      const fresh = await this.store.rememberProcessed(message.message_id, now);
+      return applied && fresh;
+    } catch {
+      return false;
+    }
   }
 
-  private async sendAck(
-    original: ApplicationPlaintext,
-    ack_status: "DELIVERED" | "READ",
+  private async queueAck(
+    original: Pick<ApplicationPlaintext, "message_id" | "sender_id" | "recipient_id" | "conversation_id">,
+    ackType: (typeof AckType)[keyof typeof AckType],
     now: Date,
   ): Promise<void> {
-    if (!this.crypto || original.kind === "delivery_ack") return;
+    if (!this.crypto) return;
+    const existingAck = await this.store.getOutboundAck(original.message_id, ackType);
+    if (existingAck) return;
+    const ack_status = ackStatusFromType(ackType);
     const ack_id = createMessageId();
     const plain: ApplicationPlaintext = {
       message_id: ack_id,
@@ -545,12 +644,13 @@ export class MessageService {
       kind: "delivery_ack",
       ack_of: original.message_id,
       ack_status,
+      ack_type: ackType,
+      ack_v: ACK_PROTOCOL_VERSION,
     };
     const encrypted_payload = await this.crypto.encrypt(plain);
     if (!isCryptoBoxPayload(encrypted_payload)) {
       throw new Error("encrypt() must return a libsodium crypto_box payload");
     }
-    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
     let record: StoredMessage = {
       message_id: ack_id,
       conversation_id: original.conversation_id,
@@ -558,20 +658,107 @@ export class MessageService {
       recipient_id: plain.recipient_id,
       text: null,
       encrypted_payload,
-      local_seal,
+      local_seal: null,
       status: MessageStatus.CREATED,
       transport: "local",
       created_at: plain.created_at,
       expires_at: plain.expires_at,
       ttl: DEFAULT_TTL_MS,
       hop_count: 0,
+      kind: "delivery_ack",
     };
     record = this.withStatus(record, MessageStatus.ENCRYPTING);
     record = this.withStatus(record, MessageStatus.ENCRYPTED);
     record = this.withStatus(record, MessageStatus.QUEUED);
     await this.persistMessage(record);
+    const inserted = await this.store.saveOutboundAck(original.message_id, ackType, ack_id);
+    if (!inserted) {
+      await this.store.deleteMessage(ack_id);
+      return;
+    }
     await this.store.enqueue(record.message_id, 0, now.getTime());
-    await this.flushOne(record, now, true);
+  }
+
+  private async flushPendingAcks(now: Date, ignoreBackoff = false): Promise<void> {
+    const outbound = await this.store.listOutbound();
+    for (const item of outbound) {
+      const message = await this.store.getMessage(item.message_id);
+      if (!message || message.kind !== "delivery_ack") continue;
+      await this.flushOne(message, now, ignoreBackoff);
+    }
+  }
+
+  private async recoverPendingOutboundAcks(now: Date): Promise<void> {
+    const selfId = await this.store.getSyncValue("self_user_id");
+    if (!selfId) return;
+    for (const row of await this.store.listInboundNeedingAck(AckType.DELIVERED_ACK, selfId)) {
+      await this.queueAck(row, AckType.DELIVERED_ACK, now);
+    }
+    for (const row of await this.store.listInboundNeedingAck(AckType.READ_ACK, selfId)) {
+      await this.queueAck(row, AckType.READ_ACK, now);
+    }
+    for (const mapping of await this.store.listOutboundAcks()) {
+      const ackRow = await this.store.getMessage(mapping.ack_message_id);
+      if (!ackRow) continue;
+      if (isTransportAcceptedStatus(ackRow.status) || ackRow.status === MessageStatus.FAILED) continue;
+      const queued = (await this.store.listOutbound()).some((item) => item.message_id === ackRow.message_id);
+      if (!queued && isOutboxStatus(ackRow.status)) {
+        await this.store.enqueue(ackRow.message_id, 0, now.getTime());
+      }
+    }
+  }
+
+  private applyingReceipts = false;
+
+  private async applyPendingInboundReceipts(messageId: string): Promise<void> {
+    if (this.applyingReceipts) return;
+    this.applyingReceipts = true;
+    try {
+      const existing = await this.store.getMessage(messageId);
+      if (!existing) return;
+      if (
+        existing.status !== MessageStatus.SENT &&
+        existing.status !== MessageStatus.RELAYING &&
+        existing.status !== MessageStatus.DELIVERED &&
+        existing.status !== MessageStatus.READ &&
+        existing.status !== MessageStatus.FAILED
+      ) {
+        return;
+      }
+      for (const receipt of await this.store.listInboundReceipts(messageId)) {
+        await this.applyValidatedDeliveryAck(
+          {
+            kind: "delivery_ack",
+            ack_of: receipt.ack_of,
+            ack_type: receipt.ack_type === AckType.READ_ACK ? AckType.READ_ACK : AckType.DELIVERED_ACK,
+            ack_status: receipt.ack_type === AckType.READ_ACK ? "READ" : "DELIVERED",
+            sender_id: receipt.sender_id,
+            recipient_id: existing.sender_id,
+            conversation_id: receipt.conversation_id,
+            message_id: `pending:${receipt.ack_of}:${receipt.ack_type}`,
+            text: "",
+          },
+          receipt.sender_pk ?? undefined,
+        );
+      }
+    } finally {
+      this.applyingReceipts = false;
+    }
+  }
+
+  private async rememberSelf(userId: string): Promise<void> {
+    if (!userId) return;
+    await this.store.setSyncValue("self_user_id", userId);
+  }
+
+  private async sendAck(
+    original: ApplicationPlaintext,
+    ack_status: "DELIVERED" | "READ",
+    now: Date,
+  ): Promise<void> {
+    if (original.kind === "delivery_ack") return;
+    await this.queueAck(original, ackTypeFromStatus(ack_status), now);
+    await this.flushPendingAcks(now);
   }
 
   private async pullConversation(conversationId: string): Promise<void> {
@@ -656,8 +843,12 @@ export class MessageService {
       ttl: message.ttl,
       hop_count: message.hop_count,
       send_seq: message.send_seq ?? null,
+      kind: message.kind ?? null,
     };
     await this.store.saveMessage(stored);
+    if (stored.kind !== "delivery_ack") {
+      await this.applyPendingInboundReceipts(stored.message_id);
+    }
   }
 
   private async openInbound(

@@ -29,7 +29,7 @@ ALLOWED_TRANSITIONS: dict[MessageStatus, tuple[MessageStatus, ...]] = {
     "RELAYING": ("DELIVERED", "RELAYING", "FAILED", "EXPIRED"),
     "DELIVERED": ("READ",),
     "READ": (),
-    "FAILED": ("QUEUED",),
+    "FAILED": ("QUEUED", "DELIVERED"),
     "EXPIRED": (),
 }
 
@@ -46,9 +46,46 @@ def can_transition(src: MessageStatus, dest: MessageStatus) -> bool:
 
 
 def transition(src: MessageStatus, dest: MessageStatus) -> MessageStatus:
+    if src == dest:
+        return dest
     if not can_transition(src, dest):
         raise IllegalStateTransitionError(src, dest)
     return dest
+
+
+RECEIPT_RANK = {
+    "EXPIRED": -20,
+    "FAILED": -10,
+    "CREATED": 0,
+    "ENCRYPTING": 10,
+    "ENCRYPTED": 20,
+    "QUEUED": 30,
+    "RETRYING": 40,
+    "SENDING": 50,
+    "SENT": 60,
+    "RELAYING": 60,
+    "DELIVERED": 70,
+    "READ": 80,
+}
+
+
+def apply_receipt_status(current: MessageStatus, incoming: MessageStatus) -> MessageStatus:
+    """SENT → DELIVERED → READ never regresses. READ + delayed DELIVERED stays READ."""
+    if current == incoming:
+        return current
+    if current == "EXPIRED":
+        return current
+    if current == "READ":
+        return current
+    if current == "DELIVERED":
+        return "READ" if incoming == "READ" else "DELIVERED"
+    if current == "FAILED" and incoming in {"QUEUED", "DELIVERED", "READ"}:
+        return incoming
+    if RECEIPT_RANK.get(current, -100) >= RECEIPT_RANK["SENT"] and RECEIPT_RANK.get(incoming, -100) < RECEIPT_RANK["SENT"]:
+        if incoming in {"FAILED", "EXPIRED"}:
+            return incoming
+        return current
+    return incoming
 
 
 def should_stop_forwarding(hop_count: int, expires_at: datetime, now: datetime, max_hops: int = 8) -> bool:

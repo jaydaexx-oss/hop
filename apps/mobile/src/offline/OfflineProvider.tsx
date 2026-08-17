@@ -61,7 +61,7 @@ export function storedToChat(row: StoredMessage): ChatMessage {
     created_at: row.created_at,
     e2ee: isCryptoBoxPayload(row.encrypted_payload),
     encrypted_payload: row.encrypted_payload,
-    kind: row.kind,
+    kind: row.kind ?? undefined,
     duration_ms: row.duration_ms,
     mime: row.mime,
     audio_b64: row.audio_b64,

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { FlatList, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
-import { conversationTransportStatus, internetStatusAvailable } from '@hop/protocol';
+import { conversationTransportStatus, formatUnreadBadge, internetStatusAvailable } from '@hop/protocol';
 
 import { Text, View } from '@/components/Themed';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -14,14 +14,16 @@ import { useOffline } from '@/src/offline/OfflineProvider';
 import { useHopSocket } from '@/src/ws';
 
 export default function ChatsScreen() {
-  const { token } = useAuth();
-  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount, conversationPreview } = useOffline();
+  const { token, user } = useAuth();
+  const { cacheConversation, listCachedConversations, syncNow, status, queuedCount, conversationPreview, service } =
+    useOffline();
   const { peers, connectedId } = useBle();
   const router = useRouter();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const [items, setItems] = useState<Conversation[]>([]);
   const [previews, setPreviews] = useState<Record<string, string>>({});
+  const [unreads, setUnreads] = useState<Record<string, number>>({});
   const [error, setError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
@@ -33,6 +35,7 @@ export default function ChatsScreen() {
         cachedPreviews[convo.id] = await conversationPreview(convo.id);
       }
       setPreviews(cachedPreviews);
+      if (service && user?.id) setUnreads(await service.unreadCounts(user.id));
     }
     if (!token) return;
     try {
@@ -48,6 +51,7 @@ export default function ChatsScreen() {
         nextPreviews[convo.id] = await conversationPreview(convo.id);
       }
       setPreviews(nextPreviews);
+      if (service && user?.id) setUnreads(await service.unreadCounts(user.id));
     } catch (err) {
       if (cached.length === 0) {
         setError(err instanceof Error ? err.message : 'Could not load chats');
@@ -55,7 +59,7 @@ export default function ChatsScreen() {
         setError(null);
       }
     }
-  }, [token, cacheConversation, listCachedConversations, syncNow, conversationPreview]);
+  }, [token, user?.id, cacheConversation, listCachedConversations, syncNow, conversationPreview, service]);
 
   useEffect(() => {
     refresh();
@@ -104,6 +108,11 @@ export default function ChatsScreen() {
                 </Text>
                 <Text style={{ color: colors.muted, fontSize: 12 }}>{transport.line}</Text>
               </View>
+              {formatUnreadBadge(unreads[item.id] ?? 0) ? (
+                <View style={[styles.unread, { backgroundColor: colors.tint }]}>
+                  <Text style={styles.unreadLabel}>{formatUnreadBadge(unreads[item.id] ?? 0)}</Text>
+                </View>
+              ) : null}
             </Pressable>
           );
         }}
@@ -126,6 +135,15 @@ const styles = StyleSheet.create({
   avatarLabel: { color: '#042f2e', fontWeight: '800', fontSize: 18 },
   meta: { flex: 1, backgroundColor: 'transparent' },
   name: { fontSize: 17, fontWeight: '700' },
+  unread: {
+    minWidth: 22,
+    height: 22,
+    borderRadius: 11,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingHorizontal: 6,
+  },
+  unreadLabel: { color: '#042f2e', fontWeight: '800', fontSize: 12 },
   emptyBox: { flexGrow: 1, justifyContent: 'center' },
   error: { color: '#DC2626', marginBottom: 8 },
 });

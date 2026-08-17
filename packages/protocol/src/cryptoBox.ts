@@ -1,4 +1,5 @@
 import sodium from "libsodium-wrappers";
+import { ACK_PROTOCOL_VERSION, assertAckPlain, compactAckPlaintext, type AckType } from "./acks.js";
 
 /** libsodium NaCl crypto_box (X25519 + XSalsa20-Poly1305). Not a custom construction. */
 
@@ -43,6 +44,10 @@ export interface ApplicationPlaintext {
   ack_of?: string;
   /** Cryptographic delivery/read receipt. Absent on normal messages. */
   ack_status?: "DELIVERED" | "READ";
+  /** Explicit receipt type. Preferred over ack_status; both must agree when present. */
+  ack_type?: AckType;
+  /** Receipt protocol version. Current: 1. */
+  ack_v?: number;
   /** Base64 audio for kind=voice. Canonical field for this and future chunked PTT. */
   audio_b64?: string;
   /** Alias accepted on encrypt/decrypt so a later chunked slice can rename without a format break. */
@@ -97,17 +102,13 @@ export async function encryptApplicationMessage(
   recipientPublicKey: string,
   sender: IdentityKeyPair,
 ): Promise<string> {
+  let sealed = plain;
   if (plain.kind === "voice") {
     if (!voiceAudioValue(plain)) {
       throw new Error("Refusing to encrypt voice with no audio");
     }
   } else if (plain.kind === "delivery_ack") {
-    if (!plain.ack_of) {
-      throw new Error("delivery_ack requires ack_of");
-    }
-    if (plain.ack_status && plain.ack_status !== "DELIVERED" && plain.ack_status !== "READ") {
-      throw new Error("delivery_ack status must be DELIVERED or READ");
-    }
+    sealed = compactAckPlaintext(plain, assertAckPlain({ ...plain, ack_v: plain.ack_v ?? ACK_PROTOCOL_VERSION }));
   } else if (!plain.text.trim()) {
     throw new Error("Refusing to encrypt empty plaintext");
   }
@@ -115,7 +116,7 @@ export async function encryptApplicationMessage(
   const variant = s.base64_variants.ORIGINAL;
   const nonce = s.randombytes_buf(s.crypto_box_NONCEBYTES);
   const ciphertext = s.crypto_box_easy(
-    s.from_string(JSON.stringify(plain)),
+    s.from_string(JSON.stringify(sealed)),
     nonce,
     s.from_base64(recipientPublicKey, variant),
     s.from_base64(sender.secretKey, variant),
@@ -161,6 +162,9 @@ export async function decryptApplicationMessage(
   const plain = JSON.parse(s.to_string(opened)) as ApplicationPlaintext;
   if (!plain?.message_id || typeof plain.text !== "string") {
     throw new Error("Decrypted payload is not a HOP application message");
+  }
+  if (plain.kind === "delivery_ack") {
+    assertAckPlain(plain);
   }
   if (expectedMessageId && plain.message_id !== expectedMessageId) {
     throw new Error("Authenticated message_id does not match the envelope");

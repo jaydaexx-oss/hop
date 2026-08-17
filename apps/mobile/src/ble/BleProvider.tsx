@@ -155,7 +155,7 @@ export function BleProvider({ children }: { children: ReactNode }) {
               hop_count: envelope.hop_count,
             });
           }
-          appendLog(`Delivery acknowledgment for ${plain.ack_of ?? envelope.message_id}.`);
+          appendLog('Delivery acknowledgment received.');
           return true;
         }
         appendLog(

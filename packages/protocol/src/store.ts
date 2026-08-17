@@ -1,3 +1,4 @@
+import { mergePersistedStatus } from "./acks.js";
 import type { PeerTrustRecord } from "./tofu.js";
 
 /** Durable store is ciphertext + optional local_seal. Do not persist decrypted voice. */
@@ -16,7 +17,8 @@ CREATE TABLE IF NOT EXISTS messages (
   expires_at TEXT NOT NULL,
   ttl INTEGER NOT NULL,
   hop_count INTEGER NOT NULL DEFAULT 0,
-  send_seq INTEGER
+  send_seq INTEGER,
+  kind TEXT
 );
 
 CREATE TABLE IF NOT EXISTS outbound_queue (
@@ -51,6 +53,22 @@ CREATE TABLE IF NOT EXISTS peer_identities (
   pending_public_key TEXT,
   updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS outbound_acks (
+  ack_of TEXT NOT NULL,
+  ack_type TEXT NOT NULL,
+  ack_message_id TEXT NOT NULL,
+  PRIMARY KEY (ack_of, ack_type)
+);
+
+CREATE TABLE IF NOT EXISTS inbound_receipts (
+  ack_of TEXT NOT NULL,
+  ack_type TEXT NOT NULL,
+  conversation_id TEXT NOT NULL,
+  sender_id TEXT NOT NULL,
+  sender_pk TEXT,
+  PRIMARY KEY (ack_of, ack_type)
+);
 `;
 
 export interface SqliteDriver {
@@ -74,8 +92,8 @@ export interface StoredMessage {
   hop_count: number;
   /** Monotonic per-conversation sender sequence. Not a wall-clock timestamp. */
   send_seq?: number | null;
-  /** In-memory only after decrypt. Never written to the SQLite text column. */
-  kind?: "message" | "delivery_ack" | "voice";
+  /** Persisted when known. delivery_ack rows are hidden from chat lists. */
+  kind?: "message" | "delivery_ack" | "voice" | null;
   duration_ms?: number;
   mime?: string;
   audio_b64?: string;
@@ -91,6 +109,20 @@ export interface OutboundRow {
   message_id: string;
   attempts: number;
   next_retry_at: number;
+}
+
+export interface OutboundAckRow {
+  ack_of: string;
+  ack_type: string;
+  ack_message_id: string;
+}
+
+export interface InboundReceiptRow {
+  ack_of: string;
+  ack_type: string;
+  conversation_id: string;
+  sender_id: string;
+  sender_pk: string | null;
 }
 
 export interface StoredConversation {
@@ -123,20 +155,29 @@ export class HopSqliteStore {
     } catch {
       /* column already exists on new databases */
     }
+    try {
+      await this.db.execute("ALTER TABLE messages ADD COLUMN kind TEXT");
+    } catch {
+      /* column already exists on new databases */
+    }
   }
 
   async saveMessage(message: StoredMessage): Promise<void> {
+    const existing = await this.getMessage(message.message_id);
+    const status = existing ? mergePersistedStatus(existing.status, message.status) : message.status;
+    const kind = message.kind ?? existing?.kind ?? null;
     await this.db.execute(
       `INSERT INTO messages (
         message_id, conversation_id, sender_id, recipient_id, text, encrypted_payload, local_seal,
-        status, transport, created_at, expires_at, ttl, hop_count, send_seq
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        status, transport, created_at, expires_at, ttl, hop_count, send_seq, kind
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(message_id) DO UPDATE SET
         text=excluded.text,
         encrypted_payload=excluded.encrypted_payload,
         local_seal=excluded.local_seal,
         status=excluded.status,
         transport=excluded.transport,
+        kind=COALESCE(excluded.kind, messages.kind),
         send_seq=COALESCE(excluded.send_seq, messages.send_seq)`,
       [
         message.message_id,
@@ -146,13 +187,14 @@ export class HopSqliteStore {
         message.text,
         message.encrypted_payload,
         message.local_seal ?? null,
-        message.status,
+        status,
         message.transport,
         message.created_at,
         message.expires_at,
         message.ttl,
         message.hop_count,
         message.send_seq ?? null,
+        kind,
       ],
     );
   }
@@ -251,7 +293,8 @@ export class HopSqliteStore {
       `SELECT o.message_id, o.attempts, o.next_retry_at
        FROM outbound_queue o
        JOIN messages m ON m.message_id = o.message_id
-       ORDER BY m.conversation_id ASC, COALESCE(m.send_seq, 0) ASC, m.created_at ASC, o.message_id ASC`,
+       ORDER BY CASE WHEN m.kind = 'delivery_ack' THEN 0 ELSE 1 END ASC,
+         m.conversation_id ASC, COALESCE(m.send_seq, 0) ASC, m.created_at ASC, o.message_id ASC`,
     );
   }
 
@@ -265,7 +308,8 @@ export class HopSqliteStore {
       `SELECT o.message_id, m.created_at, m.send_seq
        FROM outbound_queue o
        JOIN messages m ON m.message_id = o.message_id
-       WHERE m.conversation_id = ? AND o.message_id != ?`,
+       WHERE m.conversation_id = ? AND o.message_id != ?
+         AND (m.kind IS NULL OR m.kind != 'delivery_ack')`,
       [conversationId, messageId],
     );
     return rows.some((row) => {
@@ -339,6 +383,137 @@ export class HopSqliteStore {
         state: row.state as PeerTrustRecord["state"],
         pendingPublicKey: row.pending_public_key ?? undefined,
       }));
+  }
+
+  async deleteMessage(messageId: string): Promise<void> {
+    await this.removeOutbound(messageId);
+    await this.db.execute("DELETE FROM messages WHERE message_id = ?", [messageId]);
+  }
+
+  async unreadCount(conversationId: string, viewerId: string): Promise<number> {
+    const rows = await this.db.query<{ n: number }>(
+      `SELECT COUNT(*) AS n FROM messages
+       WHERE conversation_id = ?
+         AND sender_id != ?
+         AND status = 'DELIVERED'
+         AND (kind IS NULL OR kind != 'delivery_ack')`,
+      [conversationId, viewerId],
+    );
+    return Number(rows[0]?.n ?? 0);
+  }
+
+  async unreadCounts(viewerId: string): Promise<Record<string, number>> {
+    const rows = await this.db.query<{ conversation_id: string; n: number }>(
+      `SELECT conversation_id, COUNT(*) AS n FROM messages
+       WHERE sender_id != ?
+         AND status = 'DELIVERED'
+         AND (kind IS NULL OR kind != 'delivery_ack')
+       GROUP BY conversation_id`,
+      [viewerId],
+    );
+    const out: Record<string, number> = {};
+    for (const row of rows) out[row.conversation_id] = Number(row.n);
+    return out;
+  }
+
+  async saveOutboundAck(ackOf: string, ackType: string, ackMessageId: string): Promise<boolean> {
+    try {
+      await this.db.execute(
+        `INSERT INTO outbound_acks (ack_of, ack_type, ack_message_id) VALUES (?, ?, ?)`,
+        [ackOf, ackType, ackMessageId],
+      );
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async getOutboundAck(ackOf: string, ackType: string): Promise<OutboundAckRow | null> {
+    const rows = await this.db.query<OutboundAckRow>(
+      "SELECT ack_of, ack_type, ack_message_id FROM outbound_acks WHERE ack_of = ? AND ack_type = ?",
+      [ackOf, ackType],
+    );
+    return rows[0] ?? null;
+  }
+
+  async listOutboundAcks(): Promise<OutboundAckRow[]> {
+    return this.db.query<OutboundAckRow>("SELECT ack_of, ack_type, ack_message_id FROM outbound_acks");
+  }
+
+  async saveInboundReceipt(row: InboundReceiptRow): Promise<void> {
+    await this.db.execute(
+      `INSERT INTO inbound_receipts (ack_of, ack_type, conversation_id, sender_id, sender_pk)
+       VALUES (?, ?, ?, ?, ?)
+       ON CONFLICT(ack_of, ack_type) DO UPDATE SET
+         conversation_id=excluded.conversation_id,
+         sender_id=excluded.sender_id,
+         sender_pk=COALESCE(excluded.sender_pk, inbound_receipts.sender_pk)`,
+      [row.ack_of, row.ack_type, row.conversation_id, row.sender_id, row.sender_pk],
+    );
+  }
+
+  async listInboundReceiptTargets(): Promise<string[]> {
+    const rows = await this.db.query<{ ack_of: string }>("SELECT DISTINCT ack_of FROM inbound_receipts");
+    return rows.map((row) => row.ack_of);
+  }
+
+  async listInboundReceipts(ackOf: string): Promise<InboundReceiptRow[]> {
+    return this.db.query<InboundReceiptRow>(
+      `SELECT ack_of, ack_type, conversation_id, sender_id, sender_pk
+       FROM inbound_receipts WHERE ack_of = ?`,
+      [ackOf],
+    );
+  }
+
+  async listInboundNeedingAck(ackType: string, selfId: string): Promise<StoredMessage[]> {
+    if (!selfId) return [];
+    if (ackType === "READ_ACK") {
+      return this.db.query<StoredMessage>(
+        `SELECT m.* FROM messages m
+         WHERE m.status = 'READ'
+           AND m.recipient_id = ?
+           AND (m.kind IS NULL OR m.kind != 'delivery_ack')
+           AND NOT EXISTS (
+             SELECT 1 FROM outbound_acks a
+             WHERE a.ack_of = m.message_id AND a.ack_type = 'READ_ACK'
+           )`,
+        [selfId],
+      );
+    }
+    return this.db.query<StoredMessage>(
+      `SELECT m.* FROM messages m
+       WHERE m.status IN ('DELIVERED', 'READ')
+         AND m.recipient_id = ?
+         AND (m.kind IS NULL OR m.kind != 'delivery_ack')
+         AND NOT EXISTS (
+           SELECT 1 FROM outbound_acks a
+           WHERE a.ack_of = m.message_id AND a.ack_type = 'DELIVERED_ACK'
+         )`,
+      [selfId],
+    );
+  }
+
+  async pruneProcessed(maxIds = 50_000): Promise<void> {
+    const rows = await this.db.query<{ n: number }>("SELECT COUNT(*) AS n FROM processed_ids");
+    const n = Number(rows[0]?.n ?? 0);
+    if (n > maxIds) {
+      await this.db.execute(
+        `DELETE FROM processed_ids WHERE message_id IN (
+           SELECT message_id FROM processed_ids ORDER BY seen_at ASC LIMIT ?
+         )`,
+        [n - maxIds],
+      );
+    }
+    const receipts = await this.db.query<{ n: number }>("SELECT COUNT(*) AS n FROM inbound_receipts");
+    const receiptCount = Number(receipts[0]?.n ?? 0);
+    if (receiptCount > 10_000) {
+      await this.db.execute(
+        `DELETE FROM inbound_receipts WHERE rowid IN (
+           SELECT rowid FROM inbound_receipts ORDER BY rowid ASC LIMIT ?
+         )`,
+        [receiptCount - 10_000],
+      );
+    }
   }
 
   async savePeerIdentity(record: PeerTrustRecord): Promise<void> {

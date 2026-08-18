@@ -320,6 +320,7 @@ export {
   type ApplicationPlaintext,
   type CryptoBoxPayload,
   type DecryptOptions,
+  type HopSodium,
   type IdentityKeyPair,
 } from "./cryptoBox.js";
 export { sendWithAckRetry, type AckAttempt } from "./ackRetry.js";

@@ -1,6 +1,9 @@
-import sodium from "libsodium-wrappers";
 import { ACK_PROTOCOL_VERSION, assertAckPlain, compactAckPlaintext, type AckType } from "./acks.js";
 import { MAX_HOPS } from "./message.js";
+import { readySodium } from "./sodium.js";
+
+export { readySodium } from "./sodium.js";
+export type { HopSodium } from "./sodium.js";
 
 /** Matches apps/api encrypted_payload max_length / voice.ts MAX_ENCRYPTED_PAYLOAD_BYTES. */
 const MAX_BOX_JSON_CHARS = 65_536;
@@ -79,15 +82,6 @@ export interface CryptoBoxPayload {
   sender_pk: string;
   nonce: string;
   ciphertext: string;
-}
-
-let readyPromise: Promise<typeof sodium> | null = null;
-
-export async function readySodium(): Promise<typeof sodium> {
-  if (!readyPromise) {
-    readyPromise = Promise.resolve(sodium.ready).then(() => sodium);
-  }
-  return readyPromise;
 }
 
 export async function generateIdentityKeyPair(): Promise<IdentityKeyPair> {

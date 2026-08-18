@@ -2,7 +2,7 @@ import { ACK_PROTOCOL_VERSION, assertAckPlain, compactAckPlaintext, type AckType
 import { MAX_HOPS } from "./message.js";
 import { readySodium } from "./sodium.js";
 
-export { readySodium } from "./sodium.js";
+export { readySodium, setSodiumBackend } from "./sodium.js";
 export type { HopSodium } from "./sodium.js";
 
 /** Matches apps/api encrypted_payload max_length / voice.ts MAX_ENCRYPTED_PAYLOAD_BYTES. */

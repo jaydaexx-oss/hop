@@ -14,34 +14,10 @@ config.resolver.nodeModulesPaths = [
   path.resolve(workspaceRoot, 'node_modules'),
 ];
 
-function resolveOfficialSodiumCjs(moduleName) {
-  // Hermes has no WebAssembly. libsodium-wrappers ESM (exports.import /
-  // module) is wasm-only and crashes with
-  // `ReferenceError: Property 'WebAssembly' doesn't exist`.
-  // The CJS build is the same official libsodium.js with a wasm2js backup
-  // (isWasm2js). That is not a WebAssembly polyfill.
-  if (moduleName !== 'libsodium-wrappers' && moduleName !== 'libsodium') {
-    return null;
-  }
-  const subpath =
-    moduleName === 'libsodium-wrappers'
-      ? 'libsodium-wrappers/dist/modules/libsodium-wrappers.js'
-      : 'libsodium/dist/modules/libsodium.js';
-  for (const root of config.resolver.nodeModulesPaths) {
-    const filePath = path.join(root, subpath);
-    if (fs.existsSync(filePath)) return { type: 'sourceFile', filePath };
-  }
-  return null;
-}
-
 // @hop/protocol is TypeScript ESM: source files import "./ids.js" while the
-// file on disk is ids.ts. Metro does not rewrite that specifier, so iOS
-// bundling fails on the first re-export from packages/protocol/src/index.ts.
+// file on disk is ids.ts. Prefer platform-specific files (sodium.native.ts)
+// so iOS/Android never load libsodium-wrappers / wasm2js.
 config.resolver.resolveRequest = (context, moduleName, platform) => {
-  if (platform === 'ios' || platform === 'android') {
-    const sodiumCjs = resolveOfficialSodiumCjs(moduleName);
-    if (sodiumCjs) return sodiumCjs;
-  }
   const origin = context.originModulePath || '';
   const realOrigin = origin && fs.existsSync(origin) ? fs.realpathSync(origin) : origin;
   if (
@@ -49,9 +25,18 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
     moduleName.startsWith('.') &&
     moduleName.endsWith('.js')
   ) {
-    const tsPath = path.resolve(path.dirname(realOrigin), moduleName.replace(/\.js$/, '.ts'));
-    if (fs.existsSync(tsPath)) {
-      return { type: 'sourceFile', filePath: tsPath };
+    const dir = path.dirname(realOrigin);
+    const withoutJs = moduleName.replace(/\.js$/, '');
+    const candidates = [];
+    if (platform === 'ios' || platform === 'android') {
+      candidates.push(path.resolve(dir, `${withoutJs}.native.ts`));
+      candidates.push(path.resolve(dir, `${withoutJs}.${platform}.ts`));
+    }
+    candidates.push(path.resolve(dir, `${withoutJs}.ts`));
+    for (const filePath of candidates) {
+      if (fs.existsSync(filePath)) {
+        return { type: 'sourceFile', filePath };
+      }
     }
   }
   return context.resolveRequest(context, moduleName, platform);

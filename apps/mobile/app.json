@@ -82,7 +82,8 @@
           "multipeerServiceTypes": false
         }
       ],
-      "expo-asset"
+      "expo-asset",
+      "./modules/hop-sodium/plugin.js"
     ],
     "extra": {
       "requiresHttpsApiInRelease": true,

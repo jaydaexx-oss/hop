@@ -316,6 +316,7 @@ export {
   MAX_APPLICATION_TEXT_CHARS,
   parseCryptoBoxPayload,
   readySodium,
+  setSodiumBackend,
   type ApplicationKind,
   type ApplicationPlaintext,
   type CryptoBoxPayload,

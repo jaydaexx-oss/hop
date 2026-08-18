@@ -1,0 +1,9 @@
+{
+  "platforms": ["android", "apple"],
+  "apple": {
+    "modules": ["HopSodiumModule"]
+  },
+  "android": {
+    "modules": ["app.hop.sodium.HopSodiumModule"]
+  }
+}

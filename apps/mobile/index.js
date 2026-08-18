@@ -1,3 +1,3 @@
 import './src/crypto/polyfillGetRandomValues';
-import './src/crypto/guardSodiumWasmProbe';
+import './src/crypto/installNativeSodium';
 import 'expo-router/entry';

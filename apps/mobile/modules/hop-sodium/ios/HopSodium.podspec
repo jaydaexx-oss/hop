@@ -17,11 +17,15 @@ Pod::Spec.new do |s|
 
   s.prepare_command = <<-CMD
     sh "#{__dir__}/../scripts/fetch-libsodium.sh"
+    cp "#{__dir__}/../cpp/hop_sodium.h" "#{__dir__}/hop_sodium.h"
   CMD
 
+  # Public headers must live in this ios/ pod root. CocoaPods copies them into
+  # the HopSodium Clang module Headers; ../cpp/hop_sodium.h is not placed there,
+  # so HopSodiumBridge.h's #include "hop_sodium.h" failed the EAS module build.
   s.source_files = [
     '*.{h,m,swift}',
-    '../cpp/*.{c,h}',
+    '../cpp/*.c',
     '../include/sodium/version.h',
     '../vendor/libsodium/src/libsodium/**/*.{c,h}'
   ]
@@ -46,7 +50,10 @@ Pod::Spec.new do |s|
     '../vendor/libsodium/src/libsodium/**/*sse41*.c',
     '../vendor/libsodium/src/libsodium/**/*avx512f*.c'
   ]
-  s.public_header_files = 'HopSodiumBridge.h'
+  s.public_header_files = [
+    'HopSodiumBridge.h',
+    'hop_sodium.h'
+  ]
 
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

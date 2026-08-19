@@ -7,6 +7,9 @@
     "development": {
       "developmentClient": true,
       "distribution": "internal",
+      "cache": {
+        "disabled": true
+      },
       "env": {
         "EXPO_PUBLIC_API_URL": "https://hop-uokqmg.fly.dev"
       },
@@ -18,12 +21,18 @@
     "preview": {
       "developmentClient": false,
       "distribution": "internal",
-      "channel": "preview"
+      "channel": "preview",
+      "cache": {
+        "disabled": true
+      }
     },
     "production": {
       "developmentClient": false,
       "distribution": "store",
-      "channel": "production"
+      "channel": "production",
+      "cache": {
+        "disabled": true
+      }
     }
   },
   "submit": {

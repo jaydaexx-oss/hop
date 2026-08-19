@@ -83,7 +83,6 @@
         }
       ],
       "expo-asset",
-      "./plugins/withWorkletsCompatHeaders.js",
       "./modules/hop-sodium/plugin.js"
     ],
     "extra": {

@@ -118,6 +118,8 @@ Requires an Expo account. Internal-distribution signing on a physical iPhone usu
 
 `eas.json` `development` is `developmentClient: true`, `distribution: internal`, `ios.simulator: false` (device, not Simulator). Cloud env sets `EXPO_PUBLIC_API_URL=https://hop-uokqmg.fly.dev` (public origin, not a secret). `ios/` is gitignored, so EAS runs CNG prebuild on the cloud.
 
+This repo is **not** an npm workspace. There is no root `package.json`. EAS uploads the git root (so `packages/protocol` is available for the `file:` dependency) but must install from **`apps/mobile`**, using **`apps/mobile/package-lock.json`**. Do not run `eas build` from `/Users/jaydae/hop` — there is no `eas.json` or lockfile there, and `require.resolve('react-native-worklets')` fails at the git root.
+
 ```bash
 cd /Users/jaydae/hop/apps/mobile
 npx eas-cli login

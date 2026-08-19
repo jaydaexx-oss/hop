@@ -1,7 +1,8 @@
 {
   "platforms": ["android", "apple"],
   "apple": {
-    "modules": ["HopSodiumModule"]
+    "modules": ["HopSodiumModule"],
+    "podspecPath": "./HopSodium.podspec"
   },
   "android": {
     "modules": ["app.hop.sodium.HopSodiumModule"]

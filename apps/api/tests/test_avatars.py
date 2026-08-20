@@ -75,6 +75,11 @@ def test_avatar_upload_get_delete_and_relative_proxy_url(client: TestClient) -> 
     assert deleted.json()["avatar_url"] is None
     missing = client.get(avatar_proxy_path(user_a["id"]), headers=_headers(token_b))
     assert missing.status_code == 404
+    assert missing.json()["detail"] == "No profile photo"
+
+    # GET /users/me/avatar is not a read route — PUT/DELETE live here, GET is /users/id/{id}/avatar.
+    me_get = client.get("/users/me/avatar", headers=headers_a)
+    assert me_get.status_code == 405
 
 
 def test_avatar_rejects_non_jpeg_and_oversize(client: TestClient) -> None:

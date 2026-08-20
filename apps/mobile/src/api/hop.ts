@@ -1,5 +1,8 @@
-import { API_URL, assertSafeApiUrl } from './client';
 import { identityPublishBody } from '@hop/protocol';
+
+import { PROFILE_PHOTO_MUTATE_PATH, profilePhotoProxyPath } from '@/src/profile/profilePhoto';
+
+import { API_URL, assertSafeApiUrl } from './client';
 
 export type User = {
   id: string;
@@ -79,7 +82,7 @@ async function request<T>(
   return data as T;
 }
 
-async function putJpeg<T>(path: string, token: string, body: Blob | ArrayBuffer): Promise<T> {
+async function putJpeg<T>(path: string, token: string, body: Blob | ArrayBuffer | Uint8Array): Promise<T> {
   assertSafeApiUrl(API_URL);
   let response: Response;
   try {
@@ -98,7 +101,7 @@ async function putJpeg<T>(path: string, token: string, body: Blob | ArrayBuffer)
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = typeof data.detail === 'string' ? data.detail : `Request failed (${response.status})`;
-    throw new ApiError(detail, response.status);
+    throw new ApiError(response.status === 404 ? `${detail} · PUT ${path}` : detail, response.status);
   }
   return data as T;
 }
@@ -110,9 +113,10 @@ export const api = {
     request<AuthResponse>('/auth/login', { method: 'POST', body: { username, password } }),
   logout: (token: string) => request<{ status: string }>('/auth/logout', { method: 'POST', token }),
   me: (token: string) => request<User>('/users/me', { token }),
-  putAvatar: (token: string, jpeg: Blob | ArrayBuffer) => putJpeg<User>('/users/me/avatar', token, jpeg),
-  deleteAvatar: (token: string) => request<User>('/users/me/avatar', { method: 'DELETE', token }),
-  avatarPath: (userId: string) => `/users/id/${encodeURIComponent(userId)}/avatar`,
+  putAvatar: (token: string, jpeg: Blob | ArrayBuffer | Uint8Array) =>
+    putJpeg<User>(PROFILE_PHOTO_MUTATE_PATH, token, jpeg),
+  deleteAvatar: (token: string) => request<User>(PROFILE_PHOTO_MUTATE_PATH, { method: 'DELETE', token }),
+  avatarPath: profilePhotoProxyPath,
   userById: (token: string, userId: string) => request<User>(`/users/id/${userId}`, { token }),
   putIdentity: (token: string, publicKey: string) =>
     request<User>('/users/me/identity', { method: 'PUT', token, body: identityPublishBody(publicKey) }),

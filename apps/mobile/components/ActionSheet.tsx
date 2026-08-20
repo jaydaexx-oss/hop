@@ -19,6 +19,7 @@ type ActionSheetProps = {
   avatarInitials?: string;
   avatarColor?: string;
   avatarUserId?: string | null;
+  avatarHasAvatar?: boolean | null;
   actions: SheetAction[];
 };
 
@@ -31,6 +32,7 @@ export function ActionSheet({
   avatarInitials,
   avatarColor = '#14B8A6',
   avatarUserId,
+  avatarHasAvatar,
   actions,
 }: ActionSheetProps) {
   const insets = useSafeAreaInsets();
@@ -69,6 +71,7 @@ export function ActionSheet({
             username={title}
             color={avatarColor}
             size={48}
+            hasAvatar={avatarHasAvatar}
           />
           <View style={styles.headerText}>
             <Text style={styles.headerName}>{title}</Text>

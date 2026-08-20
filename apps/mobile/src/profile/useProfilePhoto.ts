@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { useAuth } from '@/src/auth/AuthProvider';
+import { isMissingAvatarError, shouldFetchAvatar } from './profilePhoto';
 import {
   fetchProfilePhotoFile,
   subscribeProfilePhotoCache,
@@ -19,11 +20,13 @@ export function useProfilePhoto(userId?: string | null, hasAvatar?: boolean | nu
     if (!token || !userId) {
       setUri(null);
       setStatus('missing');
+      setError(null);
       return;
     }
-    if (hasAvatar === false) {
+    if (!shouldFetchAvatar(hasAvatar)) {
       setUri(null);
       setStatus('missing');
+      setError(null);
       return;
     }
     setStatus('loading');
@@ -33,6 +36,12 @@ export function useProfilePhoto(userId?: string | null, hasAvatar?: boolean | nu
       setUri(next);
       setStatus(next ? 'ready' : 'missing');
     } catch (err) {
+      if (isMissingAvatarError(err)) {
+        setUri(null);
+        setStatus('missing');
+        setError(null);
+        return;
+      }
       setUri(null);
       setStatus('error');
       setError(err instanceof Error ? err.message : 'Could not load photo');

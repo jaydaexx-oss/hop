@@ -238,6 +238,7 @@ export default function SettingsScreen() {
         title="Profile photo"
         subtitle="Square crop, then a circle in HOP. Never in your QR."
         avatarUserId={user?.id}
+        avatarHasAvatar={user?.has_avatar}
         avatarColor={color}
         actions={[
           { label: 'Choose Photo', onPress: () => void applyPhoto('library') },

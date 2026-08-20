@@ -5,6 +5,10 @@ export type BleHandshakePhase = "idle" | "announced" | "authenticating" | "authe
 
 export type TransportSelectionId = "internet" | "bluetooth" | "local" | "none";
 
+export type BleDiagSendResult = "none" | "ok" | "fail";
+export type BleDiagAckResult = "none" | "acked" | "timeout" | "fail";
+export type BleDiagInboundResult = "none" | "accepted" | "dropped";
+
 export type TransportSelectionInfo = {
   selected: TransportSelectionId;
   reason: string;
@@ -22,6 +26,8 @@ export type BleDiagnosticsSnapshot = {
   gattRegistered: boolean;
   connected: boolean;
   connectedPeerCount: number;
+  discoveredPeerCount: number;
+  authenticatedPeerCount: number;
   mtu: number | null;
   handshakeState: BleHandshakePhase;
   nativeImplemented: boolean;
@@ -30,6 +36,9 @@ export type BleDiagnosticsSnapshot = {
   adapterState: BleAdapterState;
   centralManagerInitialized: boolean;
   nativeProbed: boolean;
+  lastSendResult: BleDiagSendResult;
+  lastAckResult: BleDiagAckResult;
+  lastInboundResult: BleDiagInboundResult;
 };
 
 export function describeTransportSelection(input: {
@@ -60,6 +69,40 @@ export function describeTransportSelection(input: {
   return {
     selected: "none",
     reason: input.bleBlockedReason ?? "Offline; no live transport.",
+  };
+}
+
+/**
+ * What TransportManager would pick for a send: internet /health, else authenticated BLE, else queue.
+ * Does not prove a two-phone radio session.
+ */
+export function describeProofRoute(input: {
+  internetHealthOk: boolean;
+  bleRadioReady: boolean;
+  authenticatedPeerMapped: boolean;
+  bleBlockedReason?: string | null;
+}): TransportSelectionInfo {
+  if (input.internetHealthOk) {
+    return {
+      selected: "internet",
+      reason: "API /health reachable; internet is preferred over BLE.",
+    };
+  }
+  if (input.bleRadioReady && input.authenticatedPeerMapped) {
+    return {
+      selected: "bluetooth",
+      reason: "Internet unavailable; authenticated BLE session is mapped for a nearby peer.",
+    };
+  }
+  if (input.bleRadioReady) {
+    return {
+      selected: "local",
+      reason: "Internet unavailable; BLE radio is on but no authenticated session for the recipient.",
+    };
+  }
+  return {
+    selected: "local",
+    reason: input.bleBlockedReason ?? "Internet unavailable; no live BLE route. Encrypted queue is local SQLite.",
   };
 }
 

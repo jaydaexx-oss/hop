@@ -35,6 +35,9 @@ import {
   type AckAttempt,
   type BleAdapterState,
   type BleAuthorizationStatus,
+  type BleDiagAckResult,
+  type BleDiagInboundResult,
+  type BleDiagSendResult,
   type BleDiagnosticsSnapshot,
   type BleHandshakePhase,
   type BleLink,
@@ -152,6 +155,9 @@ export class HopBleEngine implements BleLink {
   private gattRegistered = false;
   private lastMtu: number | null = null;
   private handshakePhase: BleHandshakePhase = 'idle';
+  private lastSendResult: BleDiagSendResult = 'none';
+  private lastAckResult: BleDiagAckResult = 'none';
+  private lastInboundResult: BleDiagInboundResult = 'none';
 
   constructor(tofu?: PublicKeyTofu) {
     this.tofu = tofu ?? new PublicKeyTofu();
@@ -229,9 +235,9 @@ export class HopBleEngine implements BleLink {
   diagnosticsSnapshot(): BleDiagnosticsSnapshot {
     const blocked = bleRuntimeBlockedReason();
     const connectedPeerCount = this.connected.size;
-    const authenticated = [...this.peers.values()].some(
-      (peer) => peer.sessionEstablished === true && this.connected.has(peer.deviceId),
-    );
+    const discoveredPeerCount = this.peers.size;
+    const authenticatedPeerCount = [...this.peers.values()].filter((peer) => peer.sessionEstablished === true).length;
+    const authenticated = authenticatedPeerCount > 0;
     let handshakeState = this.handshakePhase;
     if (authenticated) handshakeState = 'authenticated';
     return {
@@ -242,6 +248,8 @@ export class HopBleEngine implements BleLink {
       gattRegistered: this.gattRegistered,
       connected: connectedPeerCount > 0,
       connectedPeerCount,
+      discoveredPeerCount,
+      authenticatedPeerCount,
       mtu: this.lastMtu,
       handshakeState,
       nativeImplemented: Boolean(this.native),
@@ -250,6 +258,9 @@ export class HopBleEngine implements BleLink {
       adapterState: this.adapterState,
       centralManagerInitialized: this.centralManagerInitialized,
       nativeProbed: this.nativeProbed,
+      lastSendResult: this.lastSendResult,
+      lastAckResult: this.lastAckResult,
+      lastInboundResult: this.lastInboundResult,
     };
   }
 
@@ -293,7 +304,7 @@ export class HopBleEngine implements BleLink {
         characteristics: [
           {
             uuid: HOP_BLE_HANDSHAKE_UUID,
-            properties: ['read', 'write'],
+            properties: ['read', 'write', 'notify'],
             value: handshake,
           },
           {
@@ -465,37 +476,33 @@ export class HopBleEngine implements BleLink {
   async send(deviceId: string, envelope: EncryptedEnvelope): Promise<SendResult> {
     const native = this.native;
     if (!native) {
-      return { ok: false, transport: 'bluetooth', error: 'Native BLE module is unavailable.' };
+      return this.noteSendFail('Native BLE module is unavailable.', 'fail');
     }
     if (!envelope.encrypted_payload || !isCryptoBoxPayload(envelope.encrypted_payload)) {
-      return { ok: false, transport: 'bluetooth', error: 'Refusing to send empty or unauthenticated payload' };
+      return this.noteSendFail('Refusing to send empty or unauthenticated payload', 'fail');
     }
     if (!this.connected.has(deviceId)) {
       try {
         await this.connect(deviceId);
       } catch (err) {
-        return {
-          ok: false,
-          transport: 'bluetooth',
-          error: err instanceof Error ? err.message : 'Connect failed',
-        };
+        return this.noteSendFail(err instanceof Error ? err.message : 'Connect failed', 'fail');
       }
     }
     const peer = this.peers.get(deviceId);
     if (!peer?.sessionEstablished || !peer.publicKey) {
-      return { ok: false, transport: 'bluetooth', error: 'Secure session is not established' };
+      return this.noteSendFail('Secure session is not established', 'fail');
     }
     const refused = bleSendRefusal(this.tofu, peer.userId, peer.publicKey);
     if (refused) {
-      return { ok: false, transport: 'bluetooth', error: refused };
+      return this.noteSendFail(refused, 'fail');
     }
     if (bleSessionStale(this.sessionActivity.get(deviceId))) {
-      return { ok: false, transport: 'bluetooth', error: 'BLE session is stale' };
+      return this.noteSendFail('BLE session is stale', 'fail');
     }
     this.touchSession(deviceId);
 
     const bytes = encodeEnvelope({ ...envelope, transport: 'bluetooth' });
-    return sendWithAckRetry(
+    const result = await sendWithAckRetry(
       async (): Promise<AckAttempt> => {
         const ack = this.waitForAck(envelope.message_id, envelope.recipient_id, peer.publicKey!);
         try {
@@ -518,6 +525,16 @@ export class HopBleEngine implements BleLink {
       },
       { retry: { baseMs: 1_000, maxMs: 8_000, maxAttempts: 3 }, timeoutError: 'Delivery ack timed out' },
     );
+    if (result.ok) {
+      this.lastSendResult = 'ok';
+      this.lastAckResult = 'acked';
+      this.emitPeers();
+      return result;
+    }
+    this.lastSendResult = 'fail';
+    this.lastAckResult = /timed out/i.test(result.error ?? '') ? 'timeout' : 'fail';
+    this.emitPeers();
+    return result;
   }
 
   subscribe(
@@ -649,6 +666,7 @@ export class HopBleEngine implements BleLink {
       lastSeenAt: Date.now(),
     });
     this.touchSession(centralId);
+    this.handshakePhase = 'authenticated';
     this.emitPeers();
     const reply = await encodeAuthenticatedHandshake({
       local: identity,
@@ -666,7 +684,14 @@ export class HopBleEngine implements BleLink {
     if (!resolver) return;
     let serverPk = this.serverKeyCache.get(userId);
     if (!serverPk) {
-      const fetched = await resolver(userId);
+      let fetched: string | null | undefined;
+      try {
+        fetched = await resolver(userId);
+      } catch {
+        // Internet down: crypto_auth + TOFU still apply. Do not block Nearby.
+        return;
+      }
+      if (fetched === undefined) return;
       if (!fetched) {
         throw new Error('Peer has not published an identity key on the server.');
       }
@@ -807,8 +832,14 @@ export class HopBleEngine implements BleLink {
           accepted = false;
         }
       }
-      if (!accepted) return;
+      if (!accepted) {
+        this.lastInboundResult = 'dropped';
+        this.emitPeers();
+        return;
+      }
       this.processed.remember(envelope.message_id);
+      this.lastInboundResult = 'accepted';
+      this.emitPeers();
       await this.notifyAck(native, envelope);
       return;
     }
@@ -962,6 +993,13 @@ export class HopBleEngine implements BleLink {
 
   private emitConnection(deviceId: string, connected: boolean): void {
     for (const listener of this.connectionListeners) listener(deviceId, connected);
+  }
+
+  private noteSendFail(error: string, ack: BleDiagAckResult): SendResult {
+    this.lastSendResult = 'fail';
+    this.lastAckResult = ack;
+    this.emitPeers();
+    return { ok: false, transport: 'bluetooth', error };
   }
 
   private clearScanTimers(): void {

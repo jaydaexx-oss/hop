@@ -2,7 +2,22 @@
 
 This is the only test that counts for encrypted BLE. Simulators, emulators, Expo Go, and web **do not** count.
 
-HOP BLE has **not** been verified on hardware in this environment (no Xcode / no attached phones here). Treat the steps below as the acceptance procedure.
+HOP BLE has **not** been verified on hardware in this environment (no Xcode / no attached phones here). Treat the steps below as the acceptance procedure. Passing protocol tests is **not** two-phone proof.
+
+## Two iPhones (Wi-Fi + cellular off)
+
+Use two physical iPhones, Bluetooth on, **Around Us / Everyone Nearby**, both apps **foreground** (`bluetoothBackground` is false). Do **not** pair in iOS Settings. Expo Go will not work; use a **development client**. Prefer USB `npx expo run:ios --device` + Metro (`npx expo start --dev-client`) unless you added native BLE APIs (this branch did not — JS-only). EAS is optional.
+
+1. Sign in as two different users while internet still works (identity keys live in SecureStore).
+2. Settings → **BLE debug** / **Device diagnostics** (DEV only). Confirm adapter On, advertising, scanning.
+3. Open **Nearby → Around Us**. Wait for a discovered peer (count in diagnostics). iPhone advertising localName may omit the username until Connect.
+4. Tap **Connect** (not iOS pairing). Wait for handshake `authenticated`. Connect establishes the HOP session. It does **not** Accept a message request.
+5. Then **Message request** → send one encrypted intro. Unknown nearby contacts start as a request; the first send is allowed. Further chat needs **Accept** on the other phone. The other phone must also **Connect** before it can send back over BLE.
+6. Turn Wi-Fi and cellular **off** (Bluetooth stays on). Internet-unavailable is `GET /health` failing, not NetInfo. Send again. Transport should show **BLE** after an authenticated session, else **Queue**.
+7. Pass: ciphertext over BLE (`crypto_box`); sender **SENT** after authenticated GATT ACK (not the write alone); **DELIVERED** only after the application delivery ACK. Later internet sync must not duplicate the same `message_id`.
+8. Keep both phones on Around Us. Backgrounding stops Nearby.
+
+DEV diagnostics never show keys, plaintext, or hardware IDs. This checklist is what the human runs; this repo cannot claim the two-phone run succeeded.
 
 ## What you need
 

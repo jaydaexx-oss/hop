@@ -64,9 +64,13 @@ export {
 } from "./appTransports.js";
 export {
   describeTransportSelection,
+  describeProofRoute,
   isSafeDiagnosticsText,
   type BleDiagnosticsSnapshot,
   type BleHandshakePhase,
+  type BleDiagSendResult,
+  type BleDiagAckResult,
+  type BleDiagInboundResult,
   type TransportSelectionInfo,
   type TransportSelectionId,
 } from "./bleDiagnostics.js";

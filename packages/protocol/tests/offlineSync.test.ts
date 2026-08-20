@@ -193,7 +193,7 @@ describe("offline persistence and sync", () => {
     const world = mockWorld({ failPost: true });
     const alice = await generateIdentityKeyPair();
     const blake = await generateIdentityKeyPair();
-    const now = new Date("2026-08-13T00:00:00.000Z");
+    const now = new Date();
     const session = await openService(file, world.http, testCrypto(alice, blake.publicKey));
     const sent = await session.service.sendText({ ...sendInput, text: "retry me", now });
     expect(sent.status).toBe(MessageStatus.QUEUED);

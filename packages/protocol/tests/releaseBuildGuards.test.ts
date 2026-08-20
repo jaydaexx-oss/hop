@@ -8,6 +8,7 @@ import {
   PRODUCTION_APP_TRANSPORT_IDS,
   assertProductionTransportSet,
   createProductionAppTransportManager,
+  describeProofRoute,
   describeTransportSelection,
   isSafeDiagnosticsText,
 } from "../src/index.js";
@@ -64,8 +65,13 @@ describe("mobile production send path source", () => {
     expect(settings).toContain("BLE debug");
     const bleDebug = readRepo("apps/mobile/app/ble-debug.tsx");
     expect(bleDebug).toContain("isBleDebugEnabled(__DEV__)");
+    expect(bleDebug).toContain("Selected transport");
+    expect(bleDebug).toContain("Send result");
+    expect(bleDebug).toContain("Link ACK result");
     expect(bleDebug).not.toMatch(/connectedId/);
     expect(bleDebug).not.toMatch(/deviceId/);
+    const hopBle = readRepo("apps/mobile/src/ble/HopBleEngine.ts");
+    expect(hopBle).toMatch(/HOP_BLE_HANDSHAKE_UUID[\s\S]*properties: \['read', 'write', 'notify'\]/);
     const secrets = readRepo("apps/mobile/src/crypto/secretStore.ts");
     expect(secrets).toContain("shouldFailClosedSecretStore");
     expect(secrets).toMatch(/__DEV__/);
@@ -95,5 +101,29 @@ describe("transport selection diagnostics copy", () => {
     expect(isSafeDiagnosticsText("ciphertext ABC")).toBe(false);
     expect(isSafeDiagnosticsText("crypto_box payload")).toBe(false);
     expect(isSafeDiagnosticsText("audio_b64 clip")).toBe(false);
+  });
+
+  it("describes internet vs authenticated BLE vs queue without two-phone claims", () => {
+    expect(
+      describeProofRoute({
+        internetHealthOk: true,
+        bleRadioReady: true,
+        authenticatedPeerMapped: true,
+      }).selected,
+    ).toBe("internet");
+    expect(
+      describeProofRoute({
+        internetHealthOk: false,
+        bleRadioReady: true,
+        authenticatedPeerMapped: true,
+      }),
+    ).toMatchObject({ selected: "bluetooth" });
+    expect(
+      describeProofRoute({
+        internetHealthOk: false,
+        bleRadioReady: true,
+        authenticatedPeerMapped: false,
+      }).selected,
+    ).toBe("local");
   });
 });

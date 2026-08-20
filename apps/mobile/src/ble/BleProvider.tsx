@@ -22,7 +22,7 @@ import {
 import type { BleDiscoveryProfile } from '@/src/ble/HopBleEngine';
 
 import { useAuth } from '@/src/auth/AuthProvider';
-import { api } from '@/src/api/hop';
+import { ApiError, api } from '@/src/api/hop';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { HopBleEngine } from '@/src/ble/HopBleEngine';
 import { loadOrCreateIdentity } from '@/src/crypto/identity';
@@ -222,7 +222,9 @@ export function BleProvider({ children }: { children: ReactNode }) {
     if (!manager) return;
     const engine = engineRef.current;
     const transport = createBluetoothTransport(engine, (envelope) =>
-      engine.listPeers().find((peer) => peer.userId === envelope.recipient_id)?.deviceId ?? null,
+      engine.listPeers().find(
+        (peer) => peer.userId === envelope.recipient_id && peer.sessionEstablished === true,
+      )?.deviceId ?? null,
     );
     manager.register(transport);
     return () => {
@@ -269,8 +271,13 @@ export function BleProvider({ children }: { children: ReactNode }) {
         relayConsent: consent,
         resolveServerPublicKey: tokenRef.current
           ? async (userId) => {
-              const peer = await api.userById(tokenRef.current!, userId);
-              return peer.identity_public_key || null;
+              try {
+                const peer = await api.userById(tokenRef.current!, userId);
+                return peer.identity_public_key || null;
+              } catch (err) {
+                if (err instanceof ApiError && err.status === 0) return undefined;
+                throw err;
+              }
             }
           : undefined,
       });

@@ -16,7 +16,7 @@ import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import {
-  describeTransportSelection,
+  describeProofRoute,
   isSafeDiagnosticsText,
   type BleDiagnosticsSnapshot,
   type BleHandshakePhase,
@@ -89,6 +89,13 @@ function truncateId(value: string): string {
 
 function fingerprintHint(publicKey: string): string {
   return formatPersistedFingerprint(publicKey);
+}
+
+function transportSelectedLabel(selected: string): string {
+  if (selected === 'internet') return 'Internet';
+  if (selected === 'bluetooth') return 'BLE';
+  if (selected === 'local') return 'Queue';
+  return 'None';
 }
 
 function handshakeLabel(state: BleHandshakePhase): string {
@@ -179,9 +186,12 @@ export default function DeviceDiagnosticsScreen() {
       const records = tofu?.snapshot() ?? [];
       const identityLoaded = Boolean(user && service && !identityError);
       const bleTech = engine.diagnosticsSnapshot();
-      const selection = describeTransportSelection({
-        networkStatus,
-        bleImplemented: bleTech.nativeImplemented,
+      const proofRoute = describeProofRoute({
+        internetHealthOk: api === 'Connected',
+        bleRadioReady: Boolean(
+          bleTech.nativeImplemented && bleTech.permissionGranted && bleTech.adapterOn && bleTech.advertising,
+        ),
+        authenticatedPeerMapped: bleTech.authenticatedPeerCount > 0,
         bleBlockedReason: bleTech.blockedReason,
       });
       const probeResult: Probe = {
@@ -206,8 +216,8 @@ export default function DeviceDiagnosticsScreen() {
         transport: transportLabel(networkStatus),
         encryption: identityLoaded ? 'Active' : 'Error',
         bleTech,
-        transportSelected: selection.selected,
-        fallbackReason: safeDetail(selection.reason, 'Transport reason omitted.'),
+        transportSelected: transportSelectedLabel(proofRoute.selected),
+        fallbackReason: safeDetail(proofRoute.reason, 'Transport reason omitted.'),
       };
       setProbe(probeResult);
     } finally {
@@ -376,6 +386,19 @@ export default function DeviceDiagnosticsScreen() {
             muted={colors.muted}
           />
           <Row
+            label="Discovered peers"
+            value={String(probe.bleTech.discoveredPeerCount)}
+            tone={probe.bleTech.discoveredPeerCount > 0 ? 'ok' : 'warn'}
+            detail="Count only. Hardware IDs are never shown."
+            muted={colors.muted}
+          />
+          <Row
+            label="Authenticated sessions"
+            value={String(probe.bleTech.authenticatedPeerCount)}
+            tone={probe.bleTech.authenticatedPeerCount > 0 ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
             label="MTU"
             value={
               probe.bleTech.mtu != null
@@ -402,6 +425,31 @@ export default function DeviceDiagnosticsScreen() {
             value={probe.transportSelected}
             tone="ok"
             detail={probe.fallbackReason}
+            muted={colors.muted}
+          />
+          <Row
+            label="Last send"
+            value={probe.bleTech.lastSendResult}
+            tone={probe.bleTech.lastSendResult === 'ok' ? 'ok' : probe.bleTech.lastSendResult === 'fail' ? 'error' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
+            label="Link ACK"
+            value={probe.bleTech.lastAckResult}
+            tone={probe.bleTech.lastAckResult === 'acked' ? 'ok' : probe.bleTech.lastAckResult === 'none' ? 'warn' : 'error'}
+            detail="Authenticated GATT ACK. Chat DELIVERED still requires the application delivery ACK."
+            muted={colors.muted}
+          />
+          <Row
+            label="Inbound"
+            value={probe.bleTech.lastInboundResult}
+            tone={
+              probe.bleTech.lastInboundResult === 'accepted'
+                ? 'ok'
+                : probe.bleTech.lastInboundResult === 'dropped'
+                  ? 'error'
+                  : 'warn'
+            }
             muted={colors.muted}
           />
           <Row

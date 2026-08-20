@@ -175,6 +175,38 @@ def test_leave_and_remove_lose_future_event_chat(client: TestClient) -> None:
     assert guest_remove.status_code == 403
 
 
+def test_host_can_invite_later_and_cancel_pending(client: TestClient) -> None:
+    host_token, _ = _auth(client, "hostff")
+    later_token, later_id = _auth(client, "laterff")
+    event_id = client.post(
+        "/events",
+        json={"name": "Afterparty", "visibility": "invite_only"},
+        headers=_headers(host_token),
+    ).json()["id"]
+    invited = client.post(
+        f"/events/{event_id}/invites",
+        json={"usernames": ["laterff"]},
+        headers=_headers(host_token),
+    )
+    assert invited.status_code == 200
+    assert any(row["invitee"]["id"] == later_id for row in invited.json()["pending_invites"])
+    listed = client.get("/events", headers=_headers(later_token)).json()
+    assert listed[0]["row_status"] == "invited"
+    cancelled = client.delete(
+        f"/events/{event_id}/invites/{later_id}",
+        headers=_headers(host_token),
+    )
+    assert cancelled.status_code == 200
+    assert cancelled.json()["pending_invites"] == []
+    missing = client.get("/events", headers=_headers(later_token)).json()
+    assert missing == []
+    guest_cancel = client.delete(
+        f"/events/{event_id}/invites/{later_id}",
+        headers=_headers(later_token),
+    )
+    assert guest_cancel.status_code == 403
+
+
 def test_discoverable_is_not_auto_join(client: TestClient) -> None:
     host_token, _ = _auth(client, "hostdd")
     nearby_token, _ = _auth(client, "neardd")

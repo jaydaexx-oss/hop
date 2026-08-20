@@ -10,6 +10,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import type { EventPickerCandidate } from '@/src/events/candidatePicker';
+import { localDateTimeParts, parseLocalDateTime, scheduledStartError } from '@/src/events/eventSchedule';
 import {
   EVENT_DURATION_PRESET_KEYS,
   EVENT_DURATION_PRESET_MS,
@@ -25,6 +26,7 @@ import { useOffline } from '@/src/offline/OfflineProvider';
 
 type DurationChoice = EventDurationPresetKey | 'custom';
 type Visibility = 'invite_only' | 'discoverable';
+type WhenChoice = 'now' | 'later';
 
 export default function CreateEventScreen() {
   const { token, user } = useAuth();
@@ -38,6 +40,9 @@ export default function CreateEventScreen() {
   const [choice, setChoice] = useState<DurationChoice>('2h');
   const [customHours, setCustomHours] = useState('1');
   const [customMinutes, setCustomMinutes] = useState('0');
+  const [when, setWhen] = useState<WhenChoice>('now');
+  const [startDate, setStartDate] = useState(() => localDateTimeParts(new Date(Date.now() + 60 * 60 * 1000)).date);
+  const [startTime, setStartTime] = useState(() => localDateTimeParts(new Date(Date.now() + 60 * 60 * 1000)).time);
   const [visibility, setVisibility] = useState<Visibility>('invite_only');
   const [selected, setSelected] = useState<EventPickerCandidate[]>([]);
   const [acceptedIds, setAcceptedIds] = useState<string[]>([]);
@@ -50,6 +55,8 @@ export default function CreateEventScreen() {
       ? customEventDurationMs(Number(customHours) || 0, Number(customMinutes) || 0)
       : EVENT_DURATION_PRESET_MS[choice];
   const eventName = normalizeEventName(name);
+  const scheduledStart = when === 'later' ? parseLocalDateTime(startDate, startTime) : null;
+  const startError = when === 'later' ? scheduledStartError(scheduledStart ?? Number.NaN) : null;
 
   async function loadPicker() {
     const [convos, accepted] = await Promise.all([
@@ -68,6 +75,7 @@ export default function CreateEventScreen() {
       const created = await api.createEvent(token, {
         name: eventName,
         duration_ms: clampEventDurationMs(durationMs),
+        starts_at: scheduledStart ? new Date(scheduledStart).toISOString() : undefined,
         visibility,
         invite_usernames: selected.map((row) => row.username),
       });
@@ -104,6 +112,40 @@ export default function CreateEventScreen() {
       ) : null}
       {step === 1 ? (
         <>
+          <Text style={[styles.label, { color: colors.muted }]}>Date / time</Text>
+          <Pressable
+            onPress={() => setWhen('now')}
+            style={[styles.choice, { borderColor: when === 'now' ? colors.event : colors.border }]}>
+            <Text style={{ color: colors.text, fontWeight: '800' }}>Starts now</Text>
+            <Text style={{ color: colors.muted }}>Use a duration from this moment.</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => setWhen('later')}
+            style={[styles.choice, { borderColor: when === 'later' ? colors.event : colors.border }]}>
+            <Text style={{ color: colors.text, fontWeight: '800' }}>Schedule for later</Text>
+            <Text style={{ color: colors.muted }}>Pick a start date and time, then a duration.</Text>
+          </Pressable>
+          {when === 'later' ? (
+            <View style={styles.customRow}>
+              <TextInput
+                value={startDate}
+                onChangeText={setStartDate}
+                placeholder="YYYY-MM-DD"
+                placeholderTextColor={colors.muted}
+                autoCapitalize="none"
+                style={[styles.input, styles.custom, { color: colors.text, borderColor: colors.border, backgroundColor: colors.card }]}
+              />
+              <TextInput
+                value={startTime}
+                onChangeText={setStartTime}
+                placeholder="HH:MM"
+                placeholderTextColor={colors.muted}
+                autoCapitalize="none"
+                style={[styles.input, styles.custom, { color: colors.text, borderColor: colors.border, backgroundColor: colors.card }]}
+              />
+            </View>
+          ) : null}
+          {startError ? <Text style={styles.error}>{startError}</Text> : null}
           <Text style={[styles.label, { color: colors.muted }]}>Duration</Text>
           <View style={styles.chips}>
             {EVENT_DURATION_PRESET_KEYS.map((key) => {
@@ -141,8 +183,14 @@ export default function CreateEventScreen() {
               <Text style={{ color: colors.muted }}>m · {eventDurationLabel(durationMs)}</Text>
             </View>
           ) : null}
-          <Pressable onPress={() => setStep(2)} style={[styles.btn, { backgroundColor: colors.event }]}>
+          <Pressable
+            disabled={Boolean(startError)}
+            onPress={() => setStep(2)}
+            style={[styles.btn, { backgroundColor: colors.event, opacity: startError ? 0.45 : 1 }]}>
             <Text style={styles.btnLabel}>Next</Text>
+          </Pressable>
+          <Pressable onPress={() => setStep(0)}>
+            <Text style={{ color: colors.muted, fontWeight: '700', textAlign: 'center' }}>Back</Text>
           </Pressable>
         </>
       ) : null}
@@ -168,6 +216,9 @@ export default function CreateEventScreen() {
             }}
             style={[styles.btn, { backgroundColor: colors.event }]}>
             <Text style={styles.btnLabel}>Invite people</Text>
+          </Pressable>
+          <Pressable onPress={() => setStep(1)}>
+            <Text style={{ color: colors.muted, fontWeight: '700', textAlign: 'center' }}>Back</Text>
           </Pressable>
         </>
       ) : null}
@@ -195,6 +246,9 @@ export default function CreateEventScreen() {
             onPress={() => void create()}
             style={[styles.btn, { backgroundColor: colors.event, opacity: busy ? 0.6 : 1 }]}>
             <Text style={styles.btnLabel}>Create</Text>
+          </Pressable>
+          <Pressable onPress={() => setStep(2)}>
+            <Text style={{ color: colors.muted, fontWeight: '700', textAlign: 'center' }}>Back</Text>
           </Pressable>
         </>
       ) : null}

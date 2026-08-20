@@ -409,21 +409,41 @@ export default function ChatScreen() {
     setError(null);
     let outcome: StoredMessage | undefined;
     try {
-      const retried = await service.retryFailed(messageId);
-      if (retried) {
-        outcome = retried;
-        mergeRows([storedToChat(retried)]);
-      } else if (existing?.text) {
-        outcome = await sendChatText(service, {
+      if (isEventChat) {
+        if (eventArchived) {
+          setError('Event chat is archived');
+          return;
+        }
+        if (!existing?.text || eventRecipientIds.length === 0) {
+          setError('Cannot send without a real recipient');
+          return;
+        }
+        outcome = await sendEventChatText(service, {
           conversation_id: id,
           sender_id: me.id,
-          recipient_id: recipientId,
+          recipient_ids: eventRecipientIds,
           text: existing.text,
-          message_id: existing.message_id,
-          send_seq: existing.send_seq ?? undefined,
+          archived: eventArchived,
           onAllocated: (row) => mergeRows([storedToChat(row)]),
         });
         mergeRows([storedToChat(outcome)]);
+      } else {
+        const retried = await service.retryFailed(messageId);
+        if (retried) {
+          outcome = retried;
+          mergeRows([storedToChat(retried)]);
+        } else if (existing?.text) {
+          outcome = await sendChatText(service, {
+            conversation_id: id,
+            sender_id: me.id,
+            recipient_id: recipientId,
+            text: existing.text,
+            message_id: existing.message_id,
+            send_seq: existing.send_seq ?? undefined,
+            onAllocated: (row) => mergeRows([storedToChat(row)]),
+          });
+          mergeRows([storedToChat(outcome)]);
+        }
       }
       await syncNow();
       await loadLatest();
@@ -582,6 +602,8 @@ export default function ChatScreen() {
       <View style={[styles.composer, { backgroundColor: colors.background, paddingBottom: Math.max(12, insets.bottom) }]}>
         {eventArchived ? (
           <Text style={{ color: colors.muted, paddingHorizontal: 4 }}>Event Chat is archived. You can still read history.</Text>
+        ) : isEventChat && eventRecipientIds.length === 0 ? (
+          <Text style={{ color: colors.muted, paddingHorizontal: 4 }}>Invite someone who accepted to start Event Chat.</Text>
         ) : inputMode === 'ptt' && !isEventChat ? (
           <View style={styles.pttRow}>
             <PTTButton

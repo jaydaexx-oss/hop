@@ -32,5 +32,14 @@ describe('events list grouping', () => {
     expect(grouped.past.map((row) => row.id)).toEqual(['c']);
     expect(eventStatusLabel('invited')).toBe('Invited');
     expect(eventWhenLabel(event({ id: 'd', row_status: 'ended', status: 'ended' }))).toBe('Ended');
+    const now = Date.parse('2026-08-20T12:00:00.000Z');
+    const upcoming = event({
+      id: 'e',
+      row_status: 'upcoming',
+      status: 'upcoming',
+      starts_at: new Date(now + 3_600_000).toISOString(),
+      ends_at: new Date(now + 7_200_000).toISOString(),
+    });
+    expect(eventWhenLabel(upcoming, now)).toContain('Starts in');
   });
 });

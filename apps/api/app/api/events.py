@@ -219,6 +219,10 @@ async def _notify_invite(invitee_id: str, event_id: str) -> None:
     await hub.send_json(invitee_id, {"type": "event_invite", "event_id": event_id})
 
 
+async def _notify_event(user_id: str, event_type: str, event_id: str) -> None:
+    await hub.send_json(user_id, {"type": event_type, "event_id": event_id})
+
+
 @router.post("/events", response_model=EventOut)
 async def create_event(
     body: EventCreateIn,
@@ -454,7 +458,7 @@ def leave_event(
 
 
 @router.delete("/events/{event_id}/members/{user_id}", response_model=EventOut)
-def remove_member(
+async def remove_member(
     event_id: str,
     user_id: str,
     session: Session = Depends(get_session),
@@ -473,11 +477,12 @@ def remove_member(
     _remove_conversation_member(session, event.conversation_id, user_id)
     session.commit()
     session.refresh(event)
+    await _notify_event(user_id, "event_removed", event.id)
     return _event_out(session, event, user)
 
 
 @router.post("/events/{event_id}/end", response_model=EventOut)
-def end_event(
+async def end_event(
     event_id: str,
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
@@ -501,6 +506,9 @@ def end_event(
         invite.status = "cancelled"
         invite.responded_at = now
         session.add(invite)
+    member_ids = [row.user_id for row in session.exec(select(EventMember).where(EventMember.event_id == event.id)).all()]
     session.commit()
     session.refresh(event)
+    for member_id in member_ids:
+        await _notify_event(member_id, "event_ended", event.id)
     return _event_out(session, event, user)

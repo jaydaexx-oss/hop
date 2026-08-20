@@ -10,25 +10,42 @@ export function remainingMs(event: Pick<HopEvent, 'ends_at'>, now = Date.now()):
   return Math.max(0, ends - now);
 }
 
+export function formatEventClock(iso: string): string {
+  const ms = Date.parse(iso);
+  if (!Number.isFinite(ms)) return '';
+  return new Date(ms).toLocaleString(undefined, {
+    weekday: 'short',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+  });
+}
+
 export function eventWhenLabel(event: HopEvent, now = Date.now()): string {
   if (event.status === 'ended' || event.row_status === 'ended') return 'Ended';
+  const clock = formatEventClock(event.starts_at);
   if (event.status === 'upcoming') {
     const starts = Date.parse(event.starts_at);
-    if (!Number.isFinite(starts)) return 'Upcoming';
+    if (!Number.isFinite(starts)) return clock || 'Upcoming';
     const delta = starts - now;
-    if (delta <= 0) return 'Starting';
+    if (delta <= 0) return clock ? `${clock} · Starting` : 'Starting';
     const minutes = Math.ceil(delta / 60_000);
-    if (minutes < 60) return `Starts in ${minutes}m`;
-    const hours = Math.floor(minutes / 60);
-    return `Starts in ${hours}h`;
+    const relative = minutes < 60 ? `Starts in ${minutes}m` : `Starts in ${Math.floor(minutes / 60)}h`;
+    return clock ? `${clock} · ${relative}` : relative;
   }
   const left = remainingMs(event, now);
-  if (left <= 0) return 'Ending';
+  if (left <= 0) return clock ? `${clock} · Ending` : 'Ending';
   const minutes = Math.ceil(left / 60_000);
-  if (minutes < 60) return `${minutes}m left`;
-  const hours = Math.floor(minutes / 60);
-  const mins = minutes % 60;
-  return mins ? `${hours}h ${mins}m left` : `${hours}h left`;
+  const relative =
+    minutes < 60
+      ? `${minutes}m left`
+      : (() => {
+          const hours = Math.floor(minutes / 60);
+          const mins = minutes % 60;
+          return mins ? `${hours}h ${mins}m left` : `${hours}h left`;
+        })();
+  return clock ? `${clock} · ${relative}` : relative;
 }
 
 export function eventStatusLabel(status: EventRowStatus): string {

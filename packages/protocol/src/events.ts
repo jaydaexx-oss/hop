@@ -111,6 +111,17 @@ export function canJoinDiscoverableEvent(input: {
   );
 }
 
+/** Radar Event Mode is activation for a backend event, never the event store. */
+export function radarEventModeShouldRun(input: {
+  eventId?: string | null;
+  membership: EventMembershipView;
+  schedule: EventScheduleStatus;
+}): boolean {
+  if (!input.eventId) return false;
+  if (input.schedule === "ended") return false;
+  return input.membership === "host" || input.membership === "guest";
+}
+
 export function canAcceptEventInvite(input: {
   membership: EventMembershipView;
   inviteStatus: EventInviteStatus;

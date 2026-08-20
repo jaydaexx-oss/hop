@@ -10,10 +10,13 @@ import {
 } from 'react';
 import { AppState } from 'react-native';
 
-import { api } from '@/src/api/hop';
+import { radarEventModeShouldRun } from '@hop/protocol';
+
+import { api, ApiError } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle, type StartNearbyOptions } from '@/src/ble/BleProvider';
 import { useOffline } from '@/src/offline/OfflineProvider';
+import { useHopSocket } from '@/src/ws';
 
 import { EventModeService, formatEventRemaining } from './EventModeService';
 import { NearbyService } from './NearbyService';
@@ -184,13 +187,22 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
         let nextEvent = event;
         if (privacy === 'invisible' && event.enabled) {
           nextEvent = await eventServiceRef.current.disable(user.id);
+        } else if (event.enabled && !event.eventId) {
+          nextEvent = await eventServiceRef.current.disable(user.id);
         } else if (event.enabled && event.eventId && token) {
           try {
             const remote = await api.getEvent(token, event.eventId);
             const remaining = Math.max(0, new Date(remote.ends_at).getTime() - Date.now());
-            if (remote.status === 'ended' || remote.conversation_archived || remaining <= 0) {
+            if (
+              remaining <= 0 ||
+              !radarEventModeShouldRun({
+                eventId: remote.id,
+                membership: remote.my_role ?? 'none',
+                schedule: remote.status,
+              })
+            ) {
               nextEvent = await eventServiceRef.current.disable(user.id);
-            } else if (remote.my_role === 'host' || remote.my_role === 'guest') {
+            } else {
               nextEvent = await eventServiceRef.current.enable(
                 user.id,
                 remaining,
@@ -198,11 +210,11 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
                 remote.name,
                 remote.id,
               );
-            } else {
+            }
+          } catch (err) {
+            if (err instanceof ApiError && err.status === 404) {
               nextEvent = await eventServiceRef.current.disable(user.id);
             }
-          } catch {
-            /* offline: keep the local Event Mode binding */
           }
         }
         if (cancelled) return;
@@ -343,15 +355,37 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
         let next = await eventServiceRef.current.tick(user.id);
         if (livePrivacy === 'invisible' && next.enabled) {
           next = await eventServiceRef.current.disable(user.id);
+        } else if (next.enabled && !next.eventId) {
+          next = await eventServiceRef.current.disable(user.id);
+        } else if (next.enabled && next.eventId && token) {
+          try {
+            const remote = await api.getEvent(token, next.eventId);
+            const remaining = Math.max(0, new Date(remote.ends_at).getTime() - Date.now());
+            if (
+              remaining <= 0 ||
+              !radarEventModeShouldRun({
+                eventId: remote.id,
+                membership: remote.my_role ?? 'none',
+                schedule: remote.status,
+              })
+            ) {
+              next = await eventServiceRef.current.disable(user.id);
+            }
+          } catch (err) {
+            if (err instanceof ApiError && err.status === 404) {
+              next = await eventServiceRef.current.disable(user.id);
+            }
+          }
         }
         eventRef.current = next;
+        eventDesiredRef.current = next.enabled;
         setEventMode(next);
         if (!next.enabled) setDiscoveryProfile('standard');
         await startDiscovery(livePrivacy, next.enabled);
       })();
     });
     return () => sub.remove();
-  }, [ready, setDiscoveryProfile, startDiscovery, user]);
+  }, [ready, setDiscoveryProfile, startDiscovery, token, user]);
 
   useEffect(() => {
     return () => {
@@ -377,6 +411,17 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
       if (!next.enabled) setDiscoveryProfile('standard');
     });
   }, [eventMode.enabled, setDiscoveryProfile, tick, user]);
+
+  useHopSocket(token, (frame) => {
+    if ((frame.type !== 'event_ended' && frame.type !== 'event_removed') || !user) return;
+    if (!frame.event_id || frame.event_id !== eventRef.current.eventId) return;
+    void eventServiceRef.current.disable(user.id).then((next) => {
+      eventRef.current = next;
+      eventDesiredRef.current = false;
+      setEventMode(next);
+      setDiscoveryProfile('standard');
+    });
+  });
 
   useEffect(() => {
     if (!safety) return;
@@ -457,6 +502,9 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     ) => {
       if (!user) return;
       const requestId = modeRequestRef.current;
+      if (!eventId) {
+        throw new Error('Select an event to start Event Mode.');
+      }
       if (!isEventModeAllowed(privacyRef.current) || !isEventModeAllowed(forPrivacy)) {
         if (requestId !== modeRequestRef.current) return;
         throw new Error('Turn on Contacts only or Everyone nearby before Event Mode.');

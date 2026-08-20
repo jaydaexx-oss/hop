@@ -4,7 +4,7 @@ import { wsUrl, type ChatMessage } from '@/src/api/hop';
 
 export function useHopSocket(
   token: string | null,
-  onEvent: (event: { type: string; message?: ChatMessage }) => void,
+  onEvent: (event: { type: string; message?: ChatMessage; event_id?: string }) => void,
 ) {
   const handler = useRef(onEvent);
   handler.current = onEvent;

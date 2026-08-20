@@ -365,6 +365,7 @@ export {
   eventRowStatus,
   eventScheduleStatus,
   normalizeConversationKind,
+  radarEventModeShouldRun,
   removedMemberLosesFutureEventChat,
   shouldApplyDirectInboxSafety,
   type ChatsInboxSectionId,

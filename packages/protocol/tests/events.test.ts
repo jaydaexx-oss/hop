@@ -27,6 +27,7 @@ import {
   eventScheduleStatus,
   generateIdentityKeyPair,
   normalizeConversationKind,
+  radarEventModeShouldRun,
   removedMemberLosesFutureEventChat,
   shouldApplyDirectInboxSafety,
   type IdentityKeyPair,
@@ -65,6 +66,18 @@ describe("event persistence and schedule", () => {
     expect(eventListSection("active")).toBe("active");
     expect(eventListSection("invited")).toBe("upcoming");
     expect(eventListSection("ended")).toBe("past");
+    expect(
+      radarEventModeShouldRun({ eventId: "e1", membership: "host", schedule: "active" }),
+    ).toBe(true);
+    expect(
+      radarEventModeShouldRun({ eventId: null, membership: "host", schedule: "active" }),
+    ).toBe(false);
+    expect(
+      radarEventModeShouldRun({ eventId: "e1", membership: "invited", schedule: "active" }),
+    ).toBe(false);
+    expect(
+      radarEventModeShouldRun({ eventId: "e1", membership: "guest", schedule: "ended" }),
+    ).toBe(false);
   });
 });
 

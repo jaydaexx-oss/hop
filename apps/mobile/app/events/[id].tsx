@@ -11,7 +11,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { api, type HopEvent } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import type { EventPickerCandidate } from '@/src/events/candidatePicker';
-import { eventChatRoute, eventStatusLabel, eventWhenLabel, remainingMs } from '@/src/events/eventList';
+import { eventChatRoute, eventStatusLabel, eventWhenLabel, formatEventClock, remainingMs } from '@/src/events/eventList';
 import { DEFAULT_EVENT_DURATION_MS } from '@/src/nearby/types';
 import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { useOffline } from '@/src/offline/OfflineProvider';
@@ -21,7 +21,7 @@ export default function EventDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const { token, user } = useAuth();
   const { listCachedConversations, safety, cacheConversation } = useOffline();
-  const { peers, setOperatingMode, eventMode } = useNearbyPeers();
+  const { peers, setOperatingMode, eventMode, disableEventMode } = useNearbyPeers();
   const router = useRouter();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
@@ -81,10 +81,25 @@ export default function EventDetailScreen() {
     ]);
   }
 
+  async function dropRadarIfBound() {
+    if (eventMode.eventId && eventMode.eventId === id) {
+      await disableEventMode().catch(() => undefined);
+    }
+  }
+
   async function run(action: () => Promise<HopEvent>) {
     setError(null);
     try {
-      setEvent(await action());
+      const next = await action();
+      setEvent(next);
+      if (
+        next.status === 'ended' ||
+        next.my_role == null ||
+        next.my_role === 'invited' ||
+        (user && !next.members.some((member) => member.id === user.id))
+      ) {
+        await dropRadarIfBound();
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not update event');
     }
@@ -126,6 +141,9 @@ export default function EventDetailScreen() {
       <Text style={{ color: colors.event, fontWeight: '800' }}>{eventStatusLabel(event.row_status)}</Text>
       <Text style={{ color: colors.muted }}>Host · {event.host.username}</Text>
       <Text style={{ color: colors.muted }}>{eventWhenLabel(event)}</Text>
+      {event.status !== 'ended' && event.ends_at ? (
+        <Text style={{ color: colors.muted }}>Ends {formatEventClock(event.ends_at)}</Text>
+      ) : null}
       <Text style={{ color: colors.muted }}>
         {event.visibility === 'discoverable' ? 'Discoverable nearby' : 'Invite only'} · {event.participant_count} people
       </Text>
@@ -273,7 +291,10 @@ export default function EventDetailScreen() {
         <Pressable
           onPress={() =>
             confirm('Leave event', 'You will leave this gathering and lose future Event Chat.', () => {
-              void run(() => api.leaveEvent(token!, event.id)).then(() => router.replace('/events'));
+              void run(() => api.leaveEvent(token!, event.id)).then(async () => {
+                await dropRadarIfBound();
+                router.replace('/events');
+              });
             })
           }
           style={[styles.btn, { backgroundColor: colors.card }]}>

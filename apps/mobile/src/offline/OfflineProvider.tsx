@@ -71,7 +71,7 @@ function toConversation(row: StoredConversation): Conversation {
 function createAppCrypto(identity: IdentityKeyPair, store: HopSqliteStore, tofu: PublicKeyTofu): MessageCrypto {
   return {
     encrypt: async (plain) => {
-      const pk = await store.peerPublicKey(plain.recipient_id);
+      const pk = (await store.peerPublicKey(plain.recipient_id)) ?? tofu.get(plain.recipient_id) ?? null;
       if (!pk) throw new Error('Peer has not published an identity public key.');
       const state = tofu.observe(plain.recipient_id, pk);
       if (state === 'KEY_CHANGED') {

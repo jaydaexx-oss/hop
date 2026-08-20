@@ -8,6 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
+from app.avatars import build_member_out
 from app.db import get_session
 from app.models.tables import (
     BlockedUser,
@@ -22,7 +23,7 @@ from app.models.tables import (
 )
 from app.payload import is_crypto_box_payload
 from app.rate_limit import limit_messages
-from app.schemas import AckIn, ConversationCreateIn, ConversationOut, MemberOut, MessageOut, TextMessageIn
+from app.schemas import AckIn, ConversationCreateIn, ConversationOut, MessageOut, TextMessageIn
 from app.security import get_current_user, validate_username
 from app.ws import hub, message_event
 
@@ -90,11 +91,7 @@ def _conversation_out(session: Session, convo: Conversation, me: User) -> Conver
     return ConversationOut(
         id=convo.id,
         created_at=convo.created_at,
-        peer=MemberOut(
-            id=peer.id,
-            username=peer.username,
-            identity_public_key=identity_public_key(session, peer.id),
-        ),
+        peer=build_member_out(session, peer),
     )
 
 

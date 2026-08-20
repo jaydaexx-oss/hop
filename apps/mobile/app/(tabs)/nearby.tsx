@@ -11,6 +11,7 @@ import {
 } from '@hop/protocol';
 
 import { ActionSheet, type SheetAction } from '@/components/ActionSheet';
+import { EventSetupSheet } from '@/components/EventSetupSheet';
 import { NearbyModeSelector } from '@/components/NearbyModeSelector';
 import { NearbyRadar } from '@/components/NearbyRadar';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -22,7 +23,6 @@ import { useAuth } from '@/src/auth/AuthProvider';
 import { chatRoute, openPeerThread } from '@/src/chat/openPeerThread';
 import {
   EVENT_BLOCKED_COPY,
-  EVENT_ENTRY_COPY,
   INVISIBLE_RADAR_COPY,
 } from '@/src/nearby/nearbyPolicy';
 import { SCAN_STATE_COPY } from '@/src/nearby/scanState';
@@ -32,6 +32,7 @@ import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
 import { avatarInitialsFromName } from '@/components/Avatar';
+import { ProfileAvatar } from '@/components/ProfileAvatar';
 
 const RADAR_SIZE = Math.min(Dimensions.get('window').width * 0.88, 336);
 
@@ -93,7 +94,7 @@ export default function NearbyScreen() {
   const [openError, setOpenError] = useState<string | null>(null);
   const [eventError, setEventError] = useState<string | null>(null);
   const [sheetPeer, setSheetPeer] = useState<AroundUsPeer | null>(null);
-  const [modeSheet, setModeSheet] = useState<'event-blocked' | 'event-confirm' | null>(null);
+  const [modeSheet, setModeSheet] = useState<'event-blocked' | 'event-setup' | null>(null);
   const [pendingAudience, setPendingAudience] = useState<NearbyAudience | null>(null);
 
   const radarTint = operatingMode === 'event' ? colors.event : colors.tint;
@@ -166,19 +167,19 @@ export default function NearbyScreen() {
       return;
     }
     setPendingAudience(privacyMode === 'contacts' || privacyMode === 'everyone' ? privacyMode : audience);
-    setModeSheet('event-confirm');
+    setModeSheet('event-setup');
   }
 
   function chooseBlockedAudience(next: NearbyAudience) {
     setPendingAudience(next);
-    setModeSheet('event-confirm');
+    setModeSheet('event-setup');
   }
 
-  async function confirmEventStart(next: NearbyAudience) {
+  async function confirmEventStart(next: NearbyAudience, durationMs: number, eventName: string) {
     setEventError(null);
     setModeSheet(null);
     try {
-      await setOperatingMode('event', { audience: next });
+      await setOperatingMode('event', { audience: next, durationMs, eventName });
     } catch (err) {
       setEventError(err instanceof Error ? err.message : 'Could not start Event Mode');
     }
@@ -201,13 +202,6 @@ export default function NearbyScreen() {
     { label: AUDIENCE_LABELS.contacts, onPress: () => chooseBlockedAudience('contacts') },
     { label: AUDIENCE_LABELS.everyone, onPress: () => chooseBlockedAudience('everyone') },
   ];
-  const confirmActions: SheetAction[] =
-    operatingMode === 'invisible'
-      ? [{ label: EVENT_ENTRY_COPY.confirm, onPress: () => void confirmEventStart(confirmAudience) }]
-      : [
-          { label: `${AUDIENCE_LABELS.contacts} · 2 hours`, onPress: () => void confirmEventStart('contacts') },
-          { label: `${AUDIENCE_LABELS.everyone} · 2 hours`, onPress: () => void confirmEventStart('everyone') },
-        ];
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={styles.wrap}>
@@ -216,7 +210,7 @@ export default function NearbyScreen() {
         <Text style={[styles.brand, { color: colors.tint }]}>HOP</Text>
         <Text style={[styles.scanBadge, { color: operatingMode === 'event' ? colors.event : colors.muted }]}>
           {operatingMode === 'event'
-            ? `Event Mode · ${eventRemainingLabel}`
+            ? `${eventMode.name ? `${eventMode.name} · ` : 'Event Mode · '}${eventRemainingLabel}`
             : bluetoothStatusLabel(scanState)}
           {nearbyCount > 0 ? ` · ${nearbyCount}` : ''}
         </Text>
@@ -227,6 +221,7 @@ export default function NearbyScreen() {
       <NearbyModeSelector
         operatingMode={operatingMode}
         audience={audience}
+        eventName={eventMode.name}
         eventRemainingLabel={eventRemainingLabel}
         tint={colors.tint}
         eventTint={colors.event}
@@ -237,6 +232,11 @@ export default function NearbyScreen() {
         onSelectMode={onSelectMode}
         onSelectAudience={(next) => {
           void setAudience(next);
+        }}
+        onEndEvent={() => {
+          void setOperatingMode('around_us').catch((err) => {
+            setEventError(err instanceof Error ? err.message : 'Could not end Event Mode');
+          });
         }}
       />
       {eventError ? <Text style={styles.error}>{eventError}</Text> : null}
@@ -249,9 +249,11 @@ export default function NearbyScreen() {
         scanning={scanning}
         selfName={user?.username ?? 'You'}
         selfColor={selfColor}
+        selfUserId={user?.id}
         emptyCopy={emptyCopy}
         operatingMode={operatingMode}
         reduceMotion={reduceMotion}
+        eventName={eventMode.enabled ? eventMode.name : undefined}
         eventRemainingLabel={eventMode.enabled ? eventRemainingLabel : undefined}
         onPressPeer={(peer) => {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
@@ -268,7 +270,7 @@ export default function NearbyScreen() {
           <Text style={{ color: colors.muted }}>
             {sessionActive
               ? operatingMode === 'event'
-                ? `Event Mode scanning · ${eventRemainingLabel} left`
+                ? `Event Mode scanning · ${eventMode.name ? `${eventMode.name} · ` : ''}${eventRemainingLabel} left`
                 : 'Looking around'
               : 'Nearby is idle'}
           </Text>
@@ -290,9 +292,12 @@ export default function NearbyScreen() {
               onPress={() => setSheetPeer(peer)}
               style={[styles.card, { backgroundColor: colors.card }]}>
               <View style={styles.peerHeader}>
-                <View style={[styles.avatar, { backgroundColor: colors.tint }]}>
-                  <Text style={styles.avatarText}>{peer.avatarInitials}</Text>
-                </View>
+                <ProfileAvatar
+                  userId={peer.userId}
+                  username={peer.displayName}
+                  color={colors.tint}
+                  size={40}
+                />
                 <View style={styles.peerMeta}>
                   <Text style={styles.peerName}>{peer.displayName}</Text>
                   <Text style={{ color: colors.muted }}>
@@ -327,6 +332,7 @@ export default function NearbyScreen() {
             : undefined
         }
         avatarInitials={sheetPeer ? avatarInitialsFromName(sheetPeer.displayName) : '?'}
+        avatarUserId={sheetPeer?.userId}
         avatarColor={colors.tint}
         actions={sheetActions}
       />
@@ -339,15 +345,12 @@ export default function NearbyScreen() {
         avatarColor={colors.tint}
         actions={blockedActions}
       />
-      <ActionSheet
-        visible={modeSheet === 'event-confirm'}
+      <EventSetupSheet
+        visible={modeSheet === 'event-setup'}
         onDismiss={() => setModeSheet(null)}
-        title={EVENT_ENTRY_COPY.title}
-        subtitle={`Who can find you: ${AUDIENCE_LABELS[confirmAudience]}`}
-        message={EVENT_ENTRY_COPY.body}
-        avatarInitials="EV"
-        avatarColor={colors.event}
-        actions={confirmActions}
+        initialAudience={confirmAudience}
+        tint={colors.event}
+        onStart={(values) => void confirmEventStart(values.audience, values.durationMs, values.name)}
       />
     </ScrollView>
   );
@@ -375,14 +378,6 @@ const styles = StyleSheet.create({
     gap: 12,
     backgroundColor: 'transparent',
   },
-  avatar: {
-    width: 40,
-    height: 40,
-    borderRadius: 20,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  avatarText: { color: '#042f2e', fontWeight: '800', fontSize: 13 },
   peerMeta: { flex: 1, backgroundColor: 'transparent', gap: 2 },
   peerName: { fontSize: 18, fontWeight: '700' },
   error: { color: '#DC2626', marginBottom: 8 },

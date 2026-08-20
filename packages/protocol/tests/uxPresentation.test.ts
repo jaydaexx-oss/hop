@@ -144,7 +144,9 @@ describe("QR payload stays username + invite", () => {
     const uri = hopQrUri(payload);
     expect(hopQrContainsSecrets(uri)).toBe(false);
     expect(uri).toMatch(/^hop:\/\/u\/jaydae\?i=h/);
-    expect(JSON.stringify(payload)).not.toMatch(/color|avatar|mac|deviceId|secret|crypto_box/i);
+    expect(JSON.stringify(payload)).not.toMatch(/color|avatar|photo|https?:\/\/|mac|deviceId|secret|crypto_box/i);
+    expect(payload).not.toHaveProperty("avatar_url");
+    expect(payload).not.toHaveProperty("photo");
     expect(decodeHopQrPayload(uri)?.username).toBe("jaydae");
   });
 });

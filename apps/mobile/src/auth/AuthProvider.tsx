@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 import { ApiError, api, type User } from '@/src/api/hop';
 import { loadSession, saveSession } from '@/src/auth/storage';
+import { clearProfilePhotoCache } from '@/src/profile/profilePhotoCache';
 
 type AuthState = {
   ready: boolean;
@@ -11,6 +12,7 @@ type AuthState = {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
+  refreshUser: () => Promise<void>;
 };
 
 const AuthContext = createContext<AuthState | null>(null);
@@ -65,6 +67,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async login(username, password) {
         setError(null);
         const result = await api.login(username, password);
+        clearProfilePhotoCache();
         await saveSession(result.token, result.user);
         setToken(result.token);
         setUser(result.user);
@@ -72,6 +75,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async register(username, password) {
         setError(null);
         const result = await api.register(username, password);
+        clearProfilePhotoCache();
         await saveSession(result.token, result.user);
         setToken(result.token);
         setUser(result.user);
@@ -84,9 +88,16 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             /* still clear locally */
           }
         }
+        clearProfilePhotoCache();
         await saveSession(null, null);
         setToken(null);
         setUser(null);
+      },
+      async refreshUser() {
+        if (!token) return;
+        const me = await api.me(token);
+        await saveSession(token, me);
+        setUser(me);
       },
     }),
     [ready, token, user, error],

@@ -14,6 +14,7 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { LOOPBACK_API_DEVICE_HINT, apiUrlUsesLoopback } from '@/src/api/client';
+import { POST_LOGIN_HREF } from '@/src/navigation/tabOrder';
 
 export default function LoginScreen() {
   const { user, login, register, error } = useAuth();
@@ -26,7 +27,7 @@ export default function LoginScreen() {
   const [busy, setBusy] = useState(false);
   const [localError, setLocalError] = useState<string | null>(null);
 
-  if (user) return <Redirect href="/" />;
+  if (user) return <Redirect href={POST_LOGIN_HREF} />;
 
   async function submit() {
     setBusy(true);

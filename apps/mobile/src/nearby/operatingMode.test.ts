@@ -127,6 +127,7 @@ describe('operatingMode persistence with Event Mode', () => {
     expect(loaded.enabled).toBe(false);
     expect(await loadPrivacyMode(store, USER)).toBe('contacts');
     expect(operatingModeFor('contacts', loaded.enabled)).toBe('around_us');
+    expect(loaded.name).toBeNull();
   });
 
   it('a delayed Event enable is rolled back when Invisible was requested later', async () => {
@@ -296,12 +297,14 @@ describe('audience still drives who is visible', () => {
 });
 
 describe('Event entry copy and Invisible radar', () => {
-  it('confirms 2h, battery, no GPS, and unchanged encryption/requests', () => {
-    expect(EVENT_ENTRY_COPY.body).toMatch(/2 hours/);
+  it('confirms duration choice, battery, no GPS, and unchanged encryption/requests', () => {
+    expect(EVENT_ENTRY_COPY.body).toMatch(/how long Event Mode runs/);
+    expect(EVENT_ENTRY_COPY.confirm).toBe('Start Event Mode');
     expect(EVENT_ENTRY_COPY.body).toMatch(/battery/i);
     expect(EVENT_ENTRY_COPY.body).toMatch(/No GPS/);
     expect(EVENT_ENTRY_COPY.body).toMatch(/Encryption and message requests stay the same/);
     expect(EVENT_ENTRY_COPY.body).toMatch(/Around Us/);
+    expect(EVENT_ENTRY_COPY.body).toMatch(/end Event Mode early/);
     expect(EVENT_ENTRY_COPY.body).not.toMatch(/auto-?DM|venue code|GPS tracking/i);
     expect(EVENT_BLOCKED_COPY.body).toMatch(/Invisible/);
   });

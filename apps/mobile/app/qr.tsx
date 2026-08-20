@@ -27,7 +27,7 @@ export default function MyHopQrScreen() {
       <Text style={styles.title}>My HOP Code</Text>
       <Text style={[styles.lead, { color: colors.muted }]}>
         Share this code so someone can send you a message request. It contains your HOP username
-        and a short invite — never keys, MACs, device IDs, or avatar color.
+        and a short invite — never keys, MACs, device IDs, avatar color, or profile photo.
       </Text>
       {payload ? (
         <>

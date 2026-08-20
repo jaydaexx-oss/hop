@@ -21,7 +21,9 @@ describe("HOP QR payload", () => {
     expect(uri).toBe(`hop://u/jaydae?i=${payload.invite}`);
     expect(hopQrContainsSecrets(uri)).toBe(false);
     expect(uri).not.toMatch(/crypto_box|secret|private|AA:BB:CC|identity_public_key/i);
-    expect(JSON.stringify(payload)).not.toMatch(/mac|deviceId|uuid/i);
+    expect(JSON.stringify(payload)).not.toMatch(/mac|deviceId|uuid|avatar|photo|https?:\/\//i);
+    expect(payload).not.toHaveProperty("avatar_url");
+    expect(payload).not.toHaveProperty("photo");
   });
 
   it("parses hop URIs, JSON, and bare usernames into a message-request identity", () => {

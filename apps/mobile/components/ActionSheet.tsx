@@ -2,6 +2,8 @@ import { useEffect, useRef } from 'react';
 import { Animated, Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 
+import { ProfileAvatar } from '@/components/ProfileAvatar';
+
 export type SheetAction = {
   label: string;
   onPress: () => void;
@@ -16,6 +18,7 @@ type ActionSheetProps = {
   message?: string;
   avatarInitials?: string;
   avatarColor?: string;
+  avatarUserId?: string | null;
   actions: SheetAction[];
 };
 
@@ -27,6 +30,7 @@ export function ActionSheet({
   message,
   avatarInitials,
   avatarColor = '#14B8A6',
+  avatarUserId,
   actions,
 }: ActionSheetProps) {
   const insets = useSafeAreaInsets();
@@ -60,9 +64,12 @@ export function ActionSheet({
         pointerEvents="box-none">
         <View style={styles.handle} />
         <View style={styles.header}>
-          <View style={[styles.avatar, { backgroundColor: avatarColor }]}>
-            <Text style={styles.avatarText}>{(avatarInitials || title.slice(0, 1) || '?').slice(0, 2).toUpperCase()}</Text>
-          </View>
+          <ProfileAvatar
+            userId={avatarUserId}
+            username={title}
+            color={avatarColor}
+            size={48}
+          />
           <View style={styles.headerText}>
             <Text style={styles.headerName}>{title}</Text>
             {subtitle ? <Text style={styles.headerSub}>{subtitle}</Text> : null}
@@ -117,8 +124,6 @@ const styles = StyleSheet.create({
   headerName: { fontSize: 16, fontWeight: '700', color: '#F9FAFB' },
   headerSub: { fontSize: 12, color: '#9CA3AF', marginTop: 2 },
   headerMessage: { fontSize: 13, color: '#D1D5DB', marginTop: 8, lineHeight: 19 },
-  avatar: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  avatarText: { color: '#042f2e', fontWeight: '800', fontSize: 16 },
   divider: { height: StyleSheet.hairlineWidth, backgroundColor: '#1F2937', marginBottom: 6 },
   actionRow: { paddingHorizontal: 22, paddingVertical: 16 },
   actionPressed: { backgroundColor: '#1F2937' },

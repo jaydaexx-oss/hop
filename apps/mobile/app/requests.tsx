@@ -8,7 +8,7 @@ import {
   type PeerSafetyRecord,
 } from '@hop/protocol';
 
-import { Avatar } from '@/components/Avatar';
+import { ProfileAvatar } from '@/components/ProfileAvatar';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -125,7 +125,7 @@ export default function MessageRequestsScreen() {
           return (
             <View key={row.peerId} style={[styles.card, { backgroundColor: colors.card, borderColor: colors.border }]}>
               <View style={styles.senderRow}>
-                <Avatar username={name} color={defaultLocalAvatarColor(row.peerId)} size={46} />
+                <ProfileAvatar userId={row.peerId} username={name} color={defaultLocalAvatarColor(row.peerId)} size={46} />
                 <View style={styles.senderInfo}>
                   <Text style={styles.name}>{copy.title}</Text>
                   <Text style={{ color: colors.muted }}>{copy.subtitle}</Text>

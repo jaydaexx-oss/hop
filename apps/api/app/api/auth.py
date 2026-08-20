@@ -8,8 +8,9 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import Session, select
 
+from app.avatars import build_user_out
 from app.db import get_session
-from app.models.tables import Device, Session as AuthSession
+from app.models.tables import Session as AuthSession
 from app.models.tables import User
 from app.rate_limit import limit_auth
 from app.schemas import AuthOut, LoginIn, RegisterIn, UserOut
@@ -28,13 +29,7 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 def user_out(session: Session, user: User) -> UserOut:
-    device = session.exec(select(Device).where(Device.user_id == user.id)).first()
-    return UserOut(
-        id=user.id,
-        username=user.username,
-        created_at=user.created_at,
-        identity_public_key=device.identity_public_key if device else "",
-    )
+    return build_user_out(session, user)
 
 
 @router.post("/register", response_model=AuthOut)

@@ -6,6 +6,7 @@ import { NearbyService } from './NearbyService';
 import { MockNearbyTransport, mockBlePeer } from './MockNearbyTransport';
 import { discoveryProfileFor, isEventModeAllowed } from './nearbyPolicy';
 import { loadPrivacyMode, savePrivacyMode } from './privacyStore';
+import { clampEventDurationMs, customEventDurationMs } from './eventDuration';
 import { DEFAULT_EVENT_DURATION_MS } from './types';
 
 describe('Event Mode expiration', () => {
@@ -22,6 +23,8 @@ describe('Event Mode expiration', () => {
     expect(on.enabled).toBe(true);
     expect(on.remainingMs).toBe(DEFAULT_EVENT_DURATION_MS);
     expect(on.sessionId?.startsWith('local:')).toBe(true);
+    expect(on.eventCode).toBeNull();
+    expect(on.name).toBeNull();
     expect(formatEventRemaining(on.remainingMs)).toBe('2h');
 
     now += DEFAULT_EVENT_DURATION_MS + 1;
@@ -57,6 +60,41 @@ describe('Event Mode expiration', () => {
     expect(JSON.parse((await store.get('hop.eventMode.user-1')) ?? '{}').enabled).toBe(false);
     const stillOff = await restarted.load('user-1');
     expect(stillOff.enabled).toBe(false);
+  });
+
+  it('persists event name and a custom duration across restart', async () => {
+    const store = new MemoryKvStore();
+    let now = 4_000_000;
+    const first = new EventModeService(store, () => now);
+    const on = await first.enable('user-1', 90 * 60_000, null, 'Campus mixer');
+    expect(on.name).toBe('Campus mixer');
+    expect(on.remainingMs).toBe(90 * 60_000);
+    expect(on.eventCode).toBeNull();
+    const persisted = JSON.parse((await store.get('hop.eventMode.user-1')) ?? '{}') as {
+      name?: string;
+      eventCode?: string | null;
+      expiresAt?: number;
+    };
+    expect(persisted.name).toBe('Campus mixer');
+    expect(persisted.eventCode).toBeNull();
+    const restarted = new EventModeService(store, () => now);
+    const loaded = await restarted.load('user-1');
+    expect(loaded.enabled).toBe(true);
+    expect(loaded.name).toBe('Campus mixer');
+    expect(loaded.remainingMs).toBe(90 * 60_000);
+  });
+
+  it('clamps custom duration to 24 hours and requires a trimmed name', async () => {
+    const store = new MemoryKvStore();
+    const service = new EventModeService(store, () => 8_000);
+    const tooLong = await service.enable('user-1', 40 * 60 * 60 * 1000, null, '  Night market  ');
+    expect(tooLong.remainingMs).toBe(24 * 60 * 60 * 1000);
+    expect(tooLong.name).toBe('Night market');
+    const blank = await service.enable('user-1', 60_000, null, '   ');
+    expect(blank.name).toBeNull();
+    expect(customEventDurationMs(0, 30)).toBe(30 * 60_000);
+    expect(clampEventDurationMs(0)).toBe(60_000);
+    expect(clampEventDurationMs(1_000)).toBe(1_000);
   });
 
   it('treats corrupt persisted Event Mode as off', async () => {

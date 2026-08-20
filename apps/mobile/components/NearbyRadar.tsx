@@ -4,6 +4,7 @@ import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
 import type { AroundUsPeer, NearbyOperatingMode } from '@/src/nearby/types';
 import { layoutRadarNodes, type RadarNode } from '@/src/nearby/radarLayout';
 import { radarShouldAnimate } from '@/src/nearby/scanState';
+import { useProfilePhoto } from '@/src/profile/useProfilePhoto';
 import { Avatar } from '@/components/Avatar';
 
 const NODE_SIZE = 36;
@@ -56,15 +57,23 @@ function PulseRing({
   );
 }
 
+function RadarSelf({ name, color, userId }: { name: string; color: string; userId?: string | null }) {
+  const { uri } = useProfilePhoto(userId);
+  return <Avatar username={name} color={color} size={28} uri={uri} />;
+}
+
 function RadarDot({
   node,
   color,
+  userId,
   onPress,
 }: {
   node: RadarNode;
   color: string;
+  userId?: string;
   onPress: () => void;
 }) {
+  const { uri } = useProfilePhoto(userId);
   return (
     <Pressable
       onPress={onPress}
@@ -78,7 +87,7 @@ function RadarDot({
         alignItems: 'center',
         zIndex: 5,
       }}>
-      <Avatar username={node.displayName} color={color} size={NODE_SIZE} borderColor={color} borderWidth={2} />
+      <Avatar username={node.displayName} color={color} size={NODE_SIZE} uri={uri} borderColor={color} borderWidth={2} />
       <Text numberOfLines={1} style={styles.nodeLabel}>
         {node.displayName}
       </Text>
@@ -99,6 +108,8 @@ export function NearbyRadar({
   operatingMode = 'around_us',
   reduceMotion = false,
   eventRemainingLabel,
+  eventName,
+  selfUserId,
 }: {
   peers: AroundUsPeer[];
   size: number;
@@ -112,6 +123,8 @@ export function NearbyRadar({
   operatingMode?: NearbyOperatingMode;
   reduceMotion?: boolean;
   eventRemainingLabel?: string;
+  eventName?: string | null;
+  selfUserId?: string | null;
 }) {
   const rotation = useRef(new Animated.Value(0)).current;
   const nodes = layoutRadarNodes(peers, size);
@@ -198,16 +211,27 @@ export function NearbyRadar({
           </>
         ) : null}
         <View style={[styles.center, { backgroundColor: tint, opacity: invisible ? 0.55 : 1 }]}>
-          <Avatar username={selfName} color={selfColor} size={28} />
+          <RadarSelf name={selfName} color={selfColor} userId={selfUserId} />
         </View>
         {nodes.map((node) => {
           const peer = byToken.get(node.token);
           if (!peer) return null;
-          return <RadarDot key={node.token} node={node} color={tint} onPress={() => onPressPeer(peer)} />;
+          return (
+            <RadarDot
+              key={node.token}
+              node={node}
+              color={tint}
+              userId={peer.userId}
+              onPress={() => onPressPeer(peer)}
+            />
+          );
         })}
       </View>
       {eventActive && eventRemainingLabel ? (
         <View pointerEvents="none" style={styles.eventBadge}>
+          {eventName ? (
+            <Text style={[styles.eventBadgeText, { color: tint }]}>{eventName}</Text>
+          ) : null}
           <Text style={[styles.eventBadgeText, { color: tint }]}>{eventRemainingLabel} left</Text>
         </View>
       ) : null}
@@ -270,6 +294,7 @@ const styles = StyleSheet.create({
     borderRadius: 999,
     paddingHorizontal: 10,
     paddingVertical: 4,
+    alignItems: 'center',
   },
   eventBadgeText: { fontSize: 12, fontWeight: '800' },
 });

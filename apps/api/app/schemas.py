@@ -34,6 +34,8 @@ class UserOut(BaseModel):
     username: str
     created_at: datetime
     identity_public_key: str = ""
+    has_avatar: bool = False
+    avatar_url: Optional[str] = None
 
 
 class AuthOut(BaseModel):
@@ -50,6 +52,8 @@ class MemberOut(BaseModel):
     id: str
     username: str
     identity_public_key: str = ""
+    has_avatar: bool = False
+    avatar_url: Optional[str] = None
 
 
 class ConversationOut(BaseModel):

@@ -1,12 +1,15 @@
 import { Alert, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { bluetoothStatusLabel, LOCAL_AVATAR_COLORS } from '@hop/protocol';
 
+import { ActionSheet } from '@/components/ActionSheet';
 import { Avatar } from '@/components/Avatar';
 import { Text, View } from '@/components/Themed';
 import { StatusBanner } from '@/components/StatusBanner';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
+import { api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
 import { replaceIdentityExplicit } from '@/src/crypto/identity';
@@ -14,17 +17,59 @@ import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { AUDIENCE_LABELS, OPERATING_MODE_LABELS } from '@/src/nearby/types';
 import { INVISIBLE_RADAR_COPY } from '@/src/nearby/nearbyPolicy';
 import { useOffline } from '@/src/offline/OfflineProvider';
+import { pickPreparedProfilePhoto } from '@/src/profile/pickProfilePhoto';
+import { clearProfilePhotoCache, uploadProfilePhotoFile } from '@/src/profile/profilePhotoCache';
 import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
+import { useProfilePhoto } from '@/src/profile/useProfilePhoto';
 
 export default function SettingsScreen() {
-  const { user, logout } = useAuth();
+  const { user, token, logout, refreshUser } = useAuth();
   const { relayConsent, setRelayConsent } = useBle();
   const { operatingMode, audience, eventMode, eventRemainingLabel, scanState } = useNearbyPeers();
   const { identityError } = useOffline();
   const { color, select } = useLocalAvatarColor(user?.id);
+  const { uri: photoUri, status: photoStatus, error: photoLoadError, retry: retryPhoto } = useProfilePhoto(
+    user?.id,
+    user?.has_avatar,
+  );
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const router = useRouter();
+  const [photoSheet, setPhotoSheet] = useState(false);
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [photoError, setPhotoError] = useState<string | null>(null);
+  const hasPhoto = Boolean(user?.has_avatar || photoUri);
+
+  async function applyPhoto(source: 'library' | 'camera') {
+    if (!token || !user) return;
+    setPhotoBusy(true);
+    setPhotoError(null);
+    try {
+      const prepared = await pickPreparedProfilePhoto(source);
+      if (!prepared) return;
+      await uploadProfilePhotoFile(token, prepared);
+      await refreshUser();
+    } catch (err) {
+      setPhotoError(err instanceof Error ? err.message : 'Could not update photo');
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
+
+  async function removePhoto() {
+    if (!token || !user) return;
+    setPhotoBusy(true);
+    setPhotoError(null);
+    try {
+      await api.deleteAvatar(token);
+      clearProfilePhotoCache(user.id);
+      await refreshUser();
+    } catch (err) {
+      setPhotoError(err instanceof Error ? err.message : 'Could not remove photo');
+    } finally {
+      setPhotoBusy(false);
+    }
+  }
 
   function confirmReplaceIdentity() {
     if (!user) return;
@@ -50,11 +95,34 @@ export default function SettingsScreen() {
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={styles.wrap}>
       <StatusBanner />
       <View style={styles.hero}>
-        <Avatar username={user?.username ?? 'HOP'} color={color} size={96} borderColor={colors.tint} borderWidth={2} />
+        <Pressable
+          onPress={() => setPhotoSheet(true)}
+          accessibilityRole="button"
+          accessibilityLabel="Change profile photo"
+          disabled={photoBusy}>
+          <Avatar
+            username={user?.username ?? 'HOP'}
+            color={color}
+            uri={photoUri}
+            size={96}
+            borderColor={colors.tint}
+            borderWidth={2}
+          />
+        </Pressable>
         <Text style={styles.username}>{user?.username}</Text>
         <Text style={{ color: colors.muted, textAlign: 'center' }}>
-          Initials and a local color — not identity, never in your HOP QR.
+          Photo, initials, and a local color — not identity, never in your HOP QR.
         </Text>
+        {photoBusy || photoStatus === 'loading' ? (
+          <Text style={{ color: colors.muted }}>Updating photo…</Text>
+        ) : null}
+        {photoError || photoLoadError ? (
+          <Pressable onPress={() => (photoError ? void applyPhoto('library') : void retryPhoto())}>
+            <Text style={{ color: '#DC2626', textAlign: 'center' }}>
+              {photoError || photoLoadError} · Tap to retry
+            </Text>
+          </Pressable>
+        ) : null}
       </View>
 
       <View style={[styles.card, { backgroundColor: colors.card }]}>
@@ -81,9 +149,14 @@ export default function SettingsScreen() {
           {operatingMode !== 'invisible' ? ` · ${AUDIENCE_LABELS[audience]}` : ''}
         </Text>
         {operatingMode === 'event' ? (
-          <Text style={{ color: colors.event, fontWeight: '700' }}>
-            Active · {eventMode.enabled ? eventRemainingLabel : 'ending'} left
-          </Text>
+          <>
+            {eventMode.name ? (
+              <Text style={{ color: colors.event, fontWeight: '800', fontSize: 18 }}>{eventMode.name}</Text>
+            ) : null}
+            <Text style={{ color: colors.event, fontWeight: '700' }}>
+              Active · {eventMode.enabled ? eventRemainingLabel : 'ending'} left
+            </Text>
+          </>
         ) : null}
         <Text style={{ color: colors.muted, marginTop: 4 }}>
           {operatingMode === 'invisible'
@@ -159,6 +232,21 @@ export default function SettingsScreen() {
       <Pressable onPress={logout} style={[styles.button, { borderColor: colors.tint }]}>
         <Text style={[styles.buttonLabel, { color: colors.tint }]}>Log out</Text>
       </Pressable>
+      <ActionSheet
+        visible={photoSheet}
+        onDismiss={() => setPhotoSheet(false)}
+        title="Profile photo"
+        subtitle="Square crop, then a circle in HOP. Never in your QR."
+        avatarUserId={user?.id}
+        avatarColor={color}
+        actions={[
+          { label: 'Choose Photo', onPress: () => void applyPhoto('library') },
+          { label: 'Take Photo', onPress: () => void applyPhoto('camera') },
+          ...(hasPhoto
+            ? [{ label: 'Remove Photo', destructive: true as const, onPress: () => void removePhoto() }]
+            : []),
+        ]}
+      />
     </ScrollView>
   );
 }

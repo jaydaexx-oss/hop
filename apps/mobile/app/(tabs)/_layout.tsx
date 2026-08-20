@@ -6,7 +6,12 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { useClientOnlyValue } from '@/components/useClientOnlyValue';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useMessagesTabBadge } from '@/src/chat/useMessagesTabBadge';
+import { DEFAULT_TAB_ROUTE } from '@/src/navigation/tabOrder';
 import { formatUnreadBadge } from '@hop/protocol';
+
+export const unstable_settings = {
+  initialRouteName: DEFAULT_TAB_ROUTE,
+};
 
 export default function TabLayout() {
   const colorScheme = useColorScheme();
@@ -18,10 +23,24 @@ export default function TabLayout() {
 
   return (
     <Tabs
+      initialRouteName={DEFAULT_TAB_ROUTE}
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: useClientOnlyValue(false, true),
       }}>
+      <Tabs.Screen
+        name="nearby"
+        options={{
+          title: 'Around Us',
+          tabBarIcon: ({ color }) => (
+            <SymbolView
+              name={{ ios: 'dot.radiowaves.left.and.right', android: 'wifi', web: 'wifi' }}
+              tintColor={color}
+              size={26}
+            />
+          ),
+        }}
+      />
       <Tabs.Screen
         name="index"
         options={{
@@ -30,19 +49,6 @@ export default function TabLayout() {
           tabBarIcon: ({ color }) => (
             <SymbolView
               name={{ ios: 'bubble.left.and.bubble.right.fill', android: 'chat', web: 'chat' }}
-              tintColor={color}
-              size={26}
-            />
-          ),
-        }}
-      />
-      <Tabs.Screen
-        name="nearby"
-        options={{
-          title: 'Around Us',
-          tabBarIcon: ({ color }) => (
-            <SymbolView
-              name={{ ios: 'dot.radiowaves.left.and.right', android: 'wifi', web: 'wifi' }}
               tintColor={color}
               size={26}
             />

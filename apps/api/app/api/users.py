@@ -1,12 +1,13 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
+from app.avatars import AVATAR_MEDIA_TYPE, build_user_out, validate_avatar_jpeg
 from app.db import get_session
 from app.identity_keys import is_well_formed_box_public_key
-from app.models.tables import BlockedUser, Device, Report, User
+from app.models.tables import BlockedUser, Device, ProfilePhoto, Report, User, utcnow
 from app.schemas import BlockIn, IdentityIn, ReportIn, UserOut
 from app.security import get_current_user, validate_username
 
@@ -14,18 +15,64 @@ router = APIRouter(prefix="/users", tags=["users"])
 
 
 def _user_out(session: Session, user: User) -> UserOut:
-    device = session.exec(select(Device).where(Device.user_id == user.id)).first()
-    return UserOut(
-        id=user.id,
-        username=user.username,
-        created_at=user.created_at,
-        identity_public_key=device.identity_public_key if device else "",
-    )
+    return build_user_out(session, user)
 
 
 @router.get("/me", response_model=UserOut)
 def me(session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> UserOut:
     return _user_out(session, user)
+
+
+@router.put("/me/avatar", response_model=UserOut)
+async def put_avatar(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> UserOut:
+    content_type = (request.headers.get("content-type") or "").split(";")[0].strip().lower()
+    if content_type not in {"image/jpeg", "image/jpg", "application/octet-stream"}:
+        raise HTTPException(status_code=400, detail="Profile photo must be a JPEG")
+    data = validate_avatar_jpeg(await request.body())
+    existing = session.get(ProfilePhoto, user.id)
+    if existing is None:
+        session.add(ProfilePhoto(user_id=user.id, jpeg_bytes=data, updated_at=utcnow()))
+    else:
+        existing.jpeg_bytes = data
+        existing.updated_at = utcnow()
+        session.add(existing)
+    session.commit()
+    return _user_out(session, user)
+
+
+@router.delete("/me/avatar", response_model=UserOut)
+def delete_avatar(
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> UserOut:
+    existing = session.get(ProfilePhoto, user.id)
+    if existing is not None:
+        session.delete(existing)
+        session.commit()
+    return _user_out(session, user)
+
+
+@router.get("/id/{user_id}/avatar")
+def get_avatar(
+    user_id: str,
+    session: Session = Depends(get_session),
+    _user: User = Depends(get_current_user),
+) -> Response:
+    found = session.get(User, user_id)
+    if found is None or found.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="User not found")
+    photo = session.get(ProfilePhoto, user_id)
+    if photo is None:
+        raise HTTPException(status_code=404, detail="No profile photo")
+    return Response(
+        content=photo.jpeg_bytes,
+        media_type=AVATAR_MEDIA_TYPE,
+        headers={"Cache-Control": "private, max-age=120"},
+    )
 
 
 @router.put("/me/identity", response_model=UserOut)

@@ -58,7 +58,10 @@ export type EventModeSnapshot = {
   remainingMs: number;
   /** Local stub so a future venue QR / event code can scope discovery. */
   sessionId: string | null;
+  /** Unused. Event Mode does not mint public event codes. */
   eventCode: string | null;
+  /** Local display name for this Event Mode session. Not a public event code. */
+  name: string | null;
 };
 
 export type KvStore = {

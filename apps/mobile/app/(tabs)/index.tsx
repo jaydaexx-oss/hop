@@ -304,6 +304,8 @@ export default function ChatsScreen() {
               muted={colors.muted}
               card={colors.card}
               textColor={colors.text}
+              peerId={item.conversation.peer.id}
+              hasAvatar={item.conversation.peer.has_avatar}
               onPress={() =>
                 router.push(
                   `/chat/${item.conversation.id}?peer=${encodeURIComponent(item.conversation.peer.username)}&peerId=${item.conversation.peer.id}`,
@@ -326,6 +328,7 @@ export default function ChatsScreen() {
         title={sheetRow?.conversation.peer.username || 'Chat'}
         subtitle="Mute, block, or hide locally"
         avatarColor={defaultLocalAvatarColor(sheetRow?.conversation.peer.id || 'hop')}
+        avatarUserId={sheetRow?.conversation.peer.id}
         actions={
           sheetRow
             ? [

@@ -101,9 +101,9 @@ export const EVENT_BLOCKED_COPY = {
 };
 
 export const EVENT_ENTRY_COPY = {
-  title: 'Start Event Mode?',
-  body: 'Runs for 2 hours with more active Bluetooth discovery. Uses more battery. No GPS. Encryption and message requests stay the same. When time is up you return to Around Us — not Invisible.',
-  confirm: 'Start for 2 hours',
+  title: 'Event setup',
+  body: 'Name this gathering and choose how long Event Mode runs. More active Bluetooth uses more battery. No GPS. Encryption and message requests stay the same. When time is up you return to Around Us — not Invisible. You can end Event Mode early.',
+  confirm: 'Start Event Mode',
 };
 
 export const INVISIBLE_RADAR_COPY =
@@ -111,6 +111,6 @@ export const INVISIBLE_RADAR_COPY =
 
 export const OPERATING_MODE_HINTS: Record<NearbyOperatingMode, string> = {
   around_us: 'Find people nearby over Bluetooth. Existing chats stay available.',
-  event: 'Two-hour gathering discovery. Choose who can find you before it starts.',
+  event: 'Gathering discovery for a chosen duration. Choose who can find you before it starts.',
   invisible: 'Stop appearing to new nearby people. Existing chats still work.',
 };

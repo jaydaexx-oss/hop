@@ -6,12 +6,20 @@ export type User = {
   username: string;
   created_at: string;
   identity_public_key?: string;
+  has_avatar?: boolean;
+  avatar_url?: string | null;
 };
 export type AuthResponse = { token: string; user: User };
 export type Conversation = {
   id: string;
   created_at: string;
-  peer: { id: string; username: string; identity_public_key?: string };
+  peer: {
+    id: string;
+    username: string;
+    identity_public_key?: string;
+    has_avatar?: boolean;
+    avatar_url?: string | null;
+  };
 };
 export type ChatMessage = {
   message_id: string;
@@ -71,6 +79,30 @@ async function request<T>(
   return data as T;
 }
 
+async function putJpeg<T>(path: string, token: string, body: Blob | ArrayBuffer): Promise<T> {
+  assertSafeApiUrl(API_URL);
+  let response: Response;
+  try {
+    response = await fetch(`${API_URL}${path}`, {
+      method: 'PUT',
+      headers: {
+        Accept: 'application/json',
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'image/jpeg',
+      },
+      body,
+    });
+  } catch (err) {
+    throw new ApiError(err instanceof Error ? err.message : 'Network error', 0);
+  }
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    const detail = typeof data.detail === 'string' ? data.detail : `Request failed (${response.status})`;
+    throw new ApiError(detail, response.status);
+  }
+  return data as T;
+}
+
 export const api = {
   register: (username: string, password: string) =>
     request<AuthResponse>('/auth/register', { method: 'POST', body: { username, password } }),
@@ -78,6 +110,9 @@ export const api = {
     request<AuthResponse>('/auth/login', { method: 'POST', body: { username, password } }),
   logout: (token: string) => request<{ status: string }>('/auth/logout', { method: 'POST', token }),
   me: (token: string) => request<User>('/users/me', { token }),
+  putAvatar: (token: string, jpeg: Blob | ArrayBuffer) => putJpeg<User>('/users/me/avatar', token, jpeg),
+  deleteAvatar: (token: string) => request<User>('/users/me/avatar', { method: 'DELETE', token }),
+  avatarPath: (userId: string) => `/users/id/${encodeURIComponent(userId)}/avatar`,
   userById: (token: string, userId: string) => request<User>(`/users/id/${userId}`, { token }),
   putIdentity: (token: string, publicKey: string) =>
     request<User>('/users/me/identity', { method: 'PUT', token, body: identityPublishBody(publicKey) }),

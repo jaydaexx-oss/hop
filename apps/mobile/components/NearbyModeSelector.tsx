@@ -10,6 +10,7 @@ import { AUDIENCE_LABELS, OPERATING_MODE_LABELS } from '@/src/nearby/types';
 export function NearbyModeSelector({
   operatingMode,
   audience,
+  eventName,
   eventRemainingLabel,
   tint,
   eventTint,
@@ -19,9 +20,11 @@ export function NearbyModeSelector({
   busy,
   onSelectMode,
   onSelectAudience,
+  onEndEvent,
 }: {
   operatingMode: NearbyOperatingMode;
   audience: NearbyAudience;
+  eventName?: string | null;
   eventRemainingLabel: string;
   tint: string;
   eventTint: string;
@@ -31,6 +34,7 @@ export function NearbyModeSelector({
   busy: boolean;
   onSelectMode: (mode: NearbyOperatingMode) => void;
   onSelectAudience: (audience: NearbyAudience) => void;
+  onEndEvent?: () => void;
 }) {
   const activeTint = operatingMode === 'event' ? eventTint : tint;
   const showAudience = operatingMode !== 'invisible';
@@ -72,9 +76,24 @@ export function NearbyModeSelector({
         })}
       </View>
       {operatingMode === 'event' ? (
-        <Text style={[styles.eventStatus, { color: eventTint }]}>
-          Event Mode active · {eventRemainingLabel} left
-        </Text>
+        <View style={styles.eventBlock}>
+          {eventName ? (
+            <Text style={[styles.eventName, { color: eventTint }]}>{eventName}</Text>
+          ) : null}
+          <Text style={[styles.eventStatus, { color: eventTint }]}>
+            Event Mode active · {eventRemainingLabel} left
+          </Text>
+          {onEndEvent ? (
+            <Pressable
+              onPress={onEndEvent}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel="End Event Mode"
+              style={[styles.endBtn, { borderColor: eventTint }]}>
+              <Text style={{ color: eventTint, fontWeight: '800', fontSize: 13 }}>End Event Mode</Text>
+            </Pressable>
+          ) : null}
+        </View>
       ) : null}
       {showAudience ? (
         <View style={styles.audienceBlock}>
@@ -131,6 +150,9 @@ const styles = StyleSheet.create({
   },
   segmentLabel: { fontSize: 12, fontWeight: '800', textAlign: 'center' },
   eventStatus: { fontSize: 13, fontWeight: '800', textAlign: 'center' },
+  eventBlock: { gap: 6, alignItems: 'center' },
+  eventName: { fontSize: 18, fontWeight: '800', textAlign: 'center' },
+  endBtn: { borderWidth: 1.5, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   audienceBlock: { gap: 8 },
   audienceCaption: { fontSize: 12, fontWeight: '600' },
   audienceRow: { flexDirection: 'row', gap: 8 },

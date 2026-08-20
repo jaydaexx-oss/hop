@@ -4,6 +4,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+import sqlalchemy as sa
 from sqlmodel import Field, SQLModel
 
 
@@ -23,6 +24,14 @@ class User(SQLModel, table=True):
     password_hash: str
     created_at: datetime = Field(default_factory=utcnow)
     deleted_at: Optional[datetime] = None
+
+
+class ProfilePhoto(SQLModel, table=True):
+    __tablename__ = "profile_photos"
+
+    user_id: str = Field(foreign_key="users.id", primary_key=True)
+    jpeg_bytes: bytes = Field(sa_column=sa.Column(sa.LargeBinary, nullable=False))
+    updated_at: datetime = Field(default_factory=utcnow)
 
 
 class Device(SQLModel, table=True):

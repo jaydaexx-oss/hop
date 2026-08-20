@@ -9,6 +9,7 @@ import {
 } from '@hop/protocol';
 
 import { Text, View } from '@/components/Themed';
+import { ProfileAvatar } from '@/components/ProfileAvatar';
 
 export type ConversationRowProps = {
   name: string;
@@ -25,14 +26,9 @@ export type ConversationRowProps = {
   textColor: string;
   onPress: () => void;
   onLongPress?: () => void;
+  peerId?: string;
+  hasAvatar?: boolean;
 };
-
-function initials(name: string): string {
-  const trimmed = name.trim();
-  if (!trimmed) return '?';
-  const parts = trimmed.split(/\s+/).slice(0, 2);
-  return parts.map((part) => part.slice(0, 1).toUpperCase()).join('');
-}
 
 function ConversationRowInner({
   name,
@@ -49,6 +45,8 @@ function ConversationRowInner({
   textColor,
   onPress,
   onLongPress,
+  peerId,
+  hasAvatar,
 }: ConversationRowProps) {
   const presence = conversationPresenceLabel(route);
   const nearbyOrOnline = route === 'nearby' || route === 'online';
@@ -75,9 +73,7 @@ function ConversationRowInner({
       accessibilityLabel={accessibilityLabel}
       style={[styles.row, { backgroundColor: card }]}>
       <View style={styles.avatarWrap}>
-        <View style={[styles.avatar, { backgroundColor: tint }]}>
-          <Text style={styles.avatarLabel}>{initials(name)}</Text>
-        </View>
+        <ProfileAvatar userId={peerId} username={name} color={tint} size={48} hasAvatar={hasAvatar} />
         <View
           accessibilityElementsHidden
           importantForAccessibility="no"
@@ -134,8 +130,6 @@ const styles = StyleSheet.create({
     minHeight: 72,
   },
   avatarWrap: { width: 48, height: 48, backgroundColor: 'transparent' },
-  avatar: { width: 48, height: 48, borderRadius: 24, alignItems: 'center', justifyContent: 'center' },
-  avatarLabel: { color: '#042f2e', fontWeight: '800', fontSize: 16 },
   presence: {
     position: 'absolute',
     right: 0,

@@ -4,7 +4,7 @@ import { useLocalSearchParams, useRouter } from 'expo-router';
 import { REPORT_CATEGORIES, type ReportCategory } from '@hop/protocol';
 
 import { ActionSheet } from '@/components/ActionSheet';
-import { Avatar } from '@/components/Avatar';
+import { ProfileAvatar } from '@/components/ProfileAvatar';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -78,7 +78,14 @@ export default function NearbyPublicProfileScreen() {
 
   return (
     <View style={styles.wrap}>
-      <Avatar username={title} color={avatarColor} size={88} borderColor={colors.tint} borderWidth={2} />
+      <ProfileAvatar
+        userId={userId}
+        username={title}
+        color={avatarColor}
+        size={88}
+        borderColor={colors.tint}
+        borderWidth={2}
+      />
       <Text style={styles.name}>{title}</Text>
       <Text style={{ color: colors.muted, textAlign: 'center' }}>
         {proximity ? `${proximity} · Nearby HOP user` : 'Nearby HOP user'}

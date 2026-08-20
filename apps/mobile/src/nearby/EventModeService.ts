@@ -1,4 +1,5 @@
 import { createEventSessionId } from './ephemeralId';
+import { clampEventDurationMs, normalizeEventName } from './eventDuration';
 import type { EventModeSnapshot, KvStore } from './types';
 import { DEFAULT_EVENT_DURATION_MS } from './types';
 
@@ -10,6 +11,7 @@ type StoredEventMode = {
   expiresAt: number | null;
   sessionId: string | null;
   eventCode: string | null;
+  name: string | null;
 };
 
 const OFF: StoredEventMode = {
@@ -18,18 +20,21 @@ const OFF: StoredEventMode = {
   expiresAt: null,
   sessionId: null,
   eventCode: null,
+  name: null,
 };
 
 function snapshot(stored: StoredEventMode, now: number): EventModeSnapshot {
   const remainingMs =
     stored.enabled && stored.expiresAt !== null ? Math.max(0, stored.expiresAt - now) : 0;
+  const live = stored.enabled && remainingMs > 0;
   return {
-    enabled: stored.enabled && remainingMs > 0,
-    startedAt: stored.enabled ? stored.startedAt : null,
-    expiresAt: stored.enabled ? stored.expiresAt : null,
-    remainingMs: stored.enabled ? remainingMs : 0,
-    sessionId: stored.enabled ? stored.sessionId : null,
-    eventCode: stored.enabled ? stored.eventCode : null,
+    enabled: live,
+    startedAt: live ? stored.startedAt : null,
+    expiresAt: live ? stored.expiresAt : null,
+    remainingMs: live ? remainingMs : 0,
+    sessionId: live ? stored.sessionId : null,
+    eventCode: live ? stored.eventCode : null,
+    name: live ? stored.name : null,
   };
 }
 
@@ -43,6 +48,7 @@ function parseStored(raw: string | null): StoredEventMode {
       expiresAt: typeof parsed.expiresAt === 'number' ? parsed.expiresAt : null,
       sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
       eventCode: typeof parsed.eventCode === 'string' ? parsed.eventCode : null,
+      name: normalizeEventName(typeof parsed.name === 'string' ? parsed.name : null),
     };
   } catch {
     return { ...OFF };
@@ -80,14 +86,16 @@ export class EventModeService {
     userId: string,
     durationMs = DEFAULT_EVENT_DURATION_MS,
     eventCode: string | null = null,
+    name: string | null = null,
   ): Promise<EventModeSnapshot> {
     const now = this.now();
     const next: StoredEventMode = {
       enabled: true,
       startedAt: now,
-      expiresAt: now + durationMs,
+      expiresAt: now + clampEventDurationMs(durationMs),
       sessionId: createEventSessionId(),
       eventCode,
+      name: normalizeEventName(name),
     };
     await this.persist(userId, next);
     return snapshot(next, now);

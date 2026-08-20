@@ -1,4 +1,4 @@
-import { Alert, Pressable, ScrollView, StyleSheet } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { useState } from 'react';
 import { useRouter } from 'expo-router';
 import { bluetoothStatusLabel, LOCAL_AVATAR_COLORS } from '@hop/protocol';
@@ -23,7 +23,7 @@ import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
 import { useProfilePhoto } from '@/src/profile/useProfilePhoto';
 
 export default function SettingsScreen() {
-  const { user, token, logout, refreshUser } = useAuth();
+  const { user, token, logout, refreshUser, changeHandle } = useAuth();
   const { relayConsent, setRelayConsent } = useBle();
   const { operatingMode, audience, eventMode, eventRemainingLabel, scanState } = useNearbyPeers();
   const { identityError } = useOffline();
@@ -38,6 +38,9 @@ export default function SettingsScreen() {
   const [photoSheet, setPhotoSheet] = useState(false);
   const [photoBusy, setPhotoBusy] = useState(false);
   const [photoError, setPhotoError] = useState<string | null>(null);
+  const [handleDraft, setHandleDraft] = useState(user?.username ?? '');
+  const [handleBusy, setHandleBusy] = useState(false);
+  const [handleError, setHandleError] = useState<string | null>(null);
   const hasPhoto = Boolean(user?.has_avatar || photoUri);
 
   async function applyPhoto(source: 'library' | 'camera') {
@@ -110,6 +113,35 @@ export default function SettingsScreen() {
           />
         </Pressable>
         <Text style={styles.username}>{user?.username}</Text>
+        <Text style={{ color: colors.muted, textAlign: 'center' }}>
+          Display handle only — not your encryption identity. You can change it anytime.
+        </Text>
+        <TextInput
+          autoCapitalize="none"
+          autoCorrect={false}
+          value={handleDraft}
+          onChangeText={setHandleDraft}
+          placeholder="Handle"
+          placeholderTextColor={colors.muted}
+          style={[styles.handleInput, { color: colors.text, backgroundColor: colors.card, borderColor: colors.tabIconDefault }]}
+        />
+        {handleError ? <Text style={{ color: '#DC2626', textAlign: 'center' }}>{handleError}</Text> : null}
+        {handleDraft.trim().toLowerCase() !== (user?.username ?? '') ? (
+          <Pressable
+            onPress={() => {
+              setHandleBusy(true);
+              setHandleError(null);
+              changeHandle(handleDraft)
+                .catch((err) => setHandleError(err instanceof Error ? err.message : 'Could not change handle'))
+                .finally(() => setHandleBusy(false));
+            }}
+            disabled={handleBusy}
+            style={[styles.button, { borderColor: colors.tint, marginTop: 4 }]}>
+            <Text style={[styles.buttonLabel, { color: colors.tint }]}>
+              {handleBusy ? 'Saving…' : 'Save handle'}
+            </Text>
+          </Pressable>
+        ) : null}
         <Text style={{ color: colors.muted, textAlign: 'center' }}>
           Photo, initials, and a local color — not identity, never in your HOP QR.
         </Text>
@@ -256,6 +288,15 @@ const styles = StyleSheet.create({
   wrap: { padding: 20, paddingBottom: 40, gap: 12 },
   hero: { alignItems: 'center', gap: 8, paddingVertical: 8, backgroundColor: 'transparent' },
   username: { fontSize: 26, fontWeight: '800' },
+  handleInput: {
+    alignSelf: 'stretch',
+    borderWidth: 1,
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    fontSize: 16,
+    textAlign: 'center',
+  },
   card: { borderRadius: 16, padding: 16, gap: 4 },
   cardTitle: { fontSize: 16, fontWeight: '700', marginBottom: 4 },
   sectionLabel: { fontSize: 11, fontWeight: '800', letterSpacing: 1 },

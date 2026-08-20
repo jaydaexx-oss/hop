@@ -127,6 +127,21 @@ describe("identity adversarial properties", () => {
     expect(tofu.observe("mallory", other.publicKey)).toBe("TOFU_TRUSTED");
   });
 
+  it("does not mint a new identity when local keys already exist for the install", async () => {
+    const backend = memoryBackend();
+    const first = await loadOrCreateIdentity("alice", backend, generateIdentityKeyPair);
+    const { writeIdentityOwner, loadOrCreatePendingIdentity } = await import("../src/identityLifecycle.js");
+    await writeIdentityOwner("alice", backend);
+    let generated = 0;
+    const loaded = await loadOrCreatePendingIdentity(backend, async () => {
+      generated += 1;
+      return generateIdentityKeyPair();
+    });
+    expect(loaded.publicKey).toBe(first.publicKey);
+    expect(loaded.secretKey).toBe(first.secretKey);
+    expect(generated).toBe(0);
+  });
+
   it("does not PUT a replacement when the server key differs (no silent server swap)", async () => {
     const local = await generateIdentityKeyPair();
     const server = await generateIdentityKeyPair();

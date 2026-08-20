@@ -262,21 +262,43 @@ export {
 } from "./voice.js";
 export { PublicKeyTofu, sqlitePeerTrustPersistence, type PeerTrustPersistence, type PeerTrustRecord, type PeerTrustState } from "./tofu.js";
 export {
+  DEVICE_SECRET_KEY,
+  IDENTITY_MARKER_PREFIX,
+  IDENTITY_OWNER_KEY,
+  IDENTITY_SECRET_PREFIX,
+  PENDING_IDENTITY_SLOT,
   IdentityError,
   assertIdentityPublishHasNoSecret,
   assertPublishedIdentityMatches,
   assertWellFormedPublishKey,
+  bindPendingIdentityToUser,
   decideIdentityPublish,
+  hasExistingLocalIdentity,
   identityPublishBody,
   isHttpConflict,
+  loadOrCreateDeviceSecret,
   loadOrCreateIdentity,
+  loadOrCreatePendingIdentity,
+  mustNotCreateNewAccount,
+  newDeviceSecret,
+  peekDeviceSecret,
+  peekStoredIdentity,
   publishIdentityIfAllowed,
+  readIdentityOwner,
   replaceIdentityExplicit,
   serverKeyLockedError,
+  shouldSkipOnboarding,
+  writeIdentityOwner,
   type IdentityErrorCode,
   type IdentityPublishAction,
   type SecretBackend,
 } from "./identityLifecycle.js";
+export {
+  IDENTITY_RECOVERY_EXTENSION_POINTS,
+  recoveryNotRequiredForOnboarding,
+  type IdentityRecoveryMethod,
+  type IdentityRecoveryPlan,
+} from "./identityRecovery.js";
 export { formatPersistedFingerprint, identityFingerprint } from "./fingerprint.js";
 export {
   BLE_KEY_CHANGED_REFUSAL,

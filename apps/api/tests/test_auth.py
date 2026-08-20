@@ -107,3 +107,149 @@ def test_postgres_engine_pre_pings_stale_connections(monkeypatch) -> None:
     finally:
         db.get_engine.cache_clear()
         get_settings.cache_clear()
+
+
+def _device_secret() -> str:
+    return "d" * 32
+
+
+def test_register_device_returns_existing_token_shape(client: TestClient) -> None:
+    from tests.keys import box_pk
+
+    pk = box_pk("device-ada")
+    registered = client.post(
+        "/auth/register-device",
+        json={"username": "AdaDevice", "public_key": pk, "device_secret": _device_secret()},
+    )
+    assert registered.status_code == 200
+    body = registered.json()
+    assert "token" in body and body["token"]
+    assert body["user"]["username"] == "adadevice"
+    assert body["user"]["id"]
+    assert body["user"]["identity_public_key"] == pk
+
+    me = client.get("/users/me", headers={"Authorization": f"Bearer {body['token']}"})
+    assert me.status_code == 200
+    assert me.json()["id"] == body["user"]["id"]
+    assert me.json()["identity_public_key"] == pk
+
+
+def test_register_device_retry_keeps_same_user_id(client: TestClient) -> None:
+    from tests.keys import box_pk
+
+    pk = box_pk("device-retry")
+    secret = "r" * 32
+    first = client.post(
+        "/auth/register-device",
+        json={"username": "retrydev", "public_key": pk, "device_secret": secret},
+    )
+    assert first.status_code == 200
+    user_id = first.json()["user"]["id"]
+    second = client.post(
+        "/auth/register-device",
+        json={"username": "retrydev", "public_key": pk, "device_secret": secret},
+    )
+    assert second.status_code == 200
+    assert second.json()["user"]["id"] == user_id
+    assert second.json()["user"]["identity_public_key"] == pk
+
+
+def test_register_device_rejects_duplicate_handle(client: TestClient) -> None:
+    from tests.keys import box_pk
+
+    client.post("/auth/register", json={"username": "takenhandle", "password": "secret123"})
+    denied = client.post(
+        "/auth/register-device",
+        json={"username": "TakenHandle", "public_key": box_pk("dup-handle"), "device_secret": "s" * 32},
+    )
+    assert denied.status_code == 409
+
+
+def test_register_device_rejects_duplicate_public_key(client: TestClient) -> None:
+    from tests.keys import box_pk
+
+    pk = box_pk("shared-pk")
+    first = client.post(
+        "/auth/register-device",
+        json={"username": "keyowner", "public_key": pk, "device_secret": "a" * 32},
+    )
+    assert first.status_code == 200
+    stolen = client.post(
+        "/auth/register-device",
+        json={"username": "keythief", "public_key": pk, "device_secret": "b" * 32},
+    )
+    assert stolen.status_code == 409
+    assert "user" not in stolen.json() or "id" not in stolen.json().get("user", {})
+
+
+def test_device_session_reissues_token_without_new_user(client: TestClient) -> None:
+    from tests.keys import box_pk
+
+    secret = "c" * 32
+    registered = client.post(
+        "/auth/register-device",
+        json={"username": "devback", "public_key": box_pk("dev-back"), "device_secret": secret},
+    )
+    user_id = registered.json()["user"]["id"]
+    again = client.post("/auth/device", json={"device_secret": secret})
+    assert again.status_code == 200
+    assert again.json()["user"]["id"] == user_id
+    me = client.get("/users/me", headers={"Authorization": f"Bearer {again.json()['token']}"})
+    assert me.status_code == 200
+    assert me.json()["id"] == user_id
+
+
+def test_device_account_cannot_password_login(client: TestClient) -> None:
+    from tests.keys import box_pk
+
+    client.post(
+        "/auth/register-device",
+        json={"username": "nopass", "public_key": box_pk("no-pass"), "device_secret": "e" * 32},
+    )
+    denied = client.post("/auth/login", json={"username": "nopass", "password": "secret123"})
+    assert denied.status_code == 401
+
+
+def test_password_register_still_works(client: TestClient) -> None:
+    registered = client.post("/auth/register", json={"username": "legacy", "password": "secret123"})
+    assert registered.status_code == 200
+    login = client.post("/auth/login", json={"username": "legacy", "password": "secret123"})
+    assert login.status_code == 200
+
+
+def test_handle_available_and_unique_change(client: TestClient) -> None:
+    from tests.keys import box_pk
+
+    open_handle = client.get("/auth/handle-available", params={"username": "freshhop"})
+    assert open_handle.status_code == 200
+    assert open_handle.json()["available"] is True
+
+    token = client.post("/auth/register", json={"username": "handlea", "password": "secret123"}).json()["token"]
+    client.post("/auth/register", json={"username": "handleb", "password": "secret123"})
+    taken = client.get("/auth/handle-available", params={"username": "HandleB"})
+    assert taken.json()["available"] is False
+
+    headers = {"Authorization": f"Bearer {token}"}
+    me_before = client.get("/users/me", headers=headers).json()
+    denied = client.put("/users/me/handle", json={"username": "handleb"}, headers=headers)
+    assert denied.status_code == 409
+    changed = client.put("/users/me/handle", json={"username": "handlea2"}, headers=headers)
+    assert changed.status_code == 200
+    assert changed.json()["id"] == me_before["id"]
+    assert changed.json()["username"] == "handlea2"
+    assert changed.json()["identity_public_key"] == me_before["identity_public_key"]
+
+    pk = box_pk("handle-id")
+    client.put("/users/me/identity", json={"public_key": pk}, headers=headers)
+    renamed = client.put("/users/me/handle", json={"username": "handlea3"}, headers=headers)
+    assert renamed.status_code == 200
+    assert renamed.json()["id"] == me_before["id"]
+    assert renamed.json()["identity_public_key"] == pk
+
+
+def test_register_device_rejects_malformed_public_key(client: TestClient) -> None:
+    denied = client.post(
+        "/auth/register-device",
+        json={"username": "badpk", "public_key": "A" * 32, "device_secret": "f" * 32},
+    )
+    assert denied.status_code == 400

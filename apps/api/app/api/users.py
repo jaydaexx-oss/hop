@@ -8,7 +8,7 @@ from app.avatars import AVATAR_MEDIA_TYPE, build_user_out, validate_avatar_jpeg
 from app.db import get_session
 from app.identity_keys import is_well_formed_box_public_key
 from app.models.tables import BlockedUser, Device, ProfilePhoto, Report, User, utcnow
-from app.schemas import BlockIn, IdentityIn, ReportIn, UserOut
+from app.schemas import BlockIn, HandleIn, IdentityIn, ReportIn, UserOut
 from app.security import get_current_user, validate_username
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -20,6 +20,30 @@ def _user_out(session: Session, user: User) -> UserOut:
 
 @router.get("/me", response_model=UserOut)
 def me(session: Session = Depends(get_session), user: User = Depends(get_current_user)) -> UserOut:
+    return _user_out(session, user)
+
+
+@router.put("/me/handle", response_model=UserOut)
+def put_handle(
+    body: HandleIn,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> UserOut:
+    """Change display handle only. Does not rotate identity keys or user_id."""
+    handle = validate_username(body.username)
+    if handle == user.username:
+        return _user_out(session, user)
+    taken = session.exec(select(User).where(User.username == handle)).first()
+    if taken is not None and taken.id != user.id:
+        raise HTTPException(status_code=409, detail="Username already taken")
+    user.username = handle
+    session.add(user)
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        raise HTTPException(status_code=409, detail="Username already taken") from None
+    session.refresh(user)
     return _user_out(session, user)
 
 

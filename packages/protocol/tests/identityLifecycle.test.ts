@@ -4,11 +4,20 @@ import {
   IdentityError,
   assertIdentityPublishHasNoSecret,
   assertPublishedIdentityMatches,
+  bindPendingIdentityToUser,
   decideIdentityPublish,
+  hasExistingLocalIdentity,
   identityPublishBody,
+  loadOrCreateDeviceSecret,
   loadOrCreateIdentity,
+  loadOrCreatePendingIdentity,
+  mustNotCreateNewAccount,
+  peekStoredIdentity,
   publishIdentityIfAllowed,
+  readIdentityOwner,
   replaceIdentityExplicit,
+  shouldSkipOnboarding,
+  writeIdentityOwner,
   type IdentityKeyPair,
   type SecretBackend,
 } from "../src/identityLifecycle.js";
@@ -203,5 +212,69 @@ describe("secret store fail-closed policy", () => {
       writeWithSecretPolicy({ backend, memory, key: "k", value: "v", failClosed: true }),
     ).rejects.toMatchObject({ code: "SECRET_STORE_UNAVAILABLE" });
     expect(memory.size).toBe(0);
+  });
+});
+
+describe("device-based onboarding identity binding", () => {
+  it("reuses pending keys and does not generate a second pair after bind", async () => {
+    const backend = memoryBackend();
+    let generated = 0;
+    const generate = async () => {
+      generated += 1;
+      return PAIR_A;
+    };
+    const pending = await loadOrCreatePendingIdentity(backend, generate);
+    const again = await loadOrCreatePendingIdentity(backend, async () => PAIR_B);
+    expect(pending).toEqual(PAIR_A);
+    expect(again).toEqual(PAIR_A);
+    expect(generated).toBe(1);
+
+    const bound = await bindPendingIdentityToUser("user-1", backend);
+    expect(bound).toEqual(PAIR_A);
+    expect(await readIdentityOwner(backend)).toBe("user-1");
+    expect(await peekStoredIdentity("user-1", backend)).toEqual(PAIR_A);
+    expect(await peekStoredIdentity("pending", backend)).toBeNull();
+
+    const reloaded = await loadOrCreateIdentity("user-1", backend, async () => PAIR_B);
+    expect(reloaded).toEqual(PAIR_A);
+    expect(generated).toBe(1);
+  });
+
+  it("does not create a new identity when an owner already exists", async () => {
+    const backend = memoryBackend();
+    await loadOrCreateIdentity("user-1", backend, async () => PAIR_A);
+    await writeIdentityOwner("user-1", backend);
+    expect(await hasExistingLocalIdentity(backend)).toBe(true);
+    expect(mustNotCreateNewAccount(true)).toBe(true);
+    expect(await shouldSkipOnboarding(backend, false)).toBe(true);
+
+    const loaded = await loadOrCreatePendingIdentity(backend, async () => PAIR_B);
+    expect(loaded).toEqual(PAIR_A);
+    await expect(bindPendingIdentityToUser("user-1", backend)).resolves.toEqual(PAIR_A);
+  });
+
+  it("refuses to overwrite existing user_id keys with a different pending pair", async () => {
+    const backend = memoryBackend();
+    await loadOrCreateIdentity("user-1", backend, async () => PAIR_A);
+    await loadOrCreateIdentity("pending", backend, async () => PAIR_B);
+    await expect(bindPendingIdentityToUser("user-1", backend)).rejects.toMatchObject({
+      code: "KEY_MISMATCH",
+    });
+    expect(await peekStoredIdentity("user-1", backend)).toEqual(PAIR_A);
+  });
+
+  it("reuses a device secret and never derives it from the handle", async () => {
+    const backend = memoryBackend();
+    const first = await loadOrCreateDeviceSecret(backend);
+    const second = await loadOrCreateDeviceSecret(backend);
+    expect(first).toBe(second);
+    expect(first.length).toBeGreaterThanOrEqual(32);
+    expect(first.toLowerCase()).not.toContain("alice");
+  });
+
+  it("skips onboarding when a session user already exists", async () => {
+    const backend = memoryBackend();
+    expect(await shouldSkipOnboarding(backend, true)).toBe(true);
+    expect(await shouldSkipOnboarding(backend, false)).toBe(false);
   });
 });

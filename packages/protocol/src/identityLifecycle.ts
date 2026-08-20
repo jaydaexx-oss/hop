@@ -2,6 +2,15 @@ import { generateIdentityKeyPair, isWellFormedBoxPublicKey, type IdentityKeyPair
 
 export const IDENTITY_SECRET_PREFIX = "hop.box.";
 export const IDENTITY_MARKER_PREFIX = "hop.box.marker.";
+/** Durable owner of the local crypto identity. Survives expired session tokens. */
+export const IDENTITY_OWNER_KEY = "hop.identity.userId";
+/** Companion device credential in SecureStore. Not derived from the handle. */
+export const DEVICE_SECRET_KEY = "hop.device.secret";
+/**
+ * Temporary SecureStore slot used only before the server assigns `user.id`.
+ * After bind, the same keypair is stored under hop.box.{userId} — never a second pair.
+ */
+export const PENDING_IDENTITY_SLOT = "pending";
 
 export type IdentityErrorCode =
   | "SECRET_STORE_UNAVAILABLE"
@@ -134,6 +143,140 @@ function parsePair(raw: string): IdentityKeyPair | null {
     /* corrupt */
   }
   return null;
+}
+
+function secretStoreKey(userId: string): string {
+  return `${IDENTITY_SECRET_PREFIX}${userId}`;
+}
+
+function markerStoreKey(userId: string): string {
+  return `${IDENTITY_MARKER_PREFIX}${userId}`;
+}
+
+export async function readIdentityOwner(backend: SecretBackend): Promise<string | null> {
+  const value = await backend.read(IDENTITY_OWNER_KEY);
+  return value && value.trim() ? value.trim() : null;
+}
+
+export async function writeIdentityOwner(userId: string, backend: SecretBackend): Promise<void> {
+  if (!userId.trim()) return;
+  await backend.write(IDENTITY_OWNER_KEY, userId.trim());
+}
+
+export async function peekStoredIdentity(
+  userId: string,
+  backend: SecretBackend,
+): Promise<IdentityKeyPair | null> {
+  const stored = await backend.read(secretStoreKey(userId));
+  if (!stored) return null;
+  return parsePair(stored);
+}
+
+/**
+ * True when this install already has a HOP identity (including an inaccessible marker).
+ * Callers must not mint a new keypair or a new server user_id in that case.
+ */
+export async function hasExistingLocalIdentity(backend: SecretBackend): Promise<boolean> {
+  const owner = await readIdentityOwner(backend);
+  if (owner) {
+    if (await peekStoredIdentity(owner, backend)) return true;
+    if (await backend.read(markerStoreKey(owner))) return true;
+  }
+  if (await peekStoredIdentity(PENDING_IDENTITY_SLOT, backend)) return true;
+  if (await backend.read(markerStoreKey(PENDING_IDENTITY_SLOT))) return true;
+  return false;
+}
+
+export function mustNotCreateNewAccount(hasOwnerUserId: boolean): boolean {
+  return hasOwnerUserId;
+}
+
+/** Valid session or a bound local identity: skip the first-run handle screen. */
+export async function shouldSkipOnboarding(
+  backend: SecretBackend,
+  hasSessionUser: boolean,
+): Promise<boolean> {
+  if (hasSessionUser) return true;
+  return (await readIdentityOwner(backend)) !== null;
+}
+
+export function newDeviceSecret(): string {
+  const bytes = new Uint8Array(32);
+  if (typeof globalThis.crypto?.getRandomValues === "function") {
+    globalThis.crypto.getRandomValues(bytes);
+  } else {
+    for (let i = 0; i < bytes.length; i++) bytes[i] = (Date.now() + i * 17) & 0xff;
+  }
+  const binary = String.fromCharCode(...bytes);
+  return globalThis.btoa(binary).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+}
+
+export async function peekDeviceSecret(backend: SecretBackend): Promise<string | null> {
+  const value = await backend.read(DEVICE_SECRET_KEY);
+  return value && value.trim().length >= 32 ? value.trim() : null;
+}
+
+export async function loadOrCreateDeviceSecret(backend: SecretBackend): Promise<string> {
+  const existing = await peekDeviceSecret(backend);
+  if (existing) return existing;
+  const created = newDeviceSecret();
+  await backend.write(DEVICE_SECRET_KEY, created);
+  return created;
+}
+
+/**
+ * First-launch keypair only. If an owner identity already exists, return it —
+ * never generate a replacement under the pending slot.
+ */
+export async function loadOrCreatePendingIdentity(
+  backend: SecretBackend,
+  generate: () => Promise<IdentityKeyPair> = generateIdentityKeyPair,
+): Promise<IdentityKeyPair> {
+  const owner = await readIdentityOwner(backend);
+  if (owner) {
+    return loadOrCreateIdentity(owner, backend, async () => {
+      throw new IdentityError(
+        "IDENTITY_INACCESSIBLE",
+        "A local HOP identity already exists for this install. HOP will not generate a replacement key.",
+      );
+    });
+  }
+  return loadOrCreateIdentity(PENDING_IDENTITY_SLOT, backend, generate);
+}
+
+/**
+ * Move the pending pair under the server-assigned user_id.
+ * If hop.box.{userId} already exists, keep it and refuse to overwrite.
+ */
+export async function bindPendingIdentityToUser(
+  userId: string,
+  backend: SecretBackend,
+): Promise<IdentityKeyPair> {
+  const existing = await peekStoredIdentity(userId, backend);
+  if (existing) {
+    const pending = await peekStoredIdentity(PENDING_IDENTITY_SLOT, backend);
+    if (pending && pending.publicKey !== existing.publicKey) {
+      throw new IdentityError(
+        "KEY_MISMATCH",
+        "This install already has identity keys for this user_id. HOP will not replace them with a pending pair.",
+      );
+    }
+    await writeIdentityOwner(userId, backend);
+    return existing;
+  }
+  const pending = await peekStoredIdentity(PENDING_IDENTITY_SLOT, backend);
+  if (!pending) {
+    throw new IdentityError(
+      "IDENTITY_INACCESSIBLE",
+      "No pending identity to bind. HOP will not generate a replacement key.",
+    );
+  }
+  await backend.write(secretStoreKey(userId), JSON.stringify(pending));
+  await backend.write(markerStoreKey(userId), pending.publicKey);
+  await writeIdentityOwner(userId, backend);
+  await backend.write(secretStoreKey(PENDING_IDENTITY_SLOT), null);
+  await backend.write(markerStoreKey(PENDING_IDENTITY_SLOT), null);
+  return pending;
 }
 
 /**

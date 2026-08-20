@@ -24,6 +24,28 @@ class RegisterIn(BaseModel):
     password: str = Field(min_length=8, max_length=200)
 
 
+class RegisterDeviceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str
+    public_key: str = Field(min_length=32, max_length=128)
+    device_secret: str = Field(min_length=32, max_length=128)
+
+
+class DeviceSessionIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    device_secret: str = Field(min_length=32, max_length=128)
+
+
+class HandleIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str
+
+
+class HandleAvailableOut(BaseModel):
+    username: str
+    available: bool
+
+
 class LoginIn(BaseModel):
     username: str
     password: str

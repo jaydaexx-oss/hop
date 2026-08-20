@@ -23,6 +23,7 @@ bearer = HTTPBearer(auto_error=False)
 PBKDF_ROUNDS = 120_000
 SESSION_DAYS = 30
 ARGON2_PREFIX = "argon2id$"
+DEVICE_PASSWORD_MARKER = "device$"
 _password_hasher = PasswordHasher(time_cost=2, memory_cost=65536, parallelism=1)
 
 
@@ -44,7 +45,13 @@ def hash_password(password: str) -> str:
     return f"{ARGON2_PREFIX}{_password_hasher.hash(password)}"
 
 
+def is_device_account(password_hash: str) -> bool:
+    return password_hash.startswith(DEVICE_PASSWORD_MARKER)
+
+
 def verify_password(password: str, stored: str) -> bool:
+    if not stored or is_device_account(stored):
+        return False
     if stored.startswith(ARGON2_PREFIX):
         try:
             _password_hasher.verify(stored[len(ARGON2_PREFIX) :], password)

@@ -157,10 +157,23 @@ async function putJpeg<T>(path: string, token: string, body: Blob | ArrayBuffer 
 export const api = {
   register: (username: string, password: string) =>
     request<AuthResponse>('/auth/register', { method: 'POST', body: { username, password } }),
+  registerDevice: (username: string, publicKey: string, deviceSecret: string) =>
+    request<AuthResponse>('/auth/register-device', {
+      method: 'POST',
+      body: { username, public_key: publicKey, device_secret: deviceSecret },
+    }),
+  deviceLogin: (deviceSecret: string) =>
+    request<AuthResponse>('/auth/device', { method: 'POST', body: { device_secret: deviceSecret } }),
+  handleAvailable: (username: string) =>
+    request<{ username: string; available: boolean }>(
+      `/auth/handle-available?username=${encodeURIComponent(username)}`,
+    ),
   login: (username: string, password: string) =>
     request<AuthResponse>('/auth/login', { method: 'POST', body: { username, password } }),
   logout: (token: string) => request<{ status: string }>('/auth/logout', { method: 'POST', token }),
   me: (token: string) => request<User>('/users/me', { token }),
+  putHandle: (token: string, username: string) =>
+    request<User>('/users/me/handle', { method: 'PUT', token, body: { username } }),
   putAvatar: (token: string, jpeg: Blob | ArrayBuffer | Uint8Array) =>
     putJpeg<User>(PROFILE_PHOTO_MUTATE_PATH, token, jpeg),
   deleteAvatar: (token: string) => request<User>(PROFILE_PHOTO_MUTATE_PATH, { method: 'DELETE', token }),

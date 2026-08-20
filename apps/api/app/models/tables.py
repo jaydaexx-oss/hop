@@ -41,6 +41,7 @@ class Device(SQLModel, table=True):
     user_id: str = Field(foreign_key="users.id", index=True)
     platform: str
     identity_public_key: str = ""
+    device_secret_hash: Optional[str] = Field(default=None, index=True, unique=True)
     created_at: datetime = Field(default_factory=utcnow)
 
 

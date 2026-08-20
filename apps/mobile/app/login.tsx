@@ -285,8 +285,9 @@ export default function LoginScreen() {
           <>
             <Text style={[styles.hint, { color: colors.muted }]}>{HANDLE_IS_NOT_AUTH_MESSAGE}</Text>
             <Text style={[styles.hint, { color: colors.muted }]}>
-              Recovery restores this identity only if the original keys are on this iPhone (iCloud backup / Keychain).
-              It never creates a second account or a replacement keypair.
+              Recovery restores this identity only if the original keys are already on this iPhone, either because
+              HOP ran here before or because this iPhone was set up from an encrypted backup of the old one. It never
+              creates a second account or a replacement keypair.
             </Text>
             {showNoMethods ? <Text style={styles.error}>{NO_RECOVERY_METHODS_MESSAGE}</Text> : null}
             {showPasskeyNeedsNative ? <Text style={styles.error}>{PASSKEY_NATIVE_REQUIRED_MESSAGE}</Text> : null}

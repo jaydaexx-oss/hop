@@ -164,7 +164,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
             setIdentityError(err.message);
           } else if (err instanceof ApiError && err.status === 409) {
             setIdentityError(
-              'SERVER_KEY_LOCKED: this account already published a different identity key. HOP will not replace it. Recover the original private key from iCloud Keychain or a device that already has HOP — local Replace keys cannot publish a second key.',
+              'SERVER_KEY_LOCKED: this account already published a different identity key. HOP will not replace it. Recover the original private key from a device that still has HOP, or from an encrypted backup restore — local Replace keys cannot publish a second key.',
             );
           }
           /* network errors stay best-effort while offline */

@@ -1,7 +1,7 @@
 import { Platform } from 'react-native';
 
 export const PASSKEY_NATIVE_REQUIRED_MESSAGE =
-  'Passkey recovery needs a HOP build with platform passkeys (Associated Domains + EAS). Use a device that already has HOP, restore from iCloud Keychain, or a one-time recovery password if this is a pre-passkey account.';
+  'Passkey recovery needs a HOP build with platform passkeys (Associated Domains + EAS). For now, use a device that still has HOP, an iPhone set up from an encrypted backup of it, or a one-time recovery password if this is a pre-passkey account.';
 
 export function platformPasskeysAvailable(): boolean {
   if (Platform.OS === 'web' && typeof globalThis.PublicKeyCredential === 'function') return true;

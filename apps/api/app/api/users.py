@@ -123,7 +123,7 @@ def put_identity(
             detail=(
                 "SERVER_KEY_LOCKED: this account already published a different identity "
                 "public key. HOP will not replace it. Recover the original private key "
-                "from iCloud Keychain or a device that already has HOP."
+                "from a device that still has HOP, or from an encrypted backup restore."
             ),
         )
     else:

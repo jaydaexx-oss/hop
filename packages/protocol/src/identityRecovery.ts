@@ -23,7 +23,9 @@ import { readySodium } from "./sodium.js";
  *
  * Paths:
  * - Passkey / WebAuthn (preferred going forward)
- * - iCloud Keychain / encrypted iOS backup of `hop.box.{userId}` (and optional wrap key)
+ * - Encrypted iOS device backup restore of `hop.box.{userId}` (and optional wrap key).
+ *   The `icloud_keychain` method id predates this note; the actual carrier is a backup
+ *   restore, because SecureStore entries are not marked synchronizable.
  * - One-time password inside Recover my HOP for pre-passkey accounts, then enroll a passkey
  */
 
@@ -37,12 +39,17 @@ export const IDENTITY_RECOVERY_EXTENSION_POINTS = [
 
 export const HANDLE_TAKEN_RECOVER_COPY = "This handle already exists. Recover it?";
 export const RECOVER_MY_HOP_LABEL = "Recover my HOP";
+/**
+ * expo-secure-store writes WHEN_UNLOCKED, which migrates in an encrypted device
+ * backup restore. It is not marked synchronizable, so iCloud Keychain sync does
+ * NOT carry these keys. Say "encrypted backup", never "turn on iCloud Keychain".
+ */
 export const KEYS_MISSING_MESSAGE =
-  "This device doesn’t have your HOP keys. Use a device that already has HOP, or restore from iCloud Keychain.";
+  "This device doesn’t have your HOP keys. Open HOP on a phone that still has this account, or set this iPhone up again from an encrypted iCloud backup of that phone. Turning on iCloud Keychain now cannot bring the keys back.";
 export const HANDLE_IS_NOT_AUTH_MESSAGE =
   "Typing a handle is not enough to recover this identity. Prove you already own it.";
 export const NO_RECOVERY_METHODS_MESSAGE =
-  "This handle is taken. Sign in from a device that already has HOP, or restore this iPhone from iCloud. A handle alone cannot recover your identity.";
+  "This handle is taken. Open HOP on a device that still has this account, or set this iPhone up again from an encrypted iCloud backup of that device. A handle alone cannot recover your identity.";
 
 /** Onboarding a brand-new available handle does not require recovery. */
 export function recoveryNotRequiredForOnboarding(): true {

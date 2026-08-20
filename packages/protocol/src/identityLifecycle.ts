@@ -70,7 +70,7 @@ export function isHttpConflict(err: unknown): boolean {
 export function serverKeyLockedError(): IdentityError {
   return new IdentityError(
     "SERVER_KEY_LOCKED",
-    "This account already has a published identity public key. HOP will not replace it. Recover the original private key from iCloud Keychain or a device that already has HOP. Unauthenticated key replacement is not allowed.",
+    "This account already has a published identity public key. HOP will not replace it. Recover the original private key from a device that still has HOP, or from an encrypted backup restore. Unauthenticated key replacement is not allowed.",
   );
 }
 

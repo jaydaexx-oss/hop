@@ -16,10 +16,18 @@ import { Text } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { HOP_USERNAME_RE, LOCAL_AVATAR_COLORS, normalizeHopUsername } from '@hop/protocol';
-import { api } from '@/src/api/hop';
+import {
+  HANDLE_IS_NOT_AUTH_MESSAGE,
+  HANDLE_TAKEN_RECOVER_COPY,
+  KEYS_MISSING_MESSAGE,
+  NO_RECOVERY_METHODS_MESSAGE,
+  RECOVER_MY_HOP_LABEL,
+} from '@hop/protocol';
+import { api, type RecoveryOptions } from '@/src/api/hop';
 import { LOOPBACK_API_DEVICE_HINT, apiUrlUsesLoopback } from '@/src/api/client';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { RESET_HOP_CONFIRM, RESET_HOP_MESSAGE, RESET_HOP_TITLE } from '@/src/auth/deviceOnboarding';
+import { PASSKEY_NATIVE_REQUIRED_MESSAGE, platformPasskeysAvailable } from '@/src/auth/passkeys';
 import { loadToken } from '@/src/auth/storage';
 import { POST_LOGIN_HREF } from '@/src/navigation/tabOrder';
 import { createPersistentKv } from '@/src/nearby/kvStore';
@@ -30,7 +38,8 @@ import { uploadProfilePhotoFile } from '@/src/profile/profilePhotoCache';
 const kv = createPersistentKv();
 
 export default function LoginScreen() {
-  const { user, startHopping, continueOnDevice, resetThisDevice, refreshUser, skipOnboarding, error } = useAuth();
+  const { user, startHopping, recoverHop, continueOnDevice, resetThisDevice, refreshUser, skipOnboarding, error } =
+    useAuth();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const [username, setUsername] = useState('');
@@ -39,6 +48,9 @@ export default function LoginScreen() {
   const [handleStatus, setHandleStatus] = useState<'idle' | 'checking' | 'ok' | 'taken' | 'invalid'>('idle');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [avatarColor, setAvatarColor] = useState(() => defaultLocalAvatarColor('hop'));
+  const [recovering, setRecovering] = useState(false);
+  const [recoveryPassword, setRecoveryPassword] = useState('');
+  const [recoveryOptions, setRecoveryOptions] = useState<RecoveryOptions | null>(null);
 
   useEffect(() => {
     if (user || !skipOnboarding) return;
@@ -73,7 +85,23 @@ export default function LoginScreen() {
       api
         .handleAvailable(handle)
         .then((result) => {
-          if (!cancelled) setHandleStatus(result.available ? 'ok' : 'taken');
+          if (!cancelled) {
+            setHandleStatus(result.available ? 'ok' : 'taken');
+            setRecovering(false);
+            setRecoveryPassword('');
+            if (result.available) {
+              setRecoveryOptions(null);
+            } else {
+              api
+                .recoveryOptions(handle)
+                .then((options) => {
+                  if (!cancelled) setRecoveryOptions(options);
+                })
+                .catch(() => {
+                  if (!cancelled) setRecoveryOptions(null);
+                });
+            }
+          }
         })
         .catch(() => {
           if (!cancelled) setHandleStatus('idle');
@@ -106,6 +134,19 @@ export default function LoginScreen() {
     }
   }
 
+  async function submitRecover(proof: { method: 'legacy_password_once'; password: string } | { method: 'passkey' }) {
+    const handle = normalizeHopUsername(username);
+    setBusy(true);
+    setLocalError(null);
+    try {
+      await recoverHop(handle, proof);
+    } catch (err) {
+      setLocalError(err instanceof Error ? err.message : KEYS_MISSING_MESSAGE);
+    } finally {
+      setBusy(false);
+    }
+  }
+
   async function choosePhoto(source: 'library' | 'camera') {
     try {
       const prepared = await pickPreparedProfilePhoto(source);
@@ -133,6 +174,13 @@ export default function LoginScreen() {
   }
 
   const hopDisabled = busy || handleStatus !== 'ok';
+  const passkeysReady = platformPasskeysAvailable();
+  const showPasskey = Boolean(recoveryOptions?.passkey_enrolled && passkeysReady);
+  const showPasskeyNeedsNative = Boolean(recoveryOptions?.passkey_enrolled && !passkeysReady);
+  const showPassword = recoveryOptions == null || Boolean(recoveryOptions.legacy_password);
+  const showNoMethods = Boolean(
+    recoveryOptions && !recoveryOptions.passkey_enrolled && !recoveryOptions.legacy_password,
+  );
 
   if (skipOnboarding) {
     return (
@@ -214,18 +262,84 @@ export default function LoginScreen() {
           onChangeText={setUsername}
           style={[styles.input, { color: colors.text, backgroundColor: colors.card, borderColor: colors.tabIconDefault }]}
         />
-        {handleStatus === 'taken' ? <Text style={styles.error}>That handle is taken</Text> : null}
+        {handleStatus === 'taken' ? (
+          <Text style={styles.error}>{HANDLE_TAKEN_RECOVER_COPY}</Text>
+        ) : null}
         {handleStatus === 'invalid' && username.trim() ? (
           <Text style={styles.error}>3–20 characters, start with a letter, letters/numbers/_</Text>
         ) : null}
         {(localError || error) && <Text style={styles.error}>{localError || error}</Text>}
         {__DEV__ && apiUrlUsesLoopback() ? <Text style={styles.error}>{LOOPBACK_API_DEVICE_HINT}</Text> : null}
-        <Pressable
-          onPress={() => void submitStart()}
-          disabled={hopDisabled}
-          style={[styles.button, { backgroundColor: colors.tint, opacity: hopDisabled ? 0.6 : 1 }]}>
-          <Text style={styles.buttonLabel}>{busy ? 'Hopping…' : 'Start Hopping'}</Text>
-        </Pressable>
+        {handleStatus === 'taken' && !recovering ? (
+          <Pressable
+            onPress={() => {
+              setLocalError(null);
+              setRecovering(true);
+            }}
+            disabled={busy}
+            style={[styles.button, { backgroundColor: colors.tint, opacity: busy ? 0.6 : 1 }]}>
+            <Text style={styles.buttonLabel}>{RECOVER_MY_HOP_LABEL}</Text>
+          </Pressable>
+        ) : null}
+        {handleStatus === 'taken' && recovering ? (
+          <>
+            <Text style={[styles.hint, { color: colors.muted }]}>{HANDLE_IS_NOT_AUTH_MESSAGE}</Text>
+            <Text style={[styles.hint, { color: colors.muted }]}>
+              Recovery restores this identity only if the original keys are on this iPhone (iCloud backup / Keychain).
+              It never creates a second account or a replacement keypair.
+            </Text>
+            {showNoMethods ? <Text style={styles.error}>{NO_RECOVERY_METHODS_MESSAGE}</Text> : null}
+            {showPasskeyNeedsNative ? <Text style={styles.error}>{PASSKEY_NATIVE_REQUIRED_MESSAGE}</Text> : null}
+            {showPasskey ? (
+              <Pressable
+                onPress={() => void submitRecover({ method: 'passkey' })}
+                disabled={busy}
+                style={[styles.button, { backgroundColor: colors.tint, opacity: busy ? 0.6 : 1 }]}>
+                <Text style={styles.buttonLabel}>{busy ? 'Recovering…' : 'Continue with passkey'}</Text>
+              </Pressable>
+            ) : null}
+            {showPassword && !showNoMethods ? (
+              <>
+                <TextInput
+                  autoCapitalize="none"
+                  autoCorrect={false}
+                  secureTextEntry
+                  placeholder="One-time recovery password"
+                  placeholderTextColor={colors.muted}
+                  value={recoveryPassword}
+                  onChangeText={setRecoveryPassword}
+                  style={[styles.input, { color: colors.text, backgroundColor: colors.card, borderColor: colors.tabIconDefault }]}
+                />
+                <Pressable
+                  onPress={() => void submitRecover({ method: 'legacy_password_once', password: recoveryPassword })}
+                  disabled={busy || recoveryPassword.length < 8}
+                  style={[
+                    styles.button,
+                    { backgroundColor: colors.tint, opacity: busy || recoveryPassword.length < 8 ? 0.6 : 1 },
+                  ]}>
+                  <Text style={styles.buttonLabel}>{busy ? 'Recovering…' : RECOVER_MY_HOP_LABEL}</Text>
+                </Pressable>
+              </>
+            ) : null}
+            <Pressable
+              onPress={() => {
+                setRecovering(false);
+                setRecoveryPassword('');
+                setLocalError(null);
+              }}
+              disabled={busy}>
+              <Text style={[styles.switch, { color: colors.muted }]}>Choose a different handle</Text>
+            </Pressable>
+          </>
+        ) : null}
+        {handleStatus !== 'taken' ? (
+          <Pressable
+            onPress={() => void submitStart()}
+            disabled={hopDisabled}
+            style={[styles.button, { backgroundColor: colors.tint, opacity: hopDisabled ? 0.6 : 1 }]}>
+            <Text style={styles.buttonLabel}>{busy ? 'Hopping…' : 'Start Hopping'}</Text>
+          </Pressable>
+        ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );

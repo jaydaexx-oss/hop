@@ -17,6 +17,10 @@ describe('passwordless consumer auth UI', () => {
     expect(login).toContain('Choose a handle and hop in. No password.');
     expect(login).toContain('Start Hopping');
     expect(login).toContain('placeholder="Handle"');
+    expect(login).toContain('HANDLE_TAKEN_RECOVER_COPY');
+    expect(login).toContain('RECOVER_MY_HOP_LABEL');
+    expect(login).toContain('placeholder="One-time recovery password"');
+    expect(login).toContain('PASSKEY_NATIVE_REQUIRED_MESSAGE');
     expect(login).not.toContain('Welcome back');
     expect(login).not.toContain('I already have an account');
     expect(login).not.toMatch(/placeholder=["']Password["']/);

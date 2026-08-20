@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     )
     # Public HTTPS origin clients should use. Empty in development. Required in production.
     api_public_url: str = Field(default="", validation_alias="API_PUBLIC_URL")
+    # Optional WebAuthn RP ID override. Defaults to API_PUBLIC_URL hostname.
+    webauthn_rp_id: str = Field(default="", validation_alias="WEBAUTHN_RP_ID")
+    # Apple team ID for Associated Domains / passkeys. Empty disables AASA.
+    apple_team_id: str = Field(default="", validation_alias="APPLE_TEAM_ID")
 
     trust_proxy_headers: bool = Field(default=False, validation_alias="TRUST_PROXY_HEADERS")
     docs_enabled: Optional[bool] = Field(default=None, validation_alias="DOCS_ENABLED")

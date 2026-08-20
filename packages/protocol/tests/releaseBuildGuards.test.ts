@@ -71,6 +71,11 @@ describe("mobile production send path source", () => {
     expect(login).not.toContain("I already have an account");
     expect(login).not.toMatch(/placeholder=["']Password["']/);
     expect(login).not.toMatch(/placeholder=["']Username["']/);
+    expect(login).toContain("HANDLE_TAKEN_RECOVER_COPY");
+    expect(login).toContain("RECOVER_MY_HOP_LABEL");
+    expect(login).toContain('placeholder="One-time recovery password"');
+    const appJson = readRepo("apps/mobile/app.json");
+    expect(appJson).toContain("webcredentials:hop-uokqmg.fly.dev");
     const bleDebug = readRepo("apps/mobile/app/ble-debug.tsx");
     expect(bleDebug).toContain("isBleDebugEnabled(__DEV__)");
     expect(bleDebug).toContain("Selected transport");

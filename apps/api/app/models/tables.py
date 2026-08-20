@@ -148,3 +148,32 @@ class Report(SQLModel, table=True):
     reported_user_id: str = Field(foreign_key="users.id")
     reason: str
     created_at: datetime = Field(default_factory=utcnow)
+
+
+class PasskeyCredential(SQLModel, table=True):
+    __tablename__ = "passkey_credentials"
+
+    id: str = Field(primary_key=True, max_length=512)
+    user_id: str = Field(foreign_key="users.id", index=True)
+    public_key: str
+    sign_count: int = 0
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class PasskeyChallenge(SQLModel, table=True):
+    __tablename__ = "passkey_challenges"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    user_id: Optional[str] = Field(default=None, foreign_key="users.id", index=True)
+    challenge: str
+    purpose: str
+    expires_at: datetime
+
+
+class IdentityWrap(SQLModel, table=True):
+    __tablename__ = "identity_wraps"
+
+    user_id: str = Field(foreign_key="users.id", primary_key=True)
+    wrapped_blob: str = Field(sa_column=sa.Column(sa.Text, nullable=False))
+    alg: str = "crypto_box_xsalsa20poly1305"
+    updated_at: datetime = Field(default_factory=utcnow)

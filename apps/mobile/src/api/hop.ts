@@ -13,6 +13,15 @@ export type User = {
   avatar_url?: string | null;
 };
 export type AuthResponse = { token: string; user: User };
+export type RecoveryAuthResponse = AuthResponse & { needs_passkey_enrollment?: boolean };
+export type RecoveryOptions = {
+  username: string;
+  available: boolean;
+  passkey_enrolled: boolean;
+  legacy_password: boolean;
+};
+export type PasskeyBegin = { challenge_id: string; options: Record<string, unknown> };
+export type IdentityWrap = { wrapped_blob: string; alg: string };
 export type Conversation = {
   id: string;
   created_at: string;
@@ -168,6 +177,44 @@ export const api = {
     request<{ username: string; available: boolean }>(
       `/auth/handle-available?username=${encodeURIComponent(username)}`,
     ),
+  recoveryOptions: (username: string) =>
+    request<RecoveryOptions>(`/auth/recovery-options?username=${encodeURIComponent(username)}`),
+  recoverPassword: (username: string, password: string) =>
+    request<RecoveryAuthResponse>('/auth/recover/password', {
+      method: 'POST',
+      body: { username, password },
+    }),
+  bindRecoveredDevice: (token: string, deviceSecret: string) =>
+    request<AuthResponse>('/auth/recover/bind-device', {
+      method: 'POST',
+      token,
+      body: { device_secret: deviceSecret },
+    }),
+  passkeyRegisterBegin: (token: string) =>
+    request<PasskeyBegin>('/auth/passkey/register/begin', { method: 'POST', token }),
+  passkeyRegisterComplete: (token: string, challengeId: string, credential: Record<string, unknown>) =>
+    request<RecoveryAuthResponse>('/auth/passkey/register/complete', {
+      method: 'POST',
+      token,
+      body: { challenge_id: challengeId, credential },
+    }),
+  passkeyAuthenticateBegin: (username: string) =>
+    request<PasskeyBegin>('/auth/passkey/authenticate/begin', {
+      method: 'POST',
+      body: { username },
+    }),
+  passkeyAuthenticateComplete: (challengeId: string, credential: Record<string, unknown>) =>
+    request<RecoveryAuthResponse>('/auth/passkey/authenticate/complete', {
+      method: 'POST',
+      body: { challenge_id: challengeId, credential },
+    }),
+  getIdentityWrap: (token: string) => request<IdentityWrap>('/users/me/identity-wrap', { token }),
+  putIdentityWrap: (token: string, wrappedBlob: string) =>
+    request<IdentityWrap>('/users/me/identity-wrap', {
+      method: 'PUT',
+      token,
+      body: { wrapped_blob: wrappedBlob },
+    }),
   login: (username: string, password: string) =>
     request<AuthResponse>('/auth/login', { method: 'POST', body: { username, password } }),
   logout: (token: string) => request<{ status: string }>('/auth/logout', { method: 'POST', token }),

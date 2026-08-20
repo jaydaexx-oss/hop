@@ -2,6 +2,8 @@ import { generateIdentityKeyPair, isWellFormedBoxPublicKey, type IdentityKeyPair
 
 export const IDENTITY_SECRET_PREFIX = "hop.box.";
 export const IDENTITY_MARKER_PREFIX = "hop.box.marker.";
+/** iCloud-backup-migratable wrapping key for an opaque server-side identity blob. Not the identity secret. */
+export const IDENTITY_WRAP_PREFIX = "hop.wrap.";
 /** Durable owner of the local crypto identity. Survives expired session tokens. */
 export const IDENTITY_OWNER_KEY = "hop.identity.userId";
 /** Companion device credential in SecureStore. Not derived from the handle. */
@@ -17,7 +19,8 @@ export type IdentityErrorCode =
   | "IDENTITY_INACCESSIBLE"
   | "KEY_MISMATCH"
   | "SERVER_KEY_LOCKED"
-  | "IDENTITY_RESET_REQUIRED";
+  | "IDENTITY_RESET_REQUIRED"
+  | "KEYS_MISSING";
 
 export class IdentityError extends Error {
   readonly code: IdentityErrorCode;
@@ -67,7 +70,7 @@ export function isHttpConflict(err: unknown): boolean {
 export function serverKeyLockedError(): IdentityError {
   return new IdentityError(
     "SERVER_KEY_LOCKED",
-    "This account already has a published identity public key. HOP will not replace it. Recovery is a new account. A future rotation API must prove possession of the old secret; unauthenticated key replacement is not allowed.",
+    "This account already has a published identity public key. HOP will not replace it. Recover the original private key from iCloud Keychain or a device that already has HOP. Unauthenticated key replacement is not allowed.",
   );
 }
 
@@ -153,6 +156,10 @@ function markerStoreKey(userId: string): string {
   return `${IDENTITY_MARKER_PREFIX}${userId}`;
 }
 
+function wrapStoreKey(userId: string): string {
+  return `${IDENTITY_WRAP_PREFIX}${userId}`;
+}
+
 export async function readIdentityOwner(backend: SecretBackend): Promise<string | null> {
   const value = await backend.read(IDENTITY_OWNER_KEY);
   return value && value.trim() ? value.trim() : null;
@@ -173,11 +180,61 @@ export async function clearLocalDeviceIdentity(backend: SecretBackend): Promise<
   if (owner) {
     await backend.write(secretStoreKey(owner), null);
     await backend.write(markerStoreKey(owner), null);
+    await backend.write(wrapStoreKey(owner), null);
   }
   await backend.write(secretStoreKey(PENDING_IDENTITY_SLOT), null);
   await backend.write(markerStoreKey(PENDING_IDENTITY_SLOT), null);
+  await backend.write(wrapStoreKey(PENDING_IDENTITY_SLOT), null);
   await backend.write(IDENTITY_OWNER_KEY, null);
   await backend.write(DEVICE_SECRET_KEY, null);
+}
+
+/** Drop an unpublished first-launch pair. Never writes hop.box.{userId}. */
+export async function discardPendingIdentity(backend: SecretBackend): Promise<void> {
+  await backend.write(secretStoreKey(PENDING_IDENTITY_SLOT), null);
+  await backend.write(markerStoreKey(PENDING_IDENTITY_SLOT), null);
+}
+
+export async function peekWrapKey(userId: string, backend: SecretBackend): Promise<IdentityKeyPair | null> {
+  const stored = await backend.read(wrapStoreKey(userId));
+  if (!stored) return null;
+  return parsePair(stored);
+}
+
+export async function writeWrapKey(userId: string, pair: IdentityKeyPair, backend: SecretBackend): Promise<void> {
+  await backend.write(wrapStoreKey(userId), JSON.stringify(pair));
+}
+
+/**
+ * Restore a previously known identity into hop.box.{userId}.
+ * Never generates a replacement pair. Refuses to overwrite a different local pair.
+ */
+export async function persistRestoredIdentity(
+  userId: string,
+  pair: IdentityKeyPair,
+  backend: SecretBackend,
+): Promise<IdentityKeyPair> {
+  if (!userId.trim() || !pair.publicKey || !pair.secretKey) {
+    throw new IdentityError("KEY_MISMATCH", "Cannot persist an incomplete identity.");
+  }
+  const existing = await peekStoredIdentity(userId, backend);
+  if (existing) {
+    if (existing.publicKey !== pair.publicKey) {
+      throw new IdentityError(
+        "KEY_MISMATCH",
+        "This install already has identity keys for this user_id. HOP will not replace them.",
+      );
+    }
+    await writeIdentityOwner(userId, backend);
+    if (!(await backend.read(markerStoreKey(userId)))) {
+      await backend.write(markerStoreKey(userId), existing.publicKey);
+    }
+    return existing;
+  }
+  await backend.write(secretStoreKey(userId), JSON.stringify(pair));
+  await backend.write(markerStoreKey(userId), pair.publicKey);
+  await writeIdentityOwner(userId, backend);
+  return pair;
 }
 
 export async function peekStoredIdentity(

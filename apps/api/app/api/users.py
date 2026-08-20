@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
@@ -7,8 +9,8 @@ from sqlmodel import Session, select
 from app.avatars import AVATAR_MEDIA_TYPE, build_user_out, validate_avatar_jpeg
 from app.db import get_session
 from app.identity_keys import is_well_formed_box_public_key
-from app.models.tables import BlockedUser, Device, ProfilePhoto, Report, User, utcnow
-from app.schemas import BlockIn, HandleIn, IdentityIn, ReportIn, UserOut
+from app.models.tables import BlockedUser, Device, IdentityWrap, ProfilePhoto, Report, User, utcnow
+from app.schemas import BlockIn, HandleIn, IdentityIn, IdentityWrapIn, IdentityWrapOut, ReportIn, UserOut
 from app.security import get_current_user, validate_username
 
 router = APIRouter(prefix="/users", tags=["users"])
@@ -120,8 +122,8 @@ def put_identity(
             status_code=409,
             detail=(
                 "SERVER_KEY_LOCKED: this account already published a different identity "
-                "public key. HOP will not replace it. Recovery is a new account, or a "
-                "future rotation API that proves possession of the old secret."
+                "public key. HOP will not replace it. Recover the original private key "
+                "from iCloud Keychain or a device that already has HOP."
             ),
         )
     else:
@@ -136,6 +138,47 @@ def put_identity(
             detail="SERVER_KEY_LOCKED: this account already published a different identity public key.",
         ) from None
     return _user_out(session, user)
+
+
+def _assert_opaque_wrap(blob: str) -> None:
+    try:
+        data = json.loads(blob)
+    except json.JSONDecodeError:
+        return
+    if isinstance(data, dict) and ("secretKey" in data or "secret_key" in data or "secret" in data):
+        raise HTTPException(status_code=400, detail="Refusing to store a plaintext identity secret")
+
+
+@router.put("/me/identity-wrap", response_model=IdentityWrapOut)
+def put_identity_wrap(
+    body: IdentityWrapIn,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> IdentityWrapOut:
+    """Store an opaque wrapped identity blob. Private keys must not appear in plaintext."""
+    _assert_opaque_wrap(body.wrapped_blob)
+    existing = session.get(IdentityWrap, user.id)
+    if existing is None:
+        session.add(
+            IdentityWrap(user_id=user.id, wrapped_blob=body.wrapped_blob, alg="crypto_box_xsalsa20poly1305")
+        )
+    else:
+        existing.wrapped_blob = body.wrapped_blob
+        existing.updated_at = utcnow()
+        session.add(existing)
+    session.commit()
+    return IdentityWrapOut(wrapped_blob=body.wrapped_blob, alg="crypto_box_xsalsa20poly1305")
+
+
+@router.get("/me/identity-wrap", response_model=IdentityWrapOut)
+def get_identity_wrap(
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> IdentityWrapOut:
+    existing = session.get(IdentityWrap, user.id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail="No identity wrap")
+    return IdentityWrapOut(wrapped_blob=existing.wrapped_blob, alg=existing.alg)
 
 
 @router.get("/id/{user_id}", response_model=UserOut)

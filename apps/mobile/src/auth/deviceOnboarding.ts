@@ -7,17 +7,35 @@ import {
   mustNotCreateNewAccount,
   peekDeviceSecret,
   readIdentityOwner,
+  recoverExistingIdentity,
   shouldSkipOnboarding,
   writeIdentityOwner,
   type IdentityKeyPair,
+  type RecoveryProof,
   type SecretBackend,
 } from '@hop/protocol';
 
-import type { AuthResponse, User } from '@/src/api/hop';
+type AuthUser = {
+  id: string;
+  username: string;
+  created_at: string;
+  identity_public_key?: string;
+};
+type AuthResponse = { token: string; user: AuthUser };
+type RecoveryAuthResponse = AuthResponse & { needs_passkey_enrollment?: boolean };
 
 export type DeviceOnboardingApi = {
   registerDevice: (username: string, publicKey: string, deviceSecret: string) => Promise<AuthResponse>;
   deviceLogin: (deviceSecret: string) => Promise<AuthResponse>;
+};
+
+export type RecoveryOnboardingApi = {
+  recoverPassword: (username: string, password: string) => Promise<RecoveryAuthResponse>;
+  passkeyAuthenticate: (username: string) => Promise<RecoveryAuthResponse>;
+  bindRecoveredDevice: (token: string, deviceSecret: string) => Promise<AuthResponse>;
+  logout: (token: string) => Promise<unknown>;
+  getIdentityWrap: (token: string) => Promise<{ wrapped_blob: string }>;
+  putIdentityWrap: (token: string, wrappedBlob: string) => Promise<unknown>;
 };
 
 export const RESET_HOP_TITLE = 'Reset HOP on this device?';
@@ -25,16 +43,20 @@ export const RESET_HOP_MESSAGE =
   'This removes the HOP identity, keys, and access stored on THIS phone only. Your account, chats, events, and contacts stay on the server. You cannot take your current handle unless it is released. After reset you will choose a new available handle and create a new device identity.';
 export const RESET_HOP_CONFIRM = 'Reset this device';
 
-export type RestoredSession = { token: string | null; user: User };
+export type RestoredSession = { token: string | null; user: AuthUser };
 
 function isUnauthorized(err: unknown): boolean {
   return Boolean(err && typeof err === 'object' && 'status' in err && (err as { status: unknown }).status === 401);
 }
 
+function isNotFound(err: unknown): boolean {
+  return Boolean(err && typeof err === 'object' && 'status' in err && (err as { status: unknown }).status === 404);
+}
+
 export async function reconnectExistingIdentity(
   backend: SecretBackend,
   api: DeviceOnboardingApi,
-  cachedUser: User | null,
+  cachedUser: AuthUser | null,
 ): Promise<AuthResponse | null> {
   const owner = await readIdentityOwner(backend);
   if (!owner) return null;
@@ -64,9 +86,9 @@ export async function reconnectExistingIdentity(
 export async function restoreExistingSession(
   backend: SecretBackend,
   api: DeviceOnboardingApi,
-  cachedUser: User | null,
+  cachedUser: AuthUser | null,
   token: string | null,
-  fetchMe: (token: string) => Promise<User>,
+  fetchMe: (token: string) => Promise<AuthUser>,
 ): Promise<RestoredSession | null> {
   if (token) {
     try {
@@ -117,6 +139,39 @@ export async function registerDeviceIdentity(
   }
   await writeIdentityOwner(result.user.id, backend);
   return result;
+}
+
+export async function recoverHopAccount(
+  backend: SecretBackend,
+  api: RecoveryOnboardingApi,
+  username: string,
+  proof: RecoveryProof,
+): Promise<AuthResponse> {
+  return recoverExistingIdentity(
+    backend,
+    {
+      recoverPassword: (handle, password) => api.recoverPassword(handle, password),
+      passkeyAuthenticate: (handle) => api.passkeyAuthenticate(handle),
+      bindDevice: (token, deviceSecret) => api.bindRecoveredDevice(token, deviceSecret),
+      logout: async (token) => {
+        await api.logout(token);
+      },
+      getIdentityWrap: async (token) => {
+        try {
+          const wrap = await api.getIdentityWrap(token);
+          return wrap.wrapped_blob;
+        } catch (err) {
+          if (isNotFound(err)) return null;
+          return null;
+        }
+      },
+      putIdentityWrap: async (token, blob) => {
+        await api.putIdentityWrap(token, blob);
+      },
+    },
+    username,
+    proof,
+  );
 }
 
 export async function existingInstallSkipsOnboarding(

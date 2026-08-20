@@ -1,17 +1,20 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { writeIdentityOwner, generateIdentityKeyPair } from '@hop/protocol';
+import { writeIdentityOwner, generateIdentityKeyPair, upsertIdentityWrap } from '@hop/protocol';
 
 import { api, type User } from '@/src/api/hop';
 import {
   existingInstallSkipsOnboarding,
+  recoverHopAccount,
   registerDeviceIdentity,
   resetLocalHopOnThisDevice,
   restoreExistingSession,
 } from '@/src/auth/deviceOnboarding';
+import { completePasskeyAssertion, completePasskeyAttestation, platformPasskeysAvailable } from '@/src/auth/passkeys';
 import { loadSession, saveSession } from '@/src/auth/storage';
 import { identityBackend } from '@/src/crypto/identity';
 import { clearProfilePhotoCache } from '@/src/profile/profilePhotoCache';
+import type { RecoveryProof } from '@hop/protocol';
 
 type AuthState = {
   ready: boolean;
@@ -20,6 +23,7 @@ type AuthState = {
   error: string | null;
   skipOnboarding: boolean;
   startHopping: (username: string) => Promise<User>;
+  recoverHop: (username: string, proof: RecoveryProof) => Promise<User>;
   continueOnDevice: () => Promise<void>;
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
@@ -34,6 +38,37 @@ const deviceApi = {
   registerDevice: api.registerDevice,
   deviceLogin: api.deviceLogin,
 };
+
+const recoveryApi = {
+  recoverPassword: api.recoverPassword,
+  passkeyAuthenticate: async (username: string) => {
+    const begin = await api.passkeyAuthenticateBegin(username);
+    const credential = await completePasskeyAssertion(begin.options);
+    return api.passkeyAuthenticateComplete(begin.challenge_id, credential);
+  },
+  bindRecoveredDevice: api.bindRecoveredDevice,
+  logout: api.logout,
+  getIdentityWrap: api.getIdentityWrap,
+  putIdentityWrap: api.putIdentityWrap,
+};
+
+async function bestEffortRecoveryCredentials(token: string, userId: string): Promise<void> {
+  try {
+    await upsertIdentityWrap(userId, identityBackend, async (blob) => {
+      await api.putIdentityWrap(token, blob);
+    });
+  } catch {
+    /* wrap is optional until iCloud/passkey PRF can open it */
+  }
+  if (!platformPasskeysAvailable()) return;
+  try {
+    const begin = await api.passkeyRegisterBegin(token);
+    const credential = await completePasskeyAttestation(begin.options);
+    await api.passkeyRegisterComplete(token, begin.challenge_id, credential);
+  } catch {
+    /* current iOS dev client has no platform passkey module */
+  }
+}
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [ready, setReady] = useState(false);
@@ -92,6 +127,18 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setToken(result.token);
         setUser(result.user);
         setSkipOnboarding(true);
+        void bestEffortRecoveryCredentials(result.token, result.user.id);
+        return result.user;
+      },
+      async recoverHop(username, proof) {
+        setError(null);
+        const result = await recoverHopAccount(identityBackend, recoveryApi, username, proof);
+        clearProfilePhotoCache();
+        await saveSession(result.token, result.user);
+        setToken(result.token);
+        setUser(result.user);
+        setSkipOnboarding(true);
+        void bestEffortRecoveryCredentials(result.token, result.user.id);
         return result.user;
       },
       async continueOnDevice() {

@@ -65,6 +65,54 @@ class AuthOut(BaseModel):
     user: UserOut
 
 
+class RecoveryOptionsOut(BaseModel):
+    username: str
+    available: bool
+    passkey_enrolled: bool = False
+    legacy_password: bool = False
+
+
+class RecoverPasswordIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: str
+    password: str = Field(min_length=8, max_length=200)
+
+
+class RecoverBindDeviceIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    device_secret: str = Field(min_length=32, max_length=128)
+
+
+class RecoveryAuthOut(AuthOut):
+    needs_passkey_enrollment: bool = False
+
+
+class PasskeyBeginIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    username: Optional[str] = None
+
+
+class PasskeyBeginOut(BaseModel):
+    challenge_id: str
+    options: dict
+
+
+class PasskeyCompleteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    challenge_id: str
+    credential: dict
+
+
+class IdentityWrapIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    wrapped_blob: str = Field(min_length=32, max_length=16384)
+
+
+class IdentityWrapOut(BaseModel):
+    wrapped_blob: str
+    alg: str
+
+
 class ConversationCreateIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
     username: str = Field(min_length=3, max_length=20)

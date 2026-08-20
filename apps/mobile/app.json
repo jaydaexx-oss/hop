@@ -10,6 +10,7 @@
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "app.hop.mobile",
+      "associatedDomains": ["webcredentials:hop-uokqmg.fly.dev"],
       "infoPlist": {
         "NSBluetoothAlwaysUsageDescription": "HOP uses Bluetooth to discover nearby HOP users and exchange messages with nearby devices.",
         "NSBluetoothPeripheralUsageDescription": "HOP uses Bluetooth to discover nearby HOP users and exchange messages with nearby devices.",

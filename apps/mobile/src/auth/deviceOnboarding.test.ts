@@ -13,6 +13,7 @@ import {
 
 import {
   existingInstallSkipsOnboarding,
+  recoverHopAccount,
   reconnectExistingIdentity,
   registerDeviceIdentity,
   resetLocalHopOnThisDevice,
@@ -252,5 +253,104 @@ describe('returning-user restore and local reset', () => {
     expect(next.user.id).toBe('user-2');
     expect(await peekStoredIdentity('user-1', backend)).toBeNull();
     expect(await peekStoredIdentity('user-2', backend)).toEqual(secondPair);
+  });
+});
+
+describe('recover my HOP on a new install', () => {
+  it('restores the same user_id when Keychain already has the original pair', async () => {
+    const backend = memoryBackend();
+    const pair = await generateIdentityKeyPair();
+    await loadOrCreateIdentity('user-jay', backend, async () => pair);
+    backend.map.delete('hop.identity.userId');
+
+    const restored = await recoverHopAccount(
+      backend,
+      {
+        recoverPassword: async (username, password) => {
+          expect(username).toBe('jaydae');
+          expect(password).toBe('ok-secret');
+          return { token: 'rec-tok', user: user('user-jay', 'jaydae', pair.publicKey) };
+        },
+        passkeyAuthenticate: async () => {
+          throw new Error('passkey not used');
+        },
+        bindRecoveredDevice: async (_token, secret) => {
+          expect(secret.length).toBeGreaterThanOrEqual(32);
+          return { token: 'bound-tok', user: user('user-jay', 'jaydae', pair.publicKey) };
+        },
+        logout: async () => undefined,
+        getIdentityWrap: async () => {
+          const err = Object.assign(new Error('not found'), { status: 404, name: 'ApiError' });
+          throw err;
+        },
+        putIdentityWrap: async () => undefined,
+      },
+      'jaydae',
+      { method: 'legacy_password_once', password: 'ok-secret' },
+    );
+    expect(restored.user.id).toBe('user-jay');
+    expect(await peekStoredIdentity('user-jay', backend)).toEqual(pair);
+    expect(await readIdentityOwner(backend)).toBe('user-jay');
+  });
+
+  it('does not register when recovery fails', async () => {
+    const backend = memoryBackend();
+    await expect(
+      recoverHopAccount(
+        backend,
+        {
+          recoverPassword: async () => {
+            throw Object.assign(new Error('Invalid username or password'), { status: 401 });
+          },
+          passkeyAuthenticate: async () => {
+            throw new Error('no');
+          },
+          bindRecoveredDevice: async () => {
+            throw new Error('must not bind');
+          },
+          logout: async () => undefined,
+          getIdentityWrap: async () => {
+            throw new Error('no wrap');
+          },
+          putIdentityWrap: async () => undefined,
+        },
+        'jaydae',
+        { method: 'legacy_password_once', password: 'wrong' },
+      ),
+    ).rejects.toThrow(/Invalid username or password/);
+    expect(await readIdentityOwner(backend)).toBeNull();
+    expect(await peekStoredIdentity('user-jay', backend)).toBeNull();
+  });
+
+  it('does not mint keys when Keychain is empty after a successful password proof', async () => {
+    const backend = memoryBackend();
+    const server = await generateIdentityKeyPair();
+    await expect(
+      recoverHopAccount(
+        backend,
+        {
+          recoverPassword: async () => ({
+            token: 'rec-tok',
+            user: user('user-jay', 'jaydae', server.publicKey),
+          }),
+          passkeyAuthenticate: async () => {
+            throw new Error('no');
+          },
+          bindRecoveredDevice: async () => {
+            throw new Error('must not bind without keys');
+          },
+          logout: async () => undefined,
+          getIdentityWrap: async () => {
+            throw Object.assign(new Error('not found'), { status: 404 });
+          },
+          putIdentityWrap: async () => undefined,
+        },
+        'jaydae',
+        { method: 'legacy_password_once', password: 'ok-secret' },
+      ),
+    ).rejects.toMatchObject({ code: 'KEYS_MISSING' });
+    expect(await peekStoredIdentity('user-jay', backend)).toBeNull();
+    expect(await readIdentityOwner(backend)).toBeNull();
+    expect(await peekDeviceSecret(backend)).toBeNull();
   });
 });

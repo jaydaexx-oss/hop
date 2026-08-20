@@ -8,14 +8,30 @@ from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import Session, select
 
-from app.avatars import build_user_out
+from app.avatars import build_user_out, identity_public_key
 from app.db import get_session
 from app.identity_keys import is_well_formed_box_public_key
 from app.models.tables import Device
 from app.models.tables import Session as AuthSession
 from app.models.tables import User
+from app import passkeys
 from app.rate_limit import limit_auth
-from app.schemas import AuthOut, DeviceSessionIn, HandleAvailableOut, LoginIn, RegisterDeviceIn, RegisterIn, UserOut
+from app.schemas import (
+    AuthOut,
+    DeviceSessionIn,
+    HandleAvailableOut,
+    LoginIn,
+    PasskeyBeginIn,
+    PasskeyBeginOut,
+    PasskeyCompleteIn,
+    RecoverBindDeviceIn,
+    RecoverPasswordIn,
+    RecoveryAuthOut,
+    RecoveryOptionsOut,
+    RegisterDeviceIn,
+    RegisterIn,
+    UserOut,
+)
 from app.security import (
     DEVICE_PASSWORD_MARKER,
     bearer,
@@ -68,6 +84,39 @@ def register(body: RegisterIn, request: Request, session: Session = Depends(get_
 def _issue_auth(session: Session, user: User) -> AuthOut:
     token = issue_token(session, user)
     return AuthOut(token=token, user=user_out(session, user))
+
+
+def _recovery_auth(session: Session, user: User) -> RecoveryAuthOut:
+    issued = _issue_auth(session, user)
+    return RecoveryAuthOut(
+        token=issued.token,
+        user=issued.user,
+        needs_passkey_enrollment=not passkeys.has_passkey(session, user.id),
+    )
+
+
+def _bind_device_for_user(session: Session, user: User, device_secret: str) -> Device:
+    """Attach a new device credential to an existing user. Never changes identity_public_key."""
+    device_secret_hash = hash_token(device_secret)
+    by_secret = session.exec(select(Device).where(Device.device_secret_hash == device_secret_hash)).first()
+    if by_secret is not None:
+        if by_secret.user_id != user.id:
+            raise HTTPException(status_code=409, detail="Device credential already registered to another account")
+        return by_secret
+    published = identity_public_key(session, user.id)
+    session.add(
+        Device(
+            user_id=user.id,
+            platform="mobile",
+            identity_public_key=published,
+            device_secret_hash=device_secret_hash,
+        )
+    )
+    session.commit()
+    bound = session.exec(select(Device).where(Device.device_secret_hash == device_secret_hash)).first()
+    if bound is None:
+        raise HTTPException(status_code=500, detail="Could not bind device")
+    return bound
 
 
 @router.get("/handle-available", response_model=HandleAvailableOut)
@@ -154,7 +203,7 @@ def device_session(body: DeviceSessionIn, request: Request, session: Session = D
     if device is None:
         raise HTTPException(status_code=401, detail="Invalid device")
     user = session.get(User, device.user_id)
-    if user is None or user.deleted_at is not None or not is_device_account(user.password_hash):
+    if user is None or user.deleted_at is not None:
         raise HTTPException(status_code=401, detail="Invalid device")
     return _issue_auth(session, user)
 
@@ -182,3 +231,94 @@ def logout(
             session.delete(row)
             session.commit()
     return {"status": "ok"}
+
+
+@router.get("/recovery-options", response_model=RecoveryOptionsOut)
+def recovery_options(username: str, request: Request, session: Session = Depends(get_session)) -> RecoveryOptionsOut:
+    """Lookup only. Handle existence is not authentication."""
+    limit_auth(request)
+    handle = validate_username(username)
+    existing = session.exec(select(User).where(User.username == handle)).first()
+    if existing is None or existing.deleted_at is not None:
+        return RecoveryOptionsOut(username=handle, available=True, passkey_enrolled=False, legacy_password=False)
+    return RecoveryOptionsOut(
+        username=handle,
+        available=False,
+        passkey_enrolled=passkeys.has_passkey(session, existing.id),
+        legacy_password=not is_device_account(existing.password_hash),
+    )
+
+
+@router.post("/recover/password", response_model=RecoveryAuthOut)
+def recover_password(body: RecoverPasswordIn, request: Request, session: Session = Depends(get_session)) -> RecoveryAuthOut:
+    """One-time proof for pre-passkey accounts. Does not create a user or rotate identity keys."""
+    limit_auth(request)
+    username = validate_username(body.username)
+    user = session.exec(select(User).where(User.username == username)).first()
+    if user is None or user.deleted_at is not None or not verify_password(body.password, user.password_hash):
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+    return _recovery_auth(session, user)
+
+
+@router.post("/recover/bind-device", response_model=AuthOut)
+def recover_bind_device(
+    body: RecoverBindDeviceIn,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> AuthOut:
+    """Issue a new device_secret for this device bound to the recovered user_id. No public key accepted."""
+    limit_auth(request)
+    _bind_device_for_user(session, user, body.device_secret)
+    return _issue_auth(session, user)
+
+
+@router.post("/passkey/register/begin", response_model=PasskeyBeginOut)
+def passkey_register_begin(
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> PasskeyBeginOut:
+    limit_auth(request)
+    payload = passkeys.registration_begin(session, user, request)
+    return PasskeyBeginOut(challenge_id=payload["challenge_id"], options=payload["options"])
+
+
+@router.post("/passkey/register/complete", response_model=RecoveryAuthOut)
+def passkey_register_complete(
+    body: PasskeyCompleteIn,
+    request: Request,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> RecoveryAuthOut:
+    limit_auth(request)
+    passkeys.registration_complete(session, user, request, body.challenge_id, body.credential)
+    return _recovery_auth(session, user)
+
+
+@router.post("/passkey/authenticate/begin", response_model=PasskeyBeginOut)
+def passkey_authenticate_begin(
+    body: PasskeyBeginIn,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> PasskeyBeginOut:
+    limit_auth(request)
+    if not body.username:
+        raise HTTPException(status_code=400, detail="Username is required")
+    username = validate_username(body.username)
+    user = session.exec(select(User).where(User.username == username)).first()
+    if user is None or user.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="No passkey enrolled")
+    payload = passkeys.authentication_begin(session, user, request)
+    return PasskeyBeginOut(challenge_id=payload["challenge_id"], options=payload["options"])
+
+
+@router.post("/passkey/authenticate/complete", response_model=RecoveryAuthOut)
+def passkey_authenticate_complete(
+    body: PasskeyCompleteIn,
+    request: Request,
+    session: Session = Depends(get_session),
+) -> RecoveryAuthOut:
+    limit_auth(request)
+    user = passkeys.authentication_complete(session, request, body.challenge_id, body.credential)
+    return _recovery_auth(session, user)

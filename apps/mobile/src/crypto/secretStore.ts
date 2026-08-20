@@ -36,8 +36,13 @@ async function nativeBackend(): Promise<SecretBackend | null> {
       return store.getItemAsync(key);
     },
     async write(key, value) {
-      if (value) await store.setItemAsync(key, value);
-      else await store.deleteItemAsync(key);
+      if (value) {
+        await store.setItemAsync(key, value, {
+          // WHEN_UNLOCKED migrates with encrypted iOS backups. Do not use THIS_DEVICE_ONLY
+          // for identity material — that would make new-phone recovery impossible.
+          keychainAccessible: store.WHEN_UNLOCKED,
+        });
+      } else await store.deleteItemAsync(key);
     },
   };
 }

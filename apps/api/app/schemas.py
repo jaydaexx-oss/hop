@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,18 +60,83 @@ class ConversationOut(BaseModel):
     id: str
     created_at: datetime
     peer: MemberOut
+    kind: Literal["direct", "event"] = "direct"
+    title: Optional[str] = None
+    event_id: Optional[str] = None
+    archived: bool = False
+    members: list[MemberOut] = Field(default_factory=list)
 
 
-class TextMessageIn(BaseModel):
+class EventMessageCopyIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    # Opaque libsodium crypto_box JSON only. Voice uses the same envelope as text;
-    # clients cap clips at ~8 seconds so boxed payloads fit. Plaintext audio is never stored.
+    recipient_id: str = Field(min_length=1, max_length=36)
     encrypted_payload: str = Field(min_length=32, max_length=65536)
     message_id: Optional[str] = Field(
         default=None,
         pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
         max_length=36,
     )
+
+
+class TextMessageIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    # Opaque libsodium crypto_box JSON only. Voice uses the same envelope as text;
+    # clients cap clips at ~8 seconds so boxed payloads fit. Plaintext audio is never stored.
+    encrypted_payload: Optional[str] = Field(default=None, min_length=32, max_length=65536)
+    message_id: Optional[str] = Field(
+        default=None,
+        pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        max_length=36,
+    )
+    recipient_id: Optional[str] = Field(default=None, min_length=1, max_length=36)
+    copies: Optional[list[EventMessageCopyIn]] = Field(default=None, max_length=32)
+
+
+class EventCreateIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=48)
+    starts_at: Optional[datetime] = None
+    duration_ms: Optional[int] = Field(default=None, ge=60_000, le=24 * 60 * 60 * 1000)
+    ends_at: Optional[datetime] = None
+    visibility: Literal["invite_only", "discoverable"] = "invite_only"
+    invite_usernames: list[str] = Field(default_factory=list, max_length=32)
+
+
+class EventInviteIn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    usernames: list[str] = Field(min_length=1, max_length=32)
+
+
+class EventMemberOut(BaseModel):
+    id: str
+    username: str
+    role: Literal["host", "guest"]
+    identity_public_key: str = ""
+    has_avatar: bool = False
+    avatar_url: Optional[str] = None
+
+
+class EventInviteOut(BaseModel):
+    invitee: MemberOut
+    inviter_id: str
+    status: Literal["pending", "accepted", "declined", "cancelled"]
+
+
+class EventOut(BaseModel):
+    id: str
+    name: str
+    host: EventMemberOut
+    starts_at: datetime
+    ends_at: datetime
+    visibility: Literal["invite_only", "discoverable"]
+    status: Literal["upcoming", "active", "ended"]
+    row_status: Literal["active", "upcoming", "invited", "ended"]
+    my_role: Optional[Literal["host", "guest", "invited"]] = None
+    participant_count: int
+    conversation_id: str
+    conversation_archived: bool
+    members: list[EventMemberOut] = Field(default_factory=list)
+    pending_invites: list[EventInviteOut] = Field(default_factory=list)
 
 
 class IdentityIn(BaseModel):

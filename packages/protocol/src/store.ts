@@ -40,7 +40,11 @@ CREATE TABLE IF NOT EXISTS conversations (
   peer_id TEXT,
   peer_username TEXT,
   peer_public_key TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  kind TEXT,
+  title TEXT,
+  event_id TEXT,
+  archived INTEGER
 );
 
 CREATE TABLE IF NOT EXISTS sync_state (
@@ -155,6 +159,10 @@ export interface StoredConversation {
   peer_username: string | null;
   peer_public_key: string | null;
   created_at: string;
+  kind?: "direct" | "event" | null;
+  title?: string | null;
+  event_id?: string | null;
+  archived?: boolean | number | null;
 }
 
 export class HopSqliteStore {
@@ -181,6 +189,26 @@ export class HopSqliteStore {
     }
     try {
       await this.db.execute("ALTER TABLE messages ADD COLUMN kind TEXT");
+    } catch {
+      /* column already exists on new databases */
+    }
+    try {
+      await this.db.execute("ALTER TABLE conversations ADD COLUMN kind TEXT");
+    } catch {
+      /* column already exists on new databases */
+    }
+    try {
+      await this.db.execute("ALTER TABLE conversations ADD COLUMN title TEXT");
+    } catch {
+      /* column already exists on new databases */
+    }
+    try {
+      await this.db.execute("ALTER TABLE conversations ADD COLUMN event_id TEXT");
+    } catch {
+      /* column already exists on new databases */
+    }
+    try {
+      await this.db.execute("ALTER TABLE conversations ADD COLUMN archived INTEGER");
     } catch {
       /* column already exists on new databases */
     }
@@ -368,10 +396,12 @@ export class HopSqliteStore {
 
   async getConversation(id: string): Promise<StoredConversation | null> {
     const rows = await this.db.query<StoredConversation>(
-      "SELECT id, peer_id, peer_username, peer_public_key, created_at FROM conversations WHERE id = ?",
+      "SELECT id, peer_id, peer_username, peer_public_key, created_at, kind, title, event_id, archived FROM conversations WHERE id = ?",
       [id],
     );
-    return rows[0] ?? null;
+    const row = rows[0];
+    if (!row) return null;
+    return { ...row, archived: row.archived === true || row.archived === 1 };
   }
 
   async nextSendSeq(conversationId: string, senderId?: string): Promise<number> {
@@ -415,34 +445,54 @@ export class HopSqliteStore {
   }
 
   async saveConversation(conversation: StoredConversation): Promise<void> {
+    const archived =
+      conversation.archived === true || conversation.archived === 1 ? 1 : conversation.archived === false ? 0 : null;
     await this.db.execute(
-      `INSERT INTO conversations (id, peer_id, peer_username, peer_public_key, created_at) VALUES (?, ?, ?, ?, ?)
+      `INSERT INTO conversations (id, peer_id, peer_username, peer_public_key, created_at, kind, title, event_id, archived)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
        ON CONFLICT(id) DO UPDATE SET
          peer_id=COALESCE(conversations.peer_id, excluded.peer_id),
          peer_username=excluded.peer_username,
-         peer_public_key=COALESCE(conversations.peer_public_key, excluded.peer_public_key)`,
+         peer_public_key=COALESCE(conversations.peer_public_key, excluded.peer_public_key),
+         kind=COALESCE(excluded.kind, conversations.kind),
+         title=COALESCE(excluded.title, conversations.title),
+         event_id=COALESCE(excluded.event_id, conversations.event_id),
+         archived=COALESCE(excluded.archived, conversations.archived)`,
       [
         conversation.id,
         conversation.peer_id,
         conversation.peer_username,
         conversation.peer_public_key ?? null,
         conversation.created_at,
+        conversation.kind ?? null,
+        conversation.title ?? null,
+        conversation.event_id ?? null,
+        archived,
       ],
     );
   }
 
   async listConversations(): Promise<StoredConversation[]> {
-    return this.db.query<StoredConversation>(
-      "SELECT id, peer_id, peer_username, peer_public_key, created_at FROM conversations ORDER BY created_at DESC",
+    const rows = await this.db.query<StoredConversation>(
+      "SELECT id, peer_id, peer_username, peer_public_key, created_at, kind, title, event_id, archived FROM conversations ORDER BY created_at DESC",
     );
+    return rows.map((row) => ({
+      ...row,
+      archived: row.archived === true || row.archived === 1,
+    }));
   }
 
   async peerPublicKey(peerId: string): Promise<string | null> {
-    const rows = await this.db.query<{ peer_public_key: string | null }>(
+    const fromConvo = await this.db.query<{ peer_public_key: string | null }>(
       "SELECT peer_public_key FROM conversations WHERE peer_id = ? AND peer_public_key IS NOT NULL AND peer_public_key != '' LIMIT 1",
       [peerId],
     );
-    return rows[0]?.peer_public_key ?? null;
+    if (fromConvo[0]?.peer_public_key) return fromConvo[0].peer_public_key;
+    const fromIdentity = await this.db.query<{ public_key: string | null }>(
+      "SELECT public_key FROM peer_identities WHERE user_id = ? AND public_key IS NOT NULL AND public_key != '' LIMIT 1",
+      [peerId],
+    );
+    return fromIdentity[0]?.public_key ?? null;
   }
 
   async queuedCount(): Promise<number> {

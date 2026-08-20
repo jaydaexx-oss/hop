@@ -23,6 +23,54 @@ export type Conversation = {
     has_avatar?: boolean;
     avatar_url?: string | null;
   };
+  kind?: 'direct' | 'event';
+  title?: string | null;
+  event_id?: string | null;
+  archived?: boolean;
+  members?: Array<{
+    id: string;
+    username: string;
+    identity_public_key?: string;
+    has_avatar?: boolean;
+    avatar_url?: string | null;
+  }>;
+};
+
+export type EventVisibility = 'invite_only' | 'discoverable';
+export type EventScheduleStatus = 'upcoming' | 'active' | 'ended';
+export type EventRowStatus = 'active' | 'upcoming' | 'invited' | 'ended';
+export type EventMemberRole = 'host' | 'guest';
+
+export type EventMember = {
+  id: string;
+  username: string;
+  role?: EventMemberRole;
+  identity_public_key?: string;
+  has_avatar?: boolean;
+  avatar_url?: string | null;
+};
+
+export type EventInvite = {
+  invitee: EventMember;
+  inviter_id: string;
+  status: 'pending' | 'accepted' | 'declined' | 'cancelled';
+};
+
+export type HopEvent = {
+  id: string;
+  name: string;
+  host: EventMember;
+  starts_at: string;
+  ends_at: string;
+  visibility: EventVisibility;
+  status: EventScheduleStatus;
+  row_status: EventRowStatus;
+  my_role: EventMemberRole | 'invited' | null;
+  participant_count: number;
+  conversation_id: string;
+  conversation_archived: boolean;
+  members: EventMember[];
+  pending_invites: EventInvite[];
 };
 export type ChatMessage = {
   message_id: string;
@@ -143,8 +191,45 @@ export const api = {
       token,
       body: { encrypted_payload: encryptedPayload, message_id: messageId },
     }),
+  sendEventMessages: (
+    token: string,
+    conversationId: string,
+    copies: Array<{ recipient_id: string; encrypted_payload: string; message_id: string }>,
+  ) =>
+    request<ChatMessage>(`/conversations/${conversationId}/messages`, {
+      method: 'POST',
+      token,
+      body: { copies },
+    }),
   ack: (token: string, messageId: string, status: 'DELIVERED' | 'READ') =>
     request<ChatMessage>(`/messages/${messageId}/acks`, { method: 'POST', token, body: { status } }),
+  events: (token: string) => request<HopEvent[]>('/events', { token }),
+  discoverableEvents: (token: string) => request<HopEvent[]>('/events/discoverable', { token }),
+  getEvent: (token: string, eventId: string) => request<HopEvent>(`/events/${eventId}`, { token }),
+  createEvent: (
+    token: string,
+    body: {
+      name: string;
+      starts_at?: string;
+      duration_ms?: number;
+      ends_at?: string;
+      visibility: EventVisibility;
+      invite_usernames?: string[];
+    },
+  ) => request<HopEvent>('/events', { method: 'POST', token, body }),
+  inviteToEvent: (token: string, eventId: string, usernames: string[]) =>
+    request<HopEvent>(`/events/${eventId}/invites`, { method: 'POST', token, body: { usernames } }),
+  cancelEventInvite: (token: string, eventId: string, userId: string) =>
+    request<HopEvent>(`/events/${eventId}/invites/${userId}`, { method: 'DELETE', token }),
+  acceptEventInvite: (token: string, eventId: string) =>
+    request<HopEvent>(`/events/${eventId}/accept`, { method: 'POST', token }),
+  declineEventInvite: (token: string, eventId: string) =>
+    request<HopEvent>(`/events/${eventId}/decline`, { method: 'POST', token }),
+  joinEvent: (token: string, eventId: string) => request<HopEvent>(`/events/${eventId}/join`, { method: 'POST', token }),
+  leaveEvent: (token: string, eventId: string) => request<HopEvent>(`/events/${eventId}/leave`, { method: 'POST', token }),
+  removeEventMember: (token: string, eventId: string, userId: string) =>
+    request<HopEvent>(`/events/${eventId}/members/${userId}`, { method: 'DELETE', token }),
+  endEvent: (token: string, eventId: string) => request<HopEvent>(`/events/${eventId}/end`, { method: 'POST', token }),
 };
 
 export function wsUrl(): string {

@@ -11,7 +11,6 @@ import {
 } from '@hop/protocol';
 
 import { ActionSheet, type SheetAction } from '@/components/ActionSheet';
-import { EventSetupSheet } from '@/components/EventSetupSheet';
 import { NearbyModeSelector } from '@/components/NearbyModeSelector';
 import { NearbyRadar } from '@/components/NearbyRadar';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -21,13 +20,10 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { chatRoute, openPeerThread } from '@/src/chat/openPeerThread';
-import {
-  EVENT_BLOCKED_COPY,
-  INVISIBLE_RADAR_COPY,
-} from '@/src/nearby/nearbyPolicy';
+import { INVISIBLE_RADAR_COPY } from '@/src/nearby/nearbyPolicy';
 import { SCAN_STATE_COPY } from '@/src/nearby/scanState';
-import type { AroundUsPeer, NearbyAudience, NearbyOperatingMode } from '@/src/nearby/types';
-import { AUDIENCE_LABELS, OPERATING_MODE_LABELS, PROXIMITY_LABELS } from '@/src/nearby/types';
+import type { AroundUsPeer, NearbyOperatingMode } from '@/src/nearby/types';
+import { OPERATING_MODE_LABELS, PROXIMITY_LABELS } from '@/src/nearby/types';
 import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
@@ -75,7 +71,6 @@ export default function NearbyScreen() {
   const {
     peers,
     scanState,
-    privacyMode,
     operatingMode,
     setOperatingMode,
     audience,
@@ -94,8 +89,6 @@ export default function NearbyScreen() {
   const [openError, setOpenError] = useState<string | null>(null);
   const [eventError, setEventError] = useState<string | null>(null);
   const [sheetPeer, setSheetPeer] = useState<AroundUsPeer | null>(null);
-  const [modeSheet, setModeSheet] = useState<'event-blocked' | 'event-setup' | null>(null);
-  const [pendingAudience, setPendingAudience] = useState<NearbyAudience | null>(null);
 
   const radarTint = operatingMode === 'event' ? colors.event : colors.tint;
   const scanning =
@@ -159,49 +152,16 @@ export default function NearbyScreen() {
       }))
     : [];
 
-  function requestEventMode() {
-    setEventError(null);
-    if (operatingMode === 'invisible') {
-      setPendingAudience(null);
-      setModeSheet('event-blocked');
-      return;
-    }
-    setPendingAudience(privacyMode === 'contacts' || privacyMode === 'everyone' ? privacyMode : audience);
-    setModeSheet('event-setup');
-  }
-
-  function chooseBlockedAudience(next: NearbyAudience) {
-    setPendingAudience(next);
-    setModeSheet('event-setup');
-  }
-
-  async function confirmEventStart(next: NearbyAudience, durationMs: number, eventName: string) {
-    setEventError(null);
-    setModeSheet(null);
-    try {
-      await setOperatingMode('event', { audience: next, durationMs, eventName });
-    } catch (err) {
-      setEventError(err instanceof Error ? err.message : 'Could not start Event Mode');
-    }
-  }
-
   function onSelectMode(mode: NearbyOperatingMode) {
     setEventError(null);
     if (mode === 'event') {
-      if (operatingMode === 'event') return;
-      requestEventMode();
+      router.push('/events');
       return;
     }
     void setOperatingMode(mode).catch((err) => {
       setEventError(err instanceof Error ? err.message : 'Could not update Nearby mode');
     });
   }
-
-  const confirmAudience = pendingAudience ?? audience;
-  const blockedActions: SheetAction[] = [
-    { label: AUDIENCE_LABELS.contacts, onPress: () => chooseBlockedAudience('contacts') },
-    { label: AUDIENCE_LABELS.everyone, onPress: () => chooseBlockedAudience('everyone') },
-  ];
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={styles.wrap}>
@@ -335,22 +295,6 @@ export default function NearbyScreen() {
         avatarUserId={sheetPeer?.userId}
         avatarColor={colors.tint}
         actions={sheetActions}
-      />
-      <ActionSheet
-        visible={modeSheet === 'event-blocked'}
-        onDismiss={() => setModeSheet(null)}
-        title={EVENT_BLOCKED_COPY.title}
-        message={EVENT_BLOCKED_COPY.body}
-        avatarInitials="IN"
-        avatarColor={colors.tint}
-        actions={blockedActions}
-      />
-      <EventSetupSheet
-        visible={modeSheet === 'event-setup'}
-        onDismiss={() => setModeSheet(null)}
-        initialAudience={confirmAudience}
-        tint={colors.event}
-        onStart={(values) => void confirmEventStart(values.audience, values.durationMs, values.name)}
       />
     </ScrollView>
   );

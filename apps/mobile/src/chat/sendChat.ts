@@ -20,6 +20,20 @@ export async function sendChatText(
   return service.sendText({ ...input, recipient_id });
 }
 
+export async function sendEventChatText(
+  service: MessageService,
+  input: {
+    conversation_id: string;
+    sender_id: string;
+    recipient_ids: readonly string[];
+    text: string;
+    archived?: boolean;
+    onAllocated?: (row: StoredMessage) => void;
+  },
+): Promise<StoredMessage> {
+  return service.sendEventText(input);
+}
+
 export async function sendChatVoice(
   service: MessageService,
   input: {

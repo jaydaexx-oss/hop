@@ -15,6 +15,8 @@ from app.models.tables import (
     Conversation,
     ConversationMember,
     Device,
+    Event,
+    EventMember,
     Message,
     MessageDelivery,
     User,
@@ -23,7 +25,7 @@ from app.models.tables import (
 )
 from app.payload import is_crypto_box_payload
 from app.rate_limit import limit_messages
-from app.schemas import AckIn, ConversationCreateIn, ConversationOut, MessageOut, TextMessageIn
+from app.schemas import AckIn, ConversationCreateIn, ConversationOut, EventMessageCopyIn, MessageOut, TextMessageIn
 from app.security import get_current_user, validate_username
 from app.ws import hub, message_event
 
@@ -57,6 +59,21 @@ def _peer(session: Session, conversation_id: str, me: User) -> User:
     return peer
 
 
+def _conversation_kind(convo: Conversation) -> str:
+    return convo.kind if getattr(convo, "kind", None) == "event" else "direct"
+
+
+def _event_for_conversation(session: Session, conversation_id: str) -> Optional[Event]:
+    return session.exec(select(Event).where(Event.conversation_id == conversation_id)).first()
+
+
+def _active_event_member_ids(session: Session, event: Event) -> set[str]:
+    return {
+        row.user_id
+        for row in session.exec(select(EventMember).where(EventMember.event_id == event.id)).all()
+    }
+
+
 def _require_member(session: Session, conversation_id: str, user: User) -> Conversation:
     convo = session.get(Conversation, conversation_id)
     if convo is None:
@@ -87,11 +104,36 @@ def _message_out(row: Message) -> MessageOut:
 
 
 def _conversation_out(session: Session, convo: Conversation, me: User) -> ConversationOut:
+    if _conversation_kind(convo) == "event":
+        event = _event_for_conversation(session, convo.id)
+        if event is None:
+            raise HTTPException(status_code=404, detail="Event not found")
+        host = session.get(User, event.host_id)
+        if host is None:
+            raise HTTPException(status_code=404, detail="Host not found")
+        members = session.exec(select(ConversationMember).where(ConversationMember.conversation_id == convo.id)).all()
+        member_outs = []
+        for row in members:
+            person = session.get(User, row.user_id)
+            if person is not None and person.deleted_at is None:
+                member_outs.append(build_member_out(session, person))
+        return ConversationOut(
+            id=convo.id,
+            created_at=convo.created_at,
+            peer=build_member_out(session, host),
+            kind="event",
+            title=event.name,
+            event_id=event.id,
+            archived=convo.archived_at is not None,
+            members=member_outs,
+        )
     peer = _peer(session, convo.id, me)
     return ConversationOut(
         id=convo.id,
         created_at=convo.created_at,
         peer=build_member_out(session, peer),
+        kind="direct",
+        archived=convo.archived_at is not None,
     )
 
 
@@ -103,7 +145,9 @@ def _find_direct(session: Session, user_a: str, user_b: str) -> Optional[Convers
         members = session.exec(select(ConversationMember).where(ConversationMember.conversation_id == convo_id)).all()
         ids = {m.user_id for m in members}
         if ids == {user_a, user_b}:
-            return session.get(Conversation, convo_id)
+            convo = session.get(Conversation, convo_id)
+            if convo is not None and _conversation_kind(convo) == "direct":
+                return convo
     return None
 
 
@@ -143,8 +187,12 @@ def list_conversations(
     out: list[ConversationOut] = []
     for membership in memberships:
         convo = session.get(Conversation, membership.conversation_id)
-        if convo:
+        if not convo:
+            continue
+        try:
             out.append(_conversation_out(session, convo, user))
+        except HTTPException:
+            continue
     out.sort(key=lambda item: item.created_at, reverse=True)
     return out
 
@@ -157,13 +205,124 @@ def list_messages(
 ) -> list[MessageOut]:
     _require_member(session, conversation_id, user)
     now = utcnow()
-    rows = session.exec(
+    query = (
         select(Message)
         .where(Message.conversation_id == conversation_id)
         .where(Message.expires_at > now)
         .order_by(col(Message.created_at))
-    ).all()
+    )
+    convo = session.get(Conversation, conversation_id)
+    if convo is not None and _conversation_kind(convo) == "event":
+        query = query.where(Message.recipient_id == user.id)
+    rows = session.exec(query).all()
     return [_message_out(row) for row in rows]
+
+
+def _store_message(
+    session: Session,
+    *,
+    message_id: str,
+    conversation_id: str,
+    sender_id: str,
+    recipient_id: str,
+    encrypted_payload: str,
+    now,
+) -> Message:
+    existing = session.get(Message, message_id)
+    if existing:
+        if existing.sender_id != sender_id or existing.conversation_id != conversation_id:
+            raise HTTPException(status_code=409, detail="message_id already used")
+        return existing
+    row = Message(
+        id=message_id,
+        conversation_id=conversation_id,
+        sender_id=sender_id,
+        recipient_id=recipient_id,
+        encrypted_payload=encrypted_payload,
+        created_at=now,
+        expires_at=now + timedelta(milliseconds=DEFAULT_TTL_MS),
+        ttl=DEFAULT_TTL_MS,
+        hop_count=0,
+        transport="internet",
+        status="SENT",
+    )
+    session.add(row)
+    session.add(MessageDelivery(message_id=row.id, recipient_user_id=recipient_id, status="SENT"))
+    return row
+
+
+async def _send_event_message(
+    conversation_id: str,
+    body: TextMessageIn,
+    session: Session,
+    user: User,
+    convo: Conversation,
+) -> MessageOut:
+    if convo.archived_at is not None:
+        raise HTTPException(status_code=403, detail="Event chat is archived")
+    event = _event_for_conversation(session, conversation_id)
+    if event is None:
+        raise HTTPException(status_code=404, detail="Event not found")
+    member_ids = _active_event_member_ids(session, event)
+    if user.id not in member_ids:
+        raise HTTPException(status_code=403, detail="Not a member of this conversation")
+    copies: list[EventMessageCopyIn] = list(body.copies or [])
+    if not copies:
+        if not body.recipient_id or not body.encrypted_payload:
+            raise HTTPException(status_code=400, detail="Event chat requires a recipient and crypto_box payload")
+        copies = [
+            EventMessageCopyIn(
+                recipient_id=body.recipient_id,
+                encrypted_payload=body.encrypted_payload,
+                message_id=body.message_id,
+            )
+        ]
+    now = utcnow()
+    stored: list[Message] = []
+    seen_recipients: set[str] = set()
+    for copy in copies:
+        if copy.recipient_id == user.id:
+            raise HTTPException(status_code=400, detail="Cannot send without a real recipient")
+        if copy.recipient_id not in member_ids:
+            raise HTTPException(status_code=403, detail="Recipient is not in this event")
+        if copy.recipient_id in seen_recipients:
+            continue
+        seen_recipients.add(copy.recipient_id)
+        if is_blocked(session, user.id, copy.recipient_id):
+            raise HTTPException(status_code=403, detail="Cannot message this user")
+        if not is_crypto_box_payload(copy.encrypted_payload):
+            raise HTTPException(
+                status_code=400,
+                detail="Internet messages must be libsodium crypto_box payloads",
+            )
+        stored.append(
+            _store_message(
+                session,
+                message_id=copy.message_id or new_id(),
+                conversation_id=conversation_id,
+                sender_id=user.id,
+                recipient_id=copy.recipient_id,
+                encrypted_payload=copy.encrypted_payload,
+                now=now,
+            )
+        )
+    if not stored:
+        raise HTTPException(status_code=400, detail="Cannot send without a real recipient")
+    try:
+        session.commit()
+    except IntegrityError:
+        session.rollback()
+        first = stored[0]
+        raced = session.get(Message, first.id)
+        if raced and raced.sender_id == user.id and raced.conversation_id == conversation_id:
+            return _message_out(raced)
+        raise HTTPException(status_code=409, detail="message_id already used")
+    for row in stored:
+        session.refresh(row)
+        payload = message_event(row)
+        await hub.send_json(row.recipient_id, payload)
+        await hub.send_json(user.id, payload)
+    return _message_out(stored[0])
 
 
 @router.post("/conversations/{conversation_id}/messages", response_model=MessageOut)
@@ -175,11 +334,13 @@ async def send_message(
     user: User = Depends(get_current_user),
 ) -> MessageOut:
     limit_messages(request)
-    _require_member(session, conversation_id, user)
+    convo = _require_member(session, conversation_id, user)
+    if _conversation_kind(convo) == "event":
+        return await _send_event_message(conversation_id, body, session, user, convo)
     peer = _peer(session, conversation_id, user)
     if is_blocked(session, user.id, peer.id):
         raise HTTPException(status_code=403, detail="Cannot message this user")
-    if not is_crypto_box_payload(body.encrypted_payload):
+    if not body.encrypted_payload or not is_crypto_box_payload(body.encrypted_payload):
         raise HTTPException(
             status_code=400,
             detail="Internet messages must be libsodium crypto_box payloads",

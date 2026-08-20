@@ -49,6 +49,42 @@ class Conversation(SQLModel, table=True):
 
     id: str = Field(default_factory=new_id, primary_key=True)
     created_at: datetime = Field(default_factory=utcnow)
+    kind: str = Field(default="direct", index=True)
+    archived_at: Optional[datetime] = None
+
+
+class Event(SQLModel, table=True):
+    __tablename__ = "events"
+
+    id: str = Field(default_factory=new_id, primary_key=True)
+    host_id: str = Field(foreign_key="users.id", index=True)
+    name: str = Field(max_length=48)
+    starts_at: datetime
+    ends_at: datetime
+    visibility: str = Field(default="invite_only")
+    ended_at: Optional[datetime] = None
+    conversation_id: str = Field(foreign_key="conversations.id", index=True)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class EventMember(SQLModel, table=True):
+    __tablename__ = "event_members"
+
+    event_id: str = Field(foreign_key="events.id", primary_key=True)
+    user_id: str = Field(foreign_key="users.id", primary_key=True)
+    role: str = Field(default="guest")
+    joined_at: datetime = Field(default_factory=utcnow)
+
+
+class EventInvite(SQLModel, table=True):
+    __tablename__ = "event_invites"
+
+    event_id: str = Field(foreign_key="events.id", primary_key=True)
+    invitee_id: str = Field(foreign_key="users.id", primary_key=True)
+    inviter_id: str = Field(foreign_key="users.id")
+    status: str = Field(default="pending")
+    created_at: datetime = Field(default_factory=utcnow)
+    responded_at: Optional[datetime] = None
 
 
 class ConversationMember(SQLModel, table=True):

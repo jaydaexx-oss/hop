@@ -12,6 +12,7 @@ type StoredEventMode = {
   sessionId: string | null;
   eventCode: string | null;
   name: string | null;
+  eventId: string | null;
 };
 
 const OFF: StoredEventMode = {
@@ -21,6 +22,7 @@ const OFF: StoredEventMode = {
   sessionId: null,
   eventCode: null,
   name: null,
+  eventId: null,
 };
 
 function snapshot(stored: StoredEventMode, now: number): EventModeSnapshot {
@@ -35,6 +37,7 @@ function snapshot(stored: StoredEventMode, now: number): EventModeSnapshot {
     sessionId: live ? stored.sessionId : null,
     eventCode: live ? stored.eventCode : null,
     name: live ? stored.name : null,
+    eventId: live ? stored.eventId : null,
   };
 }
 
@@ -49,6 +52,7 @@ function parseStored(raw: string | null): StoredEventMode {
       sessionId: typeof parsed.sessionId === 'string' ? parsed.sessionId : null,
       eventCode: typeof parsed.eventCode === 'string' ? parsed.eventCode : null,
       name: normalizeEventName(typeof parsed.name === 'string' ? parsed.name : null),
+      eventId: typeof parsed.eventId === 'string' && parsed.eventId ? parsed.eventId : null,
     };
   } catch {
     return { ...OFF };
@@ -87,6 +91,7 @@ export class EventModeService {
     durationMs = DEFAULT_EVENT_DURATION_MS,
     eventCode: string | null = null,
     name: string | null = null,
+    eventId: string | null = null,
   ): Promise<EventModeSnapshot> {
     const now = this.now();
     const next: StoredEventMode = {
@@ -96,6 +101,7 @@ export class EventModeService {
       sessionId: createEventSessionId(),
       eventCode,
       name: normalizeEventName(name),
+      eventId: eventId && eventId.trim() ? eventId.trim() : null,
     };
     await this.persist(userId, next);
     return snapshot(next, now);

@@ -22,6 +22,7 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { api, type Conversation } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
+import { CHATS_SECTION_TITLES } from '@/src/chat/chatsInboxSections';
 import { hideInboxConversation, loadHiddenInboxIds, restoreInboxConversation } from '@/src/chat/inboxHide';
 import { createPersistentKv } from '@/src/nearby/kvStore';
 import { useOffline } from '@/src/offline/OfflineProvider';
@@ -128,6 +129,10 @@ export default function ChatsScreen() {
               username: row.peer_username ?? 'HOP user',
               identity_public_key: row.peer_public_key ?? '',
             },
+            kind: row.kind === 'event' ? 'event' : 'direct',
+            title: row.title ?? null,
+            event_id: row.event_id ?? null,
+            archived: Boolean(row.archived),
           },
           {
             preview: row.preview,
@@ -173,7 +178,7 @@ export default function ChatsScreen() {
       const visible: InboxRow[] = [];
       for (const row of sortInboxConversations(merged)) {
         if (hidden.has(row.id)) continue;
-        if (safety && row.conversation.peer.id) {
+        if (safety && row.conversation.kind !== 'event' && row.conversation.peer.id) {
           const vis = await safety.inboxVisibility(row.conversation.peer.id);
           if (vis !== 'chat') continue;
         }
@@ -252,34 +257,99 @@ export default function ChatsScreen() {
   }
 
   const requestBadge = formatUnreadBadge(requestCount);
+  const directItems = items.filter((item) => item.conversation.kind !== 'event');
+  const eventItems = items.filter((item) => item.conversation.kind === 'event');
+
+  function chatHref(item: InboxRow): string {
+    const convo = item.conversation;
+    if (convo.kind === 'event') {
+      return `/chat/${convo.id}?peer=${encodeURIComponent(convo.title || convo.peer.username)}&peerId=${encodeURIComponent(convo.peer.id)}&kind=event&eventId=${encodeURIComponent(convo.event_id || '')}&archived=${convo.archived ? '1' : '0'}`;
+    }
+    return `/chat/${convo.id}?peer=${encodeURIComponent(convo.peer.username)}&peerId=${convo.peer.id}`;
+  }
 
   return (
     <View style={styles.wrap}>
       <StatusBanner />
       {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Pressable
-        onPress={() => router.push('/requests')}
-        style={[styles.requestsBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
-        <View style={styles.requestsText}>
-          <Text style={{ color: colors.text, fontWeight: '700' }}>Message requests</Text>
-          <Text style={{ color: colors.muted, fontSize: 13 }}>
-            {requestCount === 0 ? 'No pending introductions' : 'Unknown people wait here until you accept'}
-          </Text>
-        </View>
-        {requestBadge ? (
-          <View style={[styles.reqBadge, { backgroundColor: colors.tint }]}>
-            <Text style={styles.reqBadgeLabel}>{requestBadge}</Text>
-          </View>
-        ) : null}
-      </Pressable>
       <FlatList
-        data={items}
+        data={directItems}
         keyExtractor={(item) => item.id}
-        contentContainerStyle={items.length === 0 ? styles.emptyBox : undefined}
+        contentContainerStyle={directItems.length === 0 && eventItems.length === 0 ? styles.emptyBox : undefined}
         initialNumToRender={16}
         windowSize={8}
+        ListHeaderComponent={
+          <View>
+            <Text style={[styles.sectionTitle, { color: colors.muted }]}>
+              {CHATS_SECTION_TITLES.message_requests}
+            </Text>
+            <Pressable
+              onPress={() => router.push('/requests')}
+              accessibilityRole="button"
+              accessibilityLabel={`${CHATS_SECTION_TITLES.message_requests}, ${requestCount} pending`}
+              style={[styles.requestsBanner, { backgroundColor: colors.card, borderColor: colors.border }]}>
+              <View style={styles.requestsText}>
+                <Text style={{ color: colors.text, fontWeight: '700' }}>{CHATS_SECTION_TITLES.message_requests}</Text>
+                <Text style={{ color: colors.muted, fontSize: 13 }}>
+                  {requestCount === 0 ? 'No pending introductions' : 'Unknown people wait here until you accept'}
+                </Text>
+              </View>
+              {requestBadge ? (
+                <View style={[styles.reqBadge, { backgroundColor: colors.tint }]}>
+                  <Text style={styles.reqBadgeLabel}>{requestBadge}</Text>
+                </View>
+              ) : null}
+            </Pressable>
+            <Text style={[styles.sectionTitle, styles.directTitle, { color: colors.muted }]}>
+              {CHATS_SECTION_TITLES.direct}
+            </Text>
+          </View>
+        }
+        ListFooterComponent={
+          <View>
+            <Text style={[styles.sectionTitle, styles.directTitle, { color: colors.muted }]}>
+              {CHATS_SECTION_TITLES.events}
+            </Text>
+            {eventItems.length === 0 ? (
+              <Text style={{ color: colors.muted, marginBottom: 16 }}>No event chats yet.</Text>
+            ) : (
+              eventItems.map((item) => (
+                <ConversationRow
+                  key={item.id}
+                  name={item.conversation.title || item.conversation.peer.username || 'Event'}
+                  preview={item.preview}
+                  timestamp={inboxTimestamp(item.lastActivityAt)}
+                  unread={item.unread}
+                  isMuted={item.muted}
+                  route={
+                    conversationTransportStatus({
+                      recipientId: item.conversation.peer.id,
+                      peers: nearbyPeers,
+                      internetAvailable: internetStatusAvailable(status),
+                      conversationQueued: item.lastStatus === 'QUEUED' || item.lastStatus === 'RETRYING',
+                      networkQueued: queuedCount > 0,
+                      lastOutboundStatus: item.lastSenderId === user?.id ? item.lastStatus : null,
+                    }).route
+                  }
+                  lastOutboundStatus={item.lastSenderId === user?.id ? item.lastStatus : null}
+                  lastFromSelf={item.lastSenderId === user?.id}
+                  tint={colors.event}
+                  muted={colors.muted}
+                  card={colors.card}
+                  textColor={colors.text}
+                  peerId={item.conversation.peer.id}
+                  hasAvatar={false}
+                  onPress={() => router.push(chatHref(item) as `/chat/${string}`)}
+                  onLongPress={() => setSheetRow(item)}
+                />
+              ))
+            )}
+          </View>
+        }
         ListEmptyComponent={
-          <Text style={{ color: colors.muted }}>No chats yet. Start one from Contacts.</Text>
+          eventItems.length === 0 ? (
+            <Text style={{ color: colors.muted }}>No chats yet. Start one from Contacts.</Text>
+          ) : null
         }
         renderItem={({ item }) => {
           const transport = conversationTransportStatus({
@@ -306,11 +376,7 @@ export default function ChatsScreen() {
               textColor={colors.text}
               peerId={item.conversation.peer.id}
               hasAvatar={item.conversation.peer.has_avatar}
-              onPress={() =>
-                router.push(
-                  `/chat/${item.conversation.id}?peer=${encodeURIComponent(item.conversation.peer.username)}&peerId=${item.conversation.peer.id}`,
-                )
-              }
+              onPress={() => router.push(chatHref(item) as `/chat/${string}`)}
               onLongPress={() => setSheetRow(item)}
             />
           );
@@ -371,6 +437,14 @@ export default function ChatsScreen() {
 
 const styles = StyleSheet.create({
   wrap: { flex: 1, paddingHorizontal: 16, paddingTop: 16 },
+  sectionTitle: {
+    fontSize: 13,
+    fontWeight: '800',
+    letterSpacing: 0.4,
+    textTransform: 'uppercase',
+    marginBottom: 8,
+  },
+  directTitle: { marginTop: 8 },
   requestsBanner: {
     flexDirection: 'row',
     alignItems: 'center',

@@ -61,6 +61,10 @@ function toConversation(row: StoredConversation): Conversation {
       username: row.peer_username ?? 'unknown',
       identity_public_key: row.peer_public_key ?? '',
     },
+    kind: row.kind === 'event' ? 'event' : 'direct',
+    title: row.title ?? null,
+    event_id: row.event_id ?? null,
+    archived: Boolean(row.archived),
   };
 }
 
@@ -223,6 +227,7 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
     const sqlite = storeRef.current;
     if (!sqlite) return;
     const peerTrust = tofuRef.current;
+    const isEvent = convo.kind === 'event';
     let peerKey = convo.peer.identity_public_key ?? null;
     if (peerTrust && convo.peer.id && peerKey) {
       const state = peerTrust.observe(convo.peer.id, peerKey);
@@ -230,12 +235,23 @@ export function OfflineProvider({ children }: { children: ReactNode }) {
         peerKey = peerTrust.get(convo.peer.id) ?? null;
       }
     }
+    if (peerTrust) {
+      for (const member of convo.members ?? []) {
+        if (member.id && member.identity_public_key) {
+          peerTrust.observe(member.id, member.identity_public_key);
+        }
+      }
+    }
     await sqlite.saveConversation({
       id: convo.id,
-      peer_id: convo.peer.id,
-      peer_username: convo.peer.username,
-      peer_public_key: peerKey,
+      peer_id: isEvent ? null : convo.peer.id,
+      peer_username: isEvent ? (convo.title ?? convo.peer.username) : convo.peer.username,
+      peer_public_key: isEvent ? null : peerKey,
       created_at: convo.created_at,
+      kind: isEvent ? 'event' : 'direct',
+      title: convo.title ?? (isEvent ? convo.peer.username : null),
+      event_id: convo.event_id ?? null,
+      archived: Boolean(convo.archived),
     });
   }, []);
 

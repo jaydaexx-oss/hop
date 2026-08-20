@@ -18,6 +18,7 @@ import {
 } from "./lifecycle.js";
 import { DEFAULT_TTL_MS, MessageStatus, isExpired } from "./message.js";
 import { DEFAULT_RETRY_POLICY, nextBackoffMs, type RetryPolicy } from "./retry.js";
+import { eventChatFanoutRecipients, shouldApplyDirectInboxSafety } from "./events.js";
 import { requirePeerRecipient } from "./sendGuards.js";
 import { canTransition, transition } from "./stateMachine.js";
 import type { HopSqliteStore, StoredMessage } from "./store.js";
@@ -54,6 +55,16 @@ export interface SendTextInput {
   message_id?: string;
   send_seq?: number;
   /** Fires after the canonical id is allocated and before encrypt/flush. */
+  onAllocated?: (row: StoredMessage) => void;
+}
+
+export interface SendEventTextInput {
+  conversation_id: string;
+  sender_id: string;
+  recipient_ids: readonly string[];
+  text: string;
+  archived?: boolean;
+  now?: Date;
   onAllocated?: (row: StoredMessage) => void;
 }
 
@@ -139,6 +150,10 @@ export class MessageService {
 
   async sendText(input: SendTextInput): Promise<StoredMessage> {
     return this.enqueueConversation(input.conversation_id, () => this.sendTextUnlocked(input));
+  }
+
+  async sendEventText(input: SendEventTextInput): Promise<StoredMessage> {
+    return this.enqueueConversation(input.conversation_id, () => this.sendEventTextUnlocked(input));
   }
 
   private async sendTextUnlocked(input: SendTextInput): Promise<StoredMessage> {
@@ -230,6 +245,117 @@ export class MessageService {
       if (local_seal && isCryptoBoxPayload(local_seal)) {
         const failed = this.withStatus(
           { ...record, local_seal, text: null, encrypted_payload: "" },
+          MessageStatus.FAILED,
+        );
+        await this.persistMessage(failed);
+      }
+      throw err;
+    }
+  }
+
+  private async sendEventTextUnlocked(input: SendEventTextInput): Promise<StoredMessage> {
+    if (!this.crypto) {
+      throw new Error("Refusing to send without libsodium crypto_box keys");
+    }
+    if (input.archived) {
+      throw new Error("Event chat is archived");
+    }
+    const recipients = eventChatFanoutRecipients(input.recipient_ids, input.sender_id).map((id) =>
+      requirePeerRecipient(input.sender_id, id),
+    );
+    if (recipients.length === 0) {
+      throw new Error("Cannot send without a real recipient");
+    }
+    const text = input.text.trim();
+    if (!text) {
+      throw new Error("Refusing to encrypt empty plaintext");
+    }
+    if (text.length > MAX_APPLICATION_TEXT_CHARS) {
+      throw new Error("Message is too long");
+    }
+    const now = input.now ?? new Date();
+    const created_at = now.toISOString();
+    const expires_at = new Date(now.getTime() + DEFAULT_TTL_MS).toISOString();
+    const message_id = createMessageId();
+    const send_seq = await this.store.nextSendSeq(input.conversation_id, input.sender_id);
+    const displayRecipient = recipients[0]!;
+    const displayPlain: ApplicationPlaintext = {
+      message_id,
+      sender_id: input.sender_id,
+      recipient_id: displayRecipient,
+      conversation_id: input.conversation_id,
+      text,
+      created_at,
+      expires_at,
+      ttl: DEFAULT_TTL_MS,
+      hop_count: 0,
+      send_seq,
+    };
+    let record: StoredMessage = {
+      message_id,
+      conversation_id: input.conversation_id,
+      sender_id: input.sender_id,
+      recipient_id: displayRecipient,
+      text,
+      encrypted_payload: "",
+      local_seal: null,
+      status: MessageStatus.CREATED,
+      transport: "local",
+      created_at,
+      expires_at,
+      ttl: DEFAULT_TTL_MS,
+      hop_count: 0,
+      send_seq,
+      kind: "message",
+    };
+    record = this.withStatus(record, MessageStatus.ENCRYPTING);
+    this.notifyAllocated(record, input.onAllocated);
+    let local_seal: string | null = null;
+    try {
+      if (this.crypto.sealLocal) {
+        local_seal = await this.crypto.sealLocal(displayPlain);
+      }
+      const copies: Array<{ recipient_id: string; encrypted_payload: string; message_id: string }> = [];
+      for (const recipient_id of recipients) {
+        const copyId = recipient_id === displayRecipient ? message_id : createMessageId();
+        const encrypted_payload = await this.crypto.encrypt({
+          ...displayPlain,
+          message_id: copyId,
+          recipient_id,
+        });
+        if (!isCryptoBoxPayload(encrypted_payload)) {
+          throw new Error("encrypt() must return a libsodium crypto_box payload");
+        }
+        copies.push({ recipient_id, encrypted_payload, message_id: copyId });
+      }
+      const primary = copies.find((copy) => copy.message_id === message_id) ?? copies[0]!;
+      record = {
+        ...record,
+        encrypted_payload: primary.encrypted_payload,
+        local_seal,
+      };
+      record = this.withStatus(record, MessageStatus.ENCRYPTED);
+      await this.persistMessage(record);
+      record = this.withStatus(record, MessageStatus.QUEUED);
+      await this.persistMessage(record);
+      record = this.withStatus(record, MessageStatus.SENDING);
+      await this.persistMessage(record);
+      const res = await this.http.request(`/conversations/${input.conversation_id}/messages`, {
+        method: "POST",
+        body: { copies },
+      });
+      if (!res.ok) {
+        const failed = this.withStatus(record, MessageStatus.FAILED);
+        await this.persistMessage(failed);
+        throw new Error("Could not send this message");
+      }
+      const sent = this.withStatus(record, MessageStatus.SENT);
+      await this.persistMessage(sent);
+      return { ...sent, text };
+    } catch (err) {
+      if (local_seal && isCryptoBoxPayload(local_seal)) {
+        const failed = this.withStatus(
+          { ...record, local_seal, text: null, encrypted_payload: record.encrypted_payload || "" },
           MessageStatus.FAILED,
         );
         await this.persistMessage(failed);
@@ -370,13 +496,17 @@ export class MessageService {
       preview: string;
       unread: number;
       last: StoredMessage | null;
+      kind?: "direct" | "event" | null;
+      title?: string | null;
+      event_id?: string | null;
+      archived?: boolean;
     }>
   > {
     const convos = await this.store.listConversations();
     const unreads = await this.unreadCounts(viewerId);
     const items = [];
     for (const convo of convos) {
-      if (this.safety && convo.peer_id) {
+      if (this.safety && convo.peer_id && shouldApplyDirectInboxSafety(convo.kind)) {
         const visibility = await this.safety.inboxVisibility(convo.peer_id);
         if (visibility !== "chat") continue;
       }
@@ -390,6 +520,10 @@ export class MessageService {
         preview: conversationPreviewLine(last ?? null),
         unread: unreads[convo.id] ?? 0,
         last,
+        kind: convo.kind ?? "direct",
+        title: convo.title ?? null,
+        event_id: convo.event_id ?? null,
+        archived: Boolean(convo.archived),
       });
     }
     return sortInboxConversations(items);

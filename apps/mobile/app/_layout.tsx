@@ -67,6 +67,9 @@ function RootLayoutNav() {
         <Stack.Screen name="qr" options={{ title: 'My HOP QR Code' }} />
         <Stack.Screen name="scan" options={{ title: 'Scan HOP code' }} />
         <Stack.Screen name="requests" options={{ title: 'Message requests' }} />
+        <Stack.Screen name="events/index" options={{ title: 'Events' }} />
+        <Stack.Screen name="events/create" options={{ title: 'Create Event' }} />
+        <Stack.Screen name="events/[id]" options={{ title: 'Event' }} />
         <Stack.Screen name="nearby-profile" options={{ title: 'Nearby profile' }} />
         <Stack.Screen name="ble-debug" options={{ title: 'BLE debug' }} />
       </Stack>

@@ -31,7 +31,11 @@ export class InternetTransport implements Transport {
     try {
       const res = await this.http.request(`/conversations/${envelope.conversation_id}/messages`, {
         method: "POST",
-        body: { encrypted_payload: envelope.encrypted_payload, message_id: envelope.message_id },
+        body: {
+          encrypted_payload: envelope.encrypted_payload,
+          message_id: envelope.message_id,
+          recipient_id: envelope.recipient_id,
+        },
       });
       if (res.ok) {
         return { ok: true, transport: this.id };

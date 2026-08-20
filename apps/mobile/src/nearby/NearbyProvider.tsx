@@ -10,6 +10,7 @@ import {
 } from 'react';
 import { AppState } from 'react-native';
 
+import { api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle, type StartNearbyOptions } from '@/src/ble/BleProvider';
 import { useOffline } from '@/src/offline/OfflineProvider';
@@ -47,6 +48,7 @@ const EVENT_OFF: EventModeSnapshot = {
   sessionId: null,
   eventCode: null,
   name: null,
+  eventId: null,
 };
 
 type NearbyContextValue = {
@@ -60,7 +62,12 @@ type NearbyContextValue = {
   operatingMode: NearbyOperatingMode;
   setOperatingMode: (
     mode: NearbyOperatingMode,
-    options?: { audience?: NearbyAudience | null; durationMs?: number; eventName?: string | null },
+    options?: {
+      audience?: NearbyAudience | null;
+      durationMs?: number;
+      eventName?: string | null;
+      eventId?: string | null;
+    },
   ) => Promise<void>;
   audience: NearbyAudience;
   setAudience: (audience: NearbyAudience) => Promise<void>;
@@ -80,7 +87,7 @@ type NearbyContextValue = {
 const NearbyContext = createContext<NearbyContextValue | null>(null);
 
 export function NearbyProvider({ children }: { children: ReactNode }) {
-  const { user } = useAuth();
+  const { user, token } = useAuth();
   const { listCachedConversations, safety } = useOffline();
   const {
     engine,
@@ -118,6 +125,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     sessionId: null,
     eventCode: null,
     name: null,
+    eventId: null,
   });
   const [peers, setPeers] = useState<AroundUsPeer[]>([]);
   const [scanState, setScanState] = useState<AroundUsScanState>('invisible');
@@ -176,6 +184,26 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
         let nextEvent = event;
         if (privacy === 'invisible' && event.enabled) {
           nextEvent = await eventServiceRef.current.disable(user.id);
+        } else if (event.enabled && event.eventId && token) {
+          try {
+            const remote = await api.getEvent(token, event.eventId);
+            const remaining = Math.max(0, new Date(remote.ends_at).getTime() - Date.now());
+            if (remote.status === 'ended' || remote.conversation_archived || remaining <= 0) {
+              nextEvent = await eventServiceRef.current.disable(user.id);
+            } else if (remote.my_role === 'host' || remote.my_role === 'guest') {
+              nextEvent = await eventServiceRef.current.enable(
+                user.id,
+                remaining,
+                null,
+                remote.name,
+                remote.id,
+              );
+            } else {
+              nextEvent = await eventServiceRef.current.disable(user.id);
+            }
+          } catch {
+            /* offline: keep the local Event Mode binding */
+          }
         }
         if (cancelled) return;
         privacyRef.current = privacy;
@@ -199,7 +227,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [stopNearby, user]);
+  }, [stopNearby, token, user]);
 
   useEffect(() => {
     if (!user) return;
@@ -425,6 +453,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
       forPrivacy: NearbyPrivacyMode = privacyRef.current,
       durationMs = DEFAULT_EVENT_DURATION_MS,
       eventName: string | null = null,
+      eventId: string | null = null,
     ) => {
       if (!user) return;
       const requestId = modeRequestRef.current;
@@ -432,7 +461,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
         if (requestId !== modeRequestRef.current) return;
         throw new Error('Turn on Contacts only or Everyone nearby before Event Mode.');
       }
-      const next = await eventServiceRef.current.enable(user.id, durationMs, null, eventName);
+      const next = await eventServiceRef.current.enable(user.id, durationMs, null, eventName, eventId);
       if (
         !canCommitEventEnable(requestId, modeRequestRef.current, privacyRef.current) ||
         !eventDesiredRef.current
@@ -463,7 +492,12 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
   const setOperatingMode = useCallback(
     async (
       mode: NearbyOperatingMode,
-      options?: { audience?: NearbyAudience | null; durationMs?: number; eventName?: string | null },
+      options?: {
+        audience?: NearbyAudience | null;
+        durationMs?: number;
+        eventName?: string | null;
+        eventId?: string | null;
+      },
     ) => {
       if (!user) return;
       const requestId = ++modeRequestRef.current;
@@ -489,6 +523,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
           plan.nextPrivacyMode,
           options?.durationMs ?? DEFAULT_EVENT_DURATION_MS,
           options?.eventName ?? null,
+          options?.eventId ?? null,
         );
       } else if (eventRef.current.enabled) {
         await disableEventMode();

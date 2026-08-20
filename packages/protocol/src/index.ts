@@ -146,7 +146,7 @@ export {
   type StoredConversation,
   type StoredMessage,
 } from "./store.js";
-export { MessageService, type MessageCrypto, type SendTextInput, type SendVoiceInput } from "./messageService.js";
+export { MessageService, type MessageCrypto, type SendEventTextInput, type SendTextInput, type SendVoiceInput } from "./messageService.js";
 export {
   CHAT_PAGE_SIZE,
   applyOptimisticSendFailure,
@@ -336,6 +336,46 @@ export {
   type HopSodium,
   type IdentityKeyPair,
 } from "./cryptoBox.js";
+export {
+  CHATS_INBOX_SECTIONS,
+  CONVERSATION_KINDS,
+  EVENT_INVITE_STATUSES,
+  EVENT_MEMBER_ROLES,
+  EVENT_ROW_STATUSES,
+  EVENT_SCHEDULE_STATUSES,
+  EVENT_VISIBILITIES,
+  MAX_EVENT_MEMBERS,
+  MAX_EVENT_PENDING_INVITES,
+  MAX_EVENT_START_AHEAD_MS,
+  canAcceptEventInvite,
+  canCancelInvite,
+  canDeclineEventInvite,
+  canEndEvent,
+  canInviteToEvent,
+  canJoinDiscoverableEvent,
+  canLeaveEvent,
+  canRemoveGuest,
+  chatsInboxSectionForKind,
+  discoverableDoesNotAutoJoin,
+  endingEventArchivesChat,
+  eventChatCanRead,
+  eventChatCanSend,
+  eventChatFanoutRecipients,
+  eventListSection,
+  eventRowStatus,
+  eventScheduleStatus,
+  normalizeConversationKind,
+  removedMemberLosesFutureEventChat,
+  shouldApplyDirectInboxSafety,
+  type ChatsInboxSectionId,
+  type ConversationKind,
+  type EventInviteStatus,
+  type EventMemberRole,
+  type EventMembershipView,
+  type EventRowStatus,
+  type EventScheduleStatus,
+  type EventVisibility,
+} from "./events.js";
 export { sendWithAckRetry, type AckAttempt } from "./ackRetry.js";
 export {
   chooseNextHop,

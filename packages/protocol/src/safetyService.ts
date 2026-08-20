@@ -111,6 +111,7 @@ export class SafetyService implements SafetyGate {
     const convos = await this.store.listConversations();
     for (const convo of convos) {
       if (!convo.peer_id) continue;
+      if (convo.kind === "event") continue;
       const existing = await this.get(convo.peer_id);
       if (existing) continue;
       const messages = (await this.store.listMessages(convo.id)).filter((row) => row.kind !== "delivery_ack");

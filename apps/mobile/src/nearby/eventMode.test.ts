@@ -68,6 +68,7 @@ describe('Event Mode expiration', () => {
     const first = new EventModeService(store, () => now);
     const on = await first.enable('user-1', 90 * 60_000, null, 'Campus mixer');
     expect(on.name).toBe('Campus mixer');
+    expect(on.eventId).toBeNull();
     expect(on.remainingMs).toBe(90 * 60_000);
     expect(on.eventCode).toBeNull();
     const persisted = JSON.parse((await store.get('hop.eventMode.user-1')) ?? '{}') as {
@@ -82,6 +83,19 @@ describe('Event Mode expiration', () => {
     expect(loaded.enabled).toBe(true);
     expect(loaded.name).toBe('Campus mixer');
     expect(loaded.remainingMs).toBe(90 * 60_000);
+  });
+
+  it('persists a backend event id so Event Mode can restore after navigation or restart', async () => {
+    const store = new MemoryKvStore();
+    let now = 5_000_000;
+    const first = new EventModeService(store, () => now);
+    const on = await first.enable('user-1', 2 * 60 * 60 * 1000, null, 'Campus mixer', 'event-123');
+    expect(on.eventId).toBe('event-123');
+    const restarted = new EventModeService(store, () => now);
+    const loaded = await restarted.load('user-1');
+    expect(loaded.enabled).toBe(true);
+    expect(loaded.eventId).toBe('event-123');
+    expect(loaded.name).toBe('Campus mixer');
   });
 
   it('clamps custom duration to 24 hours and requires a trimmed name', async () => {

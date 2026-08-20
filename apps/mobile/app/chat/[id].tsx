@@ -42,15 +42,22 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { type ChatMessage, api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
-import { sendChatText, sendChatVoice } from '@/src/chat/sendChat';
+import { sendChatText, sendChatVoice, sendEventChatText } from '@/src/chat/sendChat';
 import { storedToChat, useOffline } from '@/src/offline/OfflineProvider';
 import { clearVoicePlaybackTemps } from '@/src/voice/cache';
 import { useHopSocket } from '@/src/ws';
 
 export default function ChatScreen() {
-  const { id, peer, peerId } = useLocalSearchParams<{ id: string; peer?: string; peerId?: string }>();
+  const { id, peer, peerId, kind, eventId, archived } = useLocalSearchParams<{
+    id: string;
+    peer?: string;
+    peerId?: string;
+    kind?: string;
+    eventId?: string;
+    archived?: string;
+  }>();
   const { token, user } = useAuth();
-  const { service, store, syncNow, ready: offlineReady, status, queuedCount, safety } = useOffline();
+  const { service, store, syncNow, ready: offlineReady, status, queuedCount, safety, cacheConversation } = useOffline();
   const { peers, connectedId } = useBle();
   const navigation = useNavigation();
   const insets = useSafeAreaInsets();
@@ -68,6 +75,9 @@ export default function ChatScreen() {
   const [safetyRecord, setSafetyRecord] = useState<PeerSafetyRecord | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
   const [reportOpen, setReportOpen] = useState(false);
+  const [eventRecipientIds, setEventRecipientIds] = useState<string[]>([]);
+  const [eventArchived, setEventArchived] = useState(archived === '1');
+  const isEventChat = kind === 'event';
   const listRef = useRef<FlatList<ChatMessage>>(null);
   const pinnedToLatest = useRef(true);
   const sendLock = useRef(false);
@@ -99,10 +109,12 @@ export default function ChatScreen() {
   const canSend = isComposerSendable(draft, {
     sending: sendLock.current || sending,
     locked:
-      safetyRecord?.relationship === 'outgoing_request' ||
-      safetyRecord?.relationship === 'incoming_request' ||
-      safetyRecord?.relationship === 'blocked' ||
-      safetyRecord?.relationship === 'declined',
+      eventArchived ||
+      (!isEventChat &&
+        (safetyRecord?.relationship === 'outgoing_request' ||
+          safetyRecord?.relationship === 'incoming_request' ||
+          safetyRecord?.relationship === 'blocked' ||
+          safetyRecord?.relationship === 'declined')),
   });
   const invertedData = useMemo(() => [...messages].reverse(), [messages]);
 
@@ -111,9 +123,33 @@ export default function ChatScreen() {
   }, []);
 
   const refreshSafety = useCallback(async () => {
+    if (isEventChat) return;
     if (!safety || !recipientId) return;
     setSafetyRecord(await safety.get(recipientId));
-  }, [recipientId, safety]);
+  }, [isEventChat, recipientId, safety]);
+
+  useEffect(() => {
+    if (!isEventChat || !token || !eventId || !user) return;
+    void api.getEvent(token, eventId).then(async (event) => {
+      setEventArchived(event.conversation_archived || event.status === 'ended');
+      setEventRecipientIds(event.members.map((member) => member.id).filter((memberId) => memberId !== user.id));
+      await cacheConversation({
+        id: event.conversation_id,
+        created_at: event.starts_at,
+        peer: {
+          id: event.host.id,
+          username: event.name,
+          identity_public_key: event.host.identity_public_key,
+          has_avatar: event.host.has_avatar,
+        },
+        kind: 'event',
+        title: event.name,
+        event_id: event.id,
+        archived: event.conversation_archived,
+        members: event.members,
+      });
+    }).catch(() => undefined);
+  }, [cacheConversation, eventId, isEventChat, token, user]);
 
   const markReadIfActive = useCallback(async () => {
     if (!id || !service || !userIdRef.current) return;
@@ -300,7 +336,16 @@ export default function ChatScreen() {
 
   async function send() {
     if (!id || !service || !isComposerSendable(draft, { sending: sendLock.current })) return;
-    if (!recipientId || recipientId === me.id) {
+    if (isEventChat) {
+      if (eventArchived) {
+        setError('Event chat is archived');
+        return;
+      }
+      if (eventRecipientIds.length === 0) {
+        setError('Cannot send without a real recipient');
+        return;
+      }
+    } else if (!recipientId || recipientId === me.id) {
       setError('Cannot send without a real recipient');
       return;
     }
@@ -314,19 +359,34 @@ export default function ChatScreen() {
     let allocatedId: string | undefined;
     let flushed: StoredMessage | undefined;
     try {
-      flushed = await sendChatText(service, {
-        conversation_id: id,
-        sender_id: me.id,
-        recipient_id: recipientId,
-        text,
-        onAllocated: (row) => {
-          allocatedId = row.message_id;
-          sendLock.current = false;
-          setSending(false);
-          mergeRows([storedToChat(row)]);
-          listRef.current?.scrollToOffset({ offset: 0, animated: true });
-        },
-      });
+      flushed = isEventChat
+        ? await sendEventChatText(service, {
+            conversation_id: id,
+            sender_id: me.id,
+            recipient_ids: eventRecipientIds,
+            text,
+            archived: eventArchived,
+            onAllocated: (row) => {
+              allocatedId = row.message_id;
+              sendLock.current = false;
+              setSending(false);
+              mergeRows([storedToChat(row)]);
+              listRef.current?.scrollToOffset({ offset: 0, animated: true });
+            },
+          })
+        : await sendChatText(service, {
+            conversation_id: id,
+            sender_id: me.id,
+            recipient_id: recipientId,
+            text,
+            onAllocated: (row) => {
+              allocatedId = row.message_id;
+              sendLock.current = false;
+              setSending(false);
+              mergeRows([storedToChat(row)]);
+              listRef.current?.scrollToOffset({ offset: 0, animated: true });
+            },
+          });
       mergeRows([storedToChat(flushed)]);
       await syncNow();
       await loadLatest();
@@ -520,7 +580,9 @@ export default function ChatScreen() {
         ) : null}
       </View>
       <View style={[styles.composer, { backgroundColor: colors.background, paddingBottom: Math.max(12, insets.bottom) }]}>
-        {inputMode === 'ptt' ? (
+        {eventArchived ? (
+          <Text style={{ color: colors.muted, paddingHorizontal: 4 }}>Event Chat is archived. You can still read history.</Text>
+        ) : inputMode === 'ptt' && !isEventChat ? (
           <View style={styles.pttRow}>
             <PTTButton
               tint={colors.tint}
@@ -543,7 +605,7 @@ export default function ChatScreen() {
               onPress={() => setInputMode('ptt')}
               accessibilityRole="button"
               accessibilityLabel="Switch to push to talk"
-              style={[styles.toggle, { backgroundColor: colors.card }]}>
+              style={[styles.toggle, { backgroundColor: colors.card, display: isEventChat ? 'none' : 'flex' }]}>
               <Text style={[styles.toggleLabel, { color: colors.tint }]}>PTT</Text>
             </Pressable>
             <TextInput

@@ -62,6 +62,8 @@ export type EventModeSnapshot = {
   eventCode: string | null;
   /** Local display name for this Event Mode session. Not a public event code. */
   name: string | null;
+  /** Backend event this radar session is bound to. Null for legacy local-only sessions. */
+  eventId: string | null;
 };
 
 export type KvStore = {

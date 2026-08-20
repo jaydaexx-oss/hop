@@ -79,7 +79,6 @@
           "cameraPermission": "HOP uses the camera so you can take a profile photo."
         }
       ],
-      "expo-image-manipulator",
       [
         "munim-bluetooth",
         {

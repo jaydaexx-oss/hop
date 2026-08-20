@@ -315,6 +315,12 @@ describe('Event entry copy and Invisible radar', () => {
     expect(radarShouldAnimate({ scanning: true, reduceMotion: false, invisible: true })).toBe(false);
     expect(radarShouldAnimate({ scanning: true, reduceMotion: false, invisible: false })).toBe(true);
     expect(radarShouldAnimate({ scanning: false, reduceMotion: false, invisible: false })).toBe(false);
+    expect(
+      radarShouldAnimate({ scanning: true, reduceMotion: false, invisible: false, tabFocused: false }),
+    ).toBe(false);
+    expect(
+      radarShouldAnimate({ scanning: true, reduceMotion: false, invisible: false, appActive: false }),
+    ).toBe(false);
     expect(OPERATING_MODE_HINTS.invisible).toMatch(/Existing chats still work/);
     expect(OPERATING_MODE_HINTS.event).toMatch(/who can find you/);
   });

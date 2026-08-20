@@ -63,7 +63,10 @@ export function radarShouldAnimate(input: {
   scanning: boolean;
   reduceMotion: boolean;
   invisible: boolean;
+  tabFocused?: boolean;
+  appActive?: boolean;
 }): boolean {
   if (input.reduceMotion || input.invisible) return false;
+  if (input.tabFocused === false || input.appActive === false) return false;
   return input.scanning;
 }

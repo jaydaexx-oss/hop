@@ -1,60 +1,45 @@
-import { useEffect, useRef } from 'react';
-import { Animated, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useEffect, useState } from 'react';
+import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
+import { useIsFocused } from 'expo-router';
+import Animated, {
+  Easing,
+  cancelAnimation,
+  useAnimatedStyle,
+  useSharedValue,
+  withRepeat,
+  withTiming,
+  type SharedValue,
+} from 'react-native-reanimated';
 
 import type { AroundUsPeer, NearbyOperatingMode } from '@/src/nearby/types';
 import { layoutRadarNodes, type RadarNode } from '@/src/nearby/radarLayout';
 import { radarShouldAnimate } from '@/src/nearby/scanState';
+import {
+  CONCENTRIC_RING_RATIOS,
+  RING_PULSE_AMOUNT,
+  TRAIL_STEP_DEG,
+  TRAIL_STEPS,
+  beamGlow,
+  ringSweepPulse,
+  sweepDurationMs,
+  trailHeight,
+  trailOpacity,
+} from '@/src/nearby/radarSweep';
 import { useProfilePhoto } from '@/src/profile/useProfilePhoto';
 import { Avatar } from '@/components/Avatar';
 
 const NODE_SIZE = 36;
+const TRAIL_INDICES = Array.from({ length: TRAIL_STEPS }, (_, i) => i + 1);
 
-function PulseRing({
-  delay,
-  size,
-  color,
-}: {
-  delay: number;
-  size: number;
-  color: string;
-}) {
-  const scale = useRef(new Animated.Value(0.12)).current;
-  const opacity = useRef(new Animated.Value(0)).current;
-
+function useAppIsActive(): boolean {
+  const [active, setActive] = useState(() => AppState.currentState === 'active');
   useEffect(() => {
-    const run = () => {
-      scale.setValue(0.12);
-      opacity.setValue(0.55);
-      Animated.parallel([
-        Animated.timing(scale, { toValue: 1, duration: 2600, useNativeDriver: true }),
-        Animated.timing(opacity, { toValue: 0, duration: 2600, useNativeDriver: true }),
-      ]).start(({ finished }) => {
-        if (finished) run();
-      });
-    };
-    const t = setTimeout(run, delay);
-    return () => {
-      clearTimeout(t);
-      scale.stopAnimation();
-      opacity.stopAnimation();
-    };
-  }, [delay, opacity, scale]);
-
-  return (
-    <Animated.View
-      pointerEvents="none"
-      style={[
-        StyleSheet.absoluteFill,
-        {
-          borderRadius: size / 2,
-          borderWidth: 1.5,
-          borderColor: color,
-          transform: [{ scale }],
-          opacity,
-        },
-      ]}
-    />
-  );
+    const sub = AppState.addEventListener('change', (state) => {
+      setActive(state === 'active');
+    });
+    return () => sub.remove();
+  }, []);
+  return active;
 }
 
 function RadarSelf({ name, color, userId }: { name: string; color: string; userId?: string | null }) {
@@ -62,18 +47,151 @@ function RadarSelf({ name, color, userId }: { name: string; color: string; userI
   return <Avatar username={name} color={color} size={28} uri={uri} />;
 }
 
+function RadarRing({
+  size,
+  ratio,
+  center,
+  tint,
+  eventActive,
+  invisible,
+  animate,
+  sweepDeg,
+}: {
+  size: number;
+  ratio: number;
+  center: number;
+  tint: string;
+  eventActive: boolean;
+  invisible: boolean;
+  animate: boolean;
+  sweepDeg: SharedValue<number>;
+}) {
+  const dim = size * ratio;
+  const baseOpacity = invisible ? 0.18 : eventActive ? 0.5 : 0.35;
+  const style = useAnimatedStyle(() => {
+    if (!animate) return { opacity: baseOpacity };
+    const pulse = RING_PULSE_AMOUNT * ringSweepPulse(sweepDeg.value);
+    return { opacity: Math.min(1, baseOpacity + pulse) };
+  });
+  return (
+    <Animated.View
+      pointerEvents="none"
+      style={[
+        {
+          position: 'absolute',
+          width: dim,
+          height: dim,
+          borderRadius: dim / 2,
+          borderWidth: eventActive ? 1 : 0.6,
+          borderColor: tint,
+          left: center - dim / 2,
+          top: center - dim / 2,
+        },
+        style,
+      ]}
+    />
+  );
+}
+
+function SweepArm({ size, center, tint }: { size: number; center: number; tint: string }) {
+  return (
+    <View pointerEvents="none" style={{ width: size, height: size }}>
+      {TRAIL_INDICES.map((step) => {
+        const height = trailHeight(step);
+        return (
+          <View
+            key={step}
+            pointerEvents="none"
+            style={[StyleSheet.absoluteFill, { transform: [{ rotate: `${-step * TRAIL_STEP_DEG}deg` }] }]}>
+            <View
+              style={{
+                position: 'absolute',
+                left: center,
+                top: center - height / 2,
+                width: center,
+                height,
+                backgroundColor: tint,
+                opacity: trailOpacity(step),
+              }}
+            />
+          </View>
+        );
+      })}
+      <View
+        style={{
+          position: 'absolute',
+          left: center,
+          top: center - 5,
+          width: center,
+          height: 10,
+          backgroundColor: tint,
+          opacity: 0.16,
+        }}
+      />
+      <View
+        style={{
+          position: 'absolute',
+          left: center,
+          top: center - 1,
+          width: center,
+          height: 2,
+          backgroundColor: tint,
+          opacity: 0.95,
+          shadowColor: tint,
+          shadowOffset: { width: 0, height: 0 },
+          shadowOpacity: 0.9,
+          shadowRadius: 8,
+        }}
+      />
+      {CONCENTRIC_RING_RATIOS.map((ratio) => (
+        <View
+          key={ratio}
+          style={{
+            position: 'absolute',
+            left: center + center * ratio - 4,
+            top: center - 4,
+            width: 8,
+            height: 8,
+            borderRadius: 4,
+            backgroundColor: tint,
+            opacity: 0.42,
+          }}
+        />
+      ))}
+    </View>
+  );
+}
+
 function RadarDot({
   node,
   color,
   userId,
   onPress,
+  sweepDeg,
+  animate,
 }: {
   node: RadarNode;
   color: string;
   userId?: string;
   onPress: () => void;
+  sweepDeg: SharedValue<number>;
+  animate: boolean;
 }) {
   const { uri } = useProfilePhoto(userId);
+  const nodeDeg = (node.angle * 180) / Math.PI;
+  const haloStyle = useAnimatedStyle(() => {
+    const glow = animate ? beamGlow(sweepDeg.value, nodeDeg) : 0;
+    return {
+      opacity: glow * 0.8,
+      transform: [{ scale: 0.85 + glow * 0.45 }],
+    };
+  });
+  const avatarStyle = useAnimatedStyle(() => {
+    const glow = animate ? beamGlow(sweepDeg.value, nodeDeg) : 0;
+    return {
+      transform: [{ scale: 1 + glow * 0.1 }],
+    };
+  });
   return (
     <Pressable
       onPress={onPress}
@@ -87,7 +205,24 @@ function RadarDot({
         alignItems: 'center',
         zIndex: 5,
       }}>
-      <Avatar username={node.displayName} color={color} size={NODE_SIZE} uri={uri} borderColor={color} borderWidth={2} />
+      <Animated.View
+        pointerEvents="none"
+        style={[
+          {
+            position: 'absolute',
+            top: -6,
+            left: -2,
+            width: NODE_SIZE + 12,
+            height: NODE_SIZE + 12,
+            borderRadius: (NODE_SIZE + 12) / 2,
+            backgroundColor: color,
+          },
+          haloStyle,
+        ]}
+      />
+      <Animated.View style={avatarStyle}>
+        <Avatar username={node.displayName} color={color} size={NODE_SIZE} uri={uri} borderColor={color} borderWidth={2} />
+      </Animated.View>
       <Text numberOfLines={1} style={styles.nodeLabel}>
         {node.displayName}
       </Text>
@@ -126,30 +261,39 @@ export function NearbyRadar({
   eventName?: string | null;
   selfUserId?: string | null;
 }) {
-  const rotation = useRef(new Animated.Value(0)).current;
+  const tabFocused = useIsFocused();
+  const appActive = useAppIsActive();
+  const sweepDeg = useSharedValue(0);
   const nodes = layoutRadarNodes(peers, size);
   const byToken = new Map(peers.map((peer) => [peer.token, peer]));
   const center = size / 2;
   const invisible = operatingMode === 'invisible';
   const eventActive = operatingMode === 'event';
-  const animate = radarShouldAnimate({ scanning, reduceMotion, invisible });
+  const animate = radarShouldAnimate({ scanning, reduceMotion, invisible, tabFocused, appActive });
   const discOpacity = invisible ? 0.42 : 1;
+  const sweepMs = sweepDurationMs(eventActive);
 
   useEffect(() => {
     if (!animate) {
-      rotation.stopAnimation();
-      rotation.setValue(0);
+      cancelAnimation(sweepDeg);
       return;
     }
-    const loop = Animated.loop(
-      Animated.timing(rotation, { toValue: 1, duration: eventActive ? 2200 : 3200, useNativeDriver: true }),
+    const raw = sweepDeg.value;
+    const start = ((raw % 360) + 360) % 360;
+    sweepDeg.value = start;
+    sweepDeg.value = withRepeat(
+      withTiming(start + 360, { duration: sweepMs, easing: Easing.linear }),
+      -1,
+      false,
     );
-    loop.start();
-    return () => loop.stop();
-  }, [animate, eventActive, rotation]);
+    return () => {
+      cancelAnimation(sweepDeg);
+    };
+  }, [animate, sweepDeg, sweepMs]);
 
-  const spin = rotation.interpolate({ inputRange: [0, 1], outputRange: ['0deg', '360deg'] });
-  const sweepDuration = eventActive ? 1800 : 2600;
+  const sweepStyle = useAnimatedStyle(() => ({
+    transform: [{ rotate: `${sweepDeg.value}deg` }],
+  }));
 
   return (
     <View style={[styles.wrap, { width: size, height: size }]}>
@@ -165,50 +309,29 @@ export function NearbyRadar({
             opacity: discOpacity,
           },
         ]}>
-        {[0.33, 0.66, 1].map((ratio) => (
-          <View
+        {CONCENTRIC_RING_RATIOS.map((ratio) => (
+          <RadarRing
             key={ratio}
-            style={{
-              position: 'absolute',
-              width: size * ratio,
-              height: size * ratio,
-              borderRadius: (size * ratio) / 2,
-              borderWidth: eventActive ? 1 : 0.6,
-              borderColor: tint,
-              opacity: invisible ? 0.18 : eventActive ? 0.5 : 0.35,
-              left: center - (size * ratio) / 2,
-              top: center - (size * ratio) / 2,
-            }}
+            size={size}
+            ratio={ratio}
+            center={center}
+            tint={tint}
+            eventActive={eventActive}
+            invisible={invisible}
+            animate={animate}
+            sweepDeg={sweepDeg}
           />
         ))}
         <View pointerEvents="none" style={[styles.crossH, { backgroundColor: border, top: center }]} />
         <View pointerEvents="none" style={[styles.crossV, { backgroundColor: border, left: center }]} />
         {animate ? (
-          <>
-            <PulseRing delay={0} size={size} color={tint} />
-            <PulseRing delay={Math.round(sweepDuration / 3)} size={size} color={tint} />
-            <PulseRing delay={Math.round((sweepDuration * 2) / 3)} size={size} color={tint} />
-            <Animated.View
-              pointerEvents="none"
-              style={{
-                position: 'absolute',
-                width: size,
-                height: size,
-                transform: [{ rotate: spin }],
-              }}>
-              <View
-                style={{
-                  position: 'absolute',
-                  left: center,
-                  top: center - 1,
-                  width: center,
-                  height: eventActive ? 3 : 2,
-                  backgroundColor: tint,
-                  opacity: 0.85,
-                }}
-              />
-            </Animated.View>
-          </>
+          <Animated.View
+            pointerEvents="none"
+            style={[{ position: 'absolute', width: size, height: size, zIndex: 2 }, sweepStyle]}>
+            <View shouldRasterizeIOS renderToHardwareTextureAndroid>
+              <SweepArm size={size} center={center} tint={tint} />
+            </View>
+          </Animated.View>
         ) : null}
         <View style={[styles.center, { backgroundColor: tint, opacity: invisible ? 0.55 : 1 }]}>
           <RadarSelf name={selfName} color={selfColor} userId={selfUserId} />
@@ -223,6 +346,8 @@ export function NearbyRadar({
               color={tint}
               userId={peer.userId}
               onPress={() => onPressPeer(peer)}
+              sweepDeg={sweepDeg}
+              animate={animate}
             />
           );
         })}

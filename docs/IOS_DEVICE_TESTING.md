@@ -162,9 +162,12 @@ Record pass/fail. Until recorded, do not award hardware or live-HTTPS points.
 
 ### Account and identity
 
-- [ ] Register a new username against the reachable API (LAN HTTP in `__DEV__`, or HTTPS)
-- [ ] Log out and log back in
+- [ ] Choose a handle and Start Hopping against the reachable API (LAN HTTP in `__DEV__`, or HTTPS)
+- [ ] Kill the app and relaunch: auto-enters the previous identity with **no login screen**
+- [ ] Settings → **Reset HOP on this device** → confirm the local wipe warning → returns to Choose a handle → Start Hopping
+- [ ] After reset, the previous handle shows **taken** if that account still exists on the server
 - [ ] Identity row is **Loaded**; secret key is not displayed
+- [ ] Device diagnostics is **not** on onboarding; open it from Settings in `__DEV__` only
 - [ ] SecureStore probe is **Available**
 - [ ] Settings → Replace local identity keys → server 409 `SERVER_KEY_LOCKED` if a different key was already published (fail closed; recovery is a new account)
 

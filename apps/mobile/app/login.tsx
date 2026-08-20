@@ -1,6 +1,7 @@
-import { Redirect, useRouter } from 'expo-router';
+import { Redirect } from 'expo-router';
 import { useEffect, useState } from 'react';
 import {
+  Alert,
   KeyboardAvoidingView,
   Platform,
   Pressable,
@@ -18,6 +19,7 @@ import { HOP_USERNAME_RE, LOCAL_AVATAR_COLORS, normalizeHopUsername } from '@hop
 import { api } from '@/src/api/hop';
 import { LOOPBACK_API_DEVICE_HINT, apiUrlUsesLoopback } from '@/src/api/client';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { RESET_HOP_CONFIRM, RESET_HOP_MESSAGE, RESET_HOP_TITLE } from '@/src/auth/deviceOnboarding';
 import { loadToken } from '@/src/auth/storage';
 import { POST_LOGIN_HREF } from '@/src/navigation/tabOrder';
 import { createPersistentKv } from '@/src/nearby/kvStore';
@@ -28,22 +30,32 @@ import { uploadProfilePhotoFile } from '@/src/profile/profilePhotoCache';
 const kv = createPersistentKv();
 
 export default function LoginScreen() {
-  const { user, token, startHopping, continueOnDevice, login, refreshUser, skipOnboarding, error } = useAuth();
-  const router = useRouter();
+  const { user, startHopping, continueOnDevice, resetThisDevice, refreshUser, skipOnboarding, error } = useAuth();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
-  const [mode, setMode] = useState<'hop' | 'password'>(skipOnboarding ? 'password' : 'hop');
   const [username, setUsername] = useState('');
-  const [password, setPassword] = useState('');
-  const [busy, setBusy] = useState(false);
+  const [busy, setBusy] = useState(skipOnboarding);
   const [localError, setLocalError] = useState<string | null>(null);
   const [handleStatus, setHandleStatus] = useState<'idle' | 'checking' | 'ok' | 'taken' | 'invalid'>('idle');
   const [photoUri, setPhotoUri] = useState<string | null>(null);
   const [avatarColor, setAvatarColor] = useState(() => defaultLocalAvatarColor('hop'));
 
   useEffect(() => {
-    if (skipOnboarding) setMode('password');
-  }, [skipOnboarding]);
+    if (user || !skipOnboarding) return;
+    let cancelled = false;
+    setBusy(true);
+    setLocalError(null);
+    continueOnDevice()
+      .catch((err) => {
+        if (!cancelled) setLocalError(err instanceof Error ? err.message : 'Could not restore this device');
+      })
+      .finally(() => {
+        if (!cancelled) setBusy(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, skipOnboarding]);
 
   useEffect(() => {
     const handle = normalizeHopUsername(username);
@@ -73,8 +85,7 @@ export default function LoginScreen() {
     };
   }, [username]);
 
-  if (user && token) return <Redirect href={POST_LOGIN_HREF} />;
-  if (user && skipOnboarding && !token && mode !== 'password') return <Redirect href={POST_LOGIN_HREF} />;
+  if (user) return <Redirect href={POST_LOGIN_HREF} />;
 
   async function submitStart() {
     const handle = normalizeHopUsername(username);
@@ -95,18 +106,6 @@ export default function LoginScreen() {
     }
   }
 
-  async function submitPassword() {
-    setBusy(true);
-    setLocalError(null);
-    try {
-      await login(username, password);
-    } catch (err) {
-      setLocalError(err instanceof Error ? err.message : 'Something went wrong');
-    } finally {
-      setBusy(false);
-    }
-  }
-
   async function choosePhoto(source: 'library' | 'camera') {
     try {
       const prepared = await pickPreparedProfilePhoto(source);
@@ -116,9 +115,26 @@ export default function LoginScreen() {
     }
   }
 
+  function confirmResetHop() {
+    Alert.alert(RESET_HOP_TITLE, RESET_HOP_MESSAGE, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: RESET_HOP_CONFIRM,
+        style: 'destructive',
+        onPress: () => {
+          setBusy(true);
+          setLocalError(null);
+          resetThisDevice()
+            .catch((err) => setLocalError(err instanceof Error ? err.message : 'Could not reset this device'))
+            .finally(() => setBusy(false));
+        },
+      },
+    ]);
+  }
+
   const hopDisabled = busy || handleStatus !== 'ok';
 
-  if (mode === 'password') {
+  if (skipOnboarding) {
     return (
       <KeyboardAvoidingView
         style={[styles.wrap, { backgroundColor: colors.background }]}
@@ -126,57 +142,25 @@ export default function LoginScreen() {
         <View style={styles.card}>
           <Text style={styles.brand}>HOP</Text>
           <Text style={[styles.sub, { color: colors.muted }]}>
-            {skipOnboarding ? 'Welcome back.' : 'Existing username and password.'}
+            {busy ? 'Restoring this device…' : 'Could not restore HOP on this device.'}
           </Text>
-          {skipOnboarding ? (
-            <Pressable
-              onPress={() => {
-                setBusy(true);
-                setLocalError(null);
-                continueOnDevice()
-                  .catch((err) => setLocalError(err instanceof Error ? err.message : 'Could not continue'))
-                  .finally(() => setBusy(false));
-              }}
-              disabled={busy}
-              style={[styles.button, { backgroundColor: colors.tint, opacity: busy ? 0.6 : 1 }]}>
-              <Text style={styles.buttonLabel}>Continue on this device</Text>
-            </Pressable>
-          ) : null}
-          <TextInput
-            autoCapitalize="none"
-            autoCorrect={false}
-            placeholder="Username"
-            placeholderTextColor={colors.muted}
-            value={username}
-            onChangeText={setUsername}
-            style={[styles.input, { color: colors.text, backgroundColor: colors.card, borderColor: colors.tabIconDefault }]}
-          />
-          <TextInput
-            secureTextEntry
-            placeholder="Password"
-            placeholderTextColor={colors.muted}
-            value={password}
-            onChangeText={setPassword}
-            style={[styles.input, { color: colors.text, backgroundColor: colors.card, borderColor: colors.tabIconDefault }]}
-          />
           {(localError || error) && <Text style={styles.error}>{localError || error}</Text>}
           {__DEV__ && apiUrlUsesLoopback() ? <Text style={styles.error}>{LOOPBACK_API_DEVICE_HINT}</Text> : null}
           <Pressable
-            onPress={() => void submitPassword()}
-            disabled={busy || !username || password.length < 8}
-            style={[styles.button, { backgroundColor: colors.tint, opacity: busy || !username || password.length < 8 ? 0.6 : 1 }]}>
-            <Text style={styles.buttonLabel}>Log in</Text>
+            onPress={() => {
+              setBusy(true);
+              setLocalError(null);
+              continueOnDevice()
+                .catch((err) => setLocalError(err instanceof Error ? err.message : 'Could not restore this device'))
+                .finally(() => setBusy(false));
+            }}
+            disabled={busy}
+            style={[styles.button, { backgroundColor: colors.tint, opacity: busy ? 0.6 : 1 }]}>
+            <Text style={styles.buttonLabel}>{busy ? 'Restoring…' : 'Try again'}</Text>
           </Pressable>
-          {!skipOnboarding ? (
-            <Pressable onPress={() => setMode('hop')}>
-              <Text style={[styles.switch, { color: colors.tint }]}>New here? Start hopping</Text>
-            </Pressable>
-          ) : null}
-          {__DEV__ ? (
-            <Pressable onPress={() => router.push('/device-diagnostics')}>
-              <Text style={[styles.switch, { color: colors.tint }]}>Device diagnostics</Text>
-            </Pressable>
-          ) : null}
+          <Pressable onPress={confirmResetHop} disabled={busy}>
+            <Text style={[styles.switch, { color: '#DC2626' }]}>Reset HOP on this device</Text>
+          </Pressable>
         </View>
       </KeyboardAvoidingView>
     );
@@ -242,14 +226,6 @@ export default function LoginScreen() {
           style={[styles.button, { backgroundColor: colors.tint, opacity: hopDisabled ? 0.6 : 1 }]}>
           <Text style={styles.buttonLabel}>{busy ? 'Hopping…' : 'Start Hopping'}</Text>
         </Pressable>
-        <Pressable onPress={() => setMode('password')}>
-          <Text style={[styles.switch, { color: colors.muted }]}>I already have an account</Text>
-        </Pressable>
-        {__DEV__ ? (
-          <Pressable onPress={() => router.push('/device-diagnostics')}>
-            <Text style={[styles.switch, { color: colors.tint }]}>Device diagnostics</Text>
-          </Pressable>
-        ) : null}
       </ScrollView>
     </KeyboardAvoidingView>
   );

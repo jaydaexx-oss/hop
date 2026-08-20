@@ -2,8 +2,13 @@ import { createContext, useContext, useEffect, useMemo, useState, type ReactNode
 
 import { writeIdentityOwner, generateIdentityKeyPair } from '@hop/protocol';
 
-import { ApiError, api, type User } from '@/src/api/hop';
-import { existingInstallSkipsOnboarding, reconnectExistingIdentity, registerDeviceIdentity } from '@/src/auth/deviceOnboarding';
+import { api, type User } from '@/src/api/hop';
+import {
+  existingInstallSkipsOnboarding,
+  registerDeviceIdentity,
+  resetLocalHopOnThisDevice,
+  restoreExistingSession,
+} from '@/src/auth/deviceOnboarding';
 import { loadSession, saveSession } from '@/src/auth/storage';
 import { identityBackend } from '@/src/crypto/identity';
 import { clearProfilePhotoCache } from '@/src/profile/profilePhotoCache';
@@ -19,7 +24,7 @@ type AuthState = {
   login: (username: string, password: string) => Promise<void>;
   register: (username: string, password: string) => Promise<void>;
   changeHandle: (username: string) => Promise<void>;
-  logout: () => Promise<void>;
+  resetThisDevice: () => Promise<void>;
   refreshUser: () => Promise<void>;
 };
 
@@ -48,68 +53,19 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await writeIdentityOwner(stored.user.id, identityBackend);
       }
 
-      if (stored.token) {
-        try {
-          const me = await api.me(stored.token);
-          if (!cancelled) {
-            setToken(stored.token);
-            setUser(me);
-            setSkipOnboarding(true);
-          }
-          await saveSession(stored.token, me);
-          await writeIdentityOwner(me.id, identityBackend);
-          return;
-        } catch (err) {
-          if (err instanceof ApiError && err.status === 401) {
-            const reconnected = await reconnectExistingIdentity(identityBackend, deviceApi, stored.user).catch(
-              () => null,
-            );
-            if (reconnected) {
-              if (!cancelled) {
-                setToken(reconnected.token);
-                setUser(reconnected.user);
-                setSkipOnboarding(true);
-              }
-              await saveSession(reconnected.token, reconnected.user);
-              return;
-            }
-            if (stored.user) {
-              if (!cancelled) {
-                setToken(null);
-                setUser(stored.user);
-                setSkipOnboarding(true);
-              }
-              await saveSession(null, stored.user);
-              return;
-            }
-            await saveSession(null, null);
-          } else if (stored.user) {
-            if (!cancelled) {
-              setToken(stored.token);
-              setUser(stored.user);
-              setSkipOnboarding(true);
-            }
-            return;
-          } else {
-            await saveSession(null, null);
-          }
-        } finally {
-          /* ready set below */
-        }
-      } else if (skip) {
-        const reconnected = await reconnectExistingIdentity(identityBackend, deviceApi, stored.user).catch(() => null);
-        if (reconnected) {
-          if (!cancelled) {
-            setToken(reconnected.token);
-            setUser(reconnected.user);
-            setSkipOnboarding(true);
-          }
-          await saveSession(reconnected.token, reconnected.user);
-          return;
-        }
-        if (stored.user && !cancelled) {
-          setUser(stored.user);
-        }
+      const restored = await restoreExistingSession(
+        identityBackend,
+        deviceApi,
+        stored.user,
+        stored.token,
+        (sessionToken) => api.me(sessionToken),
+      );
+      if (restored && !cancelled) {
+        setToken(restored.token);
+        setUser(restored.user);
+        setSkipOnboarding(true);
+        await saveSession(restored.token, restored.user);
+        await writeIdentityOwner(restored.user.id, identityBackend);
       }
     })()
       .catch(() => undefined)
@@ -141,14 +97,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       async continueOnDevice() {
         setError(null);
         const stored = await loadSession();
-        const result = await reconnectExistingIdentity(identityBackend, deviceApi, stored.user);
-        if (!result) throw new Error('This device has no restored session. Use your existing account login.');
+        const result = await restoreExistingSession(
+          identityBackend,
+          deviceApi,
+          stored.user,
+          stored.token,
+          (sessionToken) => api.me(sessionToken),
+        );
+        if (!result) throw new Error('This device has no restored HOP identity.');
         clearProfilePhotoCache();
         await saveSession(result.token, result.user);
         setToken(result.token);
         setUser(result.user);
         setSkipOnboarding(true);
       },
+      /** Backend migration/recovery only — not shown in the consumer HOP UI. */
       async login(username, password) {
         setError(null);
         const result = await api.login(username, password);
@@ -159,6 +122,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(result.user);
         setSkipOnboarding(true);
       },
+      /** Backend migration/recovery only — not shown in the consumer HOP UI. */
       async register(username, password) {
         setError(null);
         const result = await api.register(username, password);
@@ -175,18 +139,21 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         await saveSession(token, me);
         setUser(me);
       },
-      async logout() {
+      async resetThisDevice() {
         if (token) {
           try {
             await api.logout(token);
           } catch {
-            /* still clear locally */
+            /* still clear locally — do not delete the server user */
           }
         }
+        await resetLocalHopOnThisDevice(identityBackend);
         clearProfilePhotoCache();
-        await saveSession(null, user);
+        await saveSession(null, null);
         setToken(null);
         setUser(null);
+        setSkipOnboarding(false);
+        setError(null);
       },
       async refreshUser() {
         if (!token) return;

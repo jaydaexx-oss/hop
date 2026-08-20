@@ -11,6 +11,7 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
+import { RESET_HOP_CONFIRM, RESET_HOP_MESSAGE, RESET_HOP_TITLE } from '@/src/auth/deviceOnboarding';
 import { useBle } from '@/src/ble/BleProvider';
 import { replaceIdentityExplicit } from '@/src/crypto/identity';
 import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
@@ -23,7 +24,7 @@ import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
 import { useProfilePhoto } from '@/src/profile/useProfilePhoto';
 
 export default function SettingsScreen() {
-  const { user, token, logout, refreshUser, changeHandle } = useAuth();
+  const { user, token, resetThisDevice, refreshUser, changeHandle } = useAuth();
   const { relayConsent, setRelayConsent } = useBle();
   const { operatingMode, audience, eventMode, eventRemainingLabel, scanState } = useNearbyPeers();
   const { identityError } = useOffline();
@@ -72,6 +73,21 @@ export default function SettingsScreen() {
     } finally {
       setPhotoBusy(false);
     }
+  }
+
+  function confirmResetHop() {
+    Alert.alert(RESET_HOP_TITLE, RESET_HOP_MESSAGE, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: RESET_HOP_CONFIRM,
+        style: 'destructive',
+        onPress: () => {
+          resetThisDevice().catch((err) => {
+            Alert.alert('Could not reset HOP', err instanceof Error ? err.message : 'Unknown error');
+          });
+        },
+      },
+    ]);
   }
 
   function confirmReplaceIdentity() {
@@ -261,8 +277,8 @@ export default function SettingsScreen() {
           <Text style={[styles.buttonLabel, { color: colors.tint }]}>BLE debug</Text>
         </Pressable>
       ) : null}
-      <Pressable onPress={logout} style={[styles.button, { borderColor: colors.tint }]}>
-        <Text style={[styles.buttonLabel, { color: colors.tint }]}>Log out</Text>
+      <Pressable onPress={confirmResetHop} style={[styles.button, { borderColor: '#DC2626' }]}>
+        <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Reset HOP on this device</Text>
       </Pressable>
       <ActionSheet
         visible={photoSheet}

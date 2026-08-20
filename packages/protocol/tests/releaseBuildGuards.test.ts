@@ -63,6 +63,14 @@ describe("mobile production send path source", () => {
     expect(settings).toMatch(/\{__DEV__ \? \(/);
     expect(settings).toContain("Device diagnostics");
     expect(settings).toContain("BLE debug");
+    expect(settings).toContain("Reset HOP on this device");
+    expect(settings).not.toMatch(/Log out/);
+    const login = readRepo("apps/mobile/app/login.tsx");
+    expect(login).not.toContain("Device diagnostics");
+    expect(login).not.toContain("Welcome back");
+    expect(login).not.toContain("I already have an account");
+    expect(login).not.toMatch(/placeholder=["']Password["']/);
+    expect(login).not.toMatch(/placeholder=["']Username["']/);
     const bleDebug = readRepo("apps/mobile/app/ble-debug.tsx");
     expect(bleDebug).toContain("isBleDebugEnabled(__DEV__)");
     expect(bleDebug).toContain("Selected transport");

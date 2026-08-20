@@ -272,6 +272,7 @@ export {
   assertPublishedIdentityMatches,
   assertWellFormedPublishKey,
   bindPendingIdentityToUser,
+  clearLocalDeviceIdentity,
   decideIdentityPublish,
   hasExistingLocalIdentity,
   identityPublishBody,

@@ -5,6 +5,7 @@ import {
   assertIdentityPublishHasNoSecret,
   assertPublishedIdentityMatches,
   bindPendingIdentityToUser,
+  clearLocalDeviceIdentity,
   decideIdentityPublish,
   hasExistingLocalIdentity,
   identityPublishBody,
@@ -276,5 +277,29 @@ describe("device-based onboarding identity binding", () => {
     const backend = memoryBackend();
     expect(await shouldSkipOnboarding(backend, true)).toBe(true);
     expect(await shouldSkipOnboarding(backend, false)).toBe(false);
+  });
+
+  it("clears local identity so a later first-launch can mint a new pair", async () => {
+    const backend = memoryBackend();
+    await loadOrCreateIdentity("user-1", backend, async () => PAIR_A);
+    await writeIdentityOwner("user-1", backend);
+    await loadOrCreateDeviceSecret(backend);
+    await loadOrCreateIdentity("pending", backend, async () => PAIR_B);
+
+    await clearLocalDeviceIdentity(backend);
+
+    expect(await readIdentityOwner(backend)).toBeNull();
+    expect(await peekStoredIdentity("user-1", backend)).toBeNull();
+    expect(await peekStoredIdentity("pending", backend)).toBeNull();
+    expect(await hasExistingLocalIdentity(backend)).toBe(false);
+    expect(await shouldSkipOnboarding(backend, false)).toBe(false);
+
+    let generated = 0;
+    const next = await loadOrCreatePendingIdentity(backend, async () => {
+      generated += 1;
+      return PAIR_B;
+    });
+    expect(next).toEqual(PAIR_B);
+    expect(generated).toBe(1);
   });
 });

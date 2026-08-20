@@ -163,6 +163,23 @@ export async function writeIdentityOwner(userId: string, backend: SecretBackend)
   await backend.write(IDENTITY_OWNER_KEY, userId.trim());
 }
 
+/**
+ * Explicit local wipe of this device’s HOP identity only.
+ * Does not delete the server user, chats, events, or contacts.
+ * After this, first-launch onboarding may mint a new keypair.
+ */
+export async function clearLocalDeviceIdentity(backend: SecretBackend): Promise<void> {
+  const owner = await readIdentityOwner(backend);
+  if (owner) {
+    await backend.write(secretStoreKey(owner), null);
+    await backend.write(markerStoreKey(owner), null);
+  }
+  await backend.write(secretStoreKey(PENDING_IDENTITY_SLOT), null);
+  await backend.write(markerStoreKey(PENDING_IDENTITY_SLOT), null);
+  await backend.write(IDENTITY_OWNER_KEY, null);
+  await backend.write(DEVICE_SECRET_KEY, null);
+}
+
 export async function peekStoredIdentity(
   userId: string,
   backend: SecretBackend,

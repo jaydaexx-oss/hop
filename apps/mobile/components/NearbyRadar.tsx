@@ -2,12 +2,9 @@ import { useEffect, useState } from 'react';
 import { AppState, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useIsFocused } from 'expo-router';
 import Animated, {
-  Easing,
-  cancelAnimation,
   useAnimatedStyle,
+  useFrameCallback,
   useSharedValue,
-  withRepeat,
-  withTiming,
   type SharedValue,
 } from 'react-native-reanimated';
 
@@ -16,11 +13,15 @@ import { layoutRadarNodes, type RadarNode } from '@/src/nearby/radarLayout';
 import { radarShouldAnimate } from '@/src/nearby/scanState';
 import {
   CONCENTRIC_RING_RATIOS,
-  RING_PULSE_AMOUNT,
+  RING_CYCLE_MS,
+  SWEEP_DURATION_MS,
   TRAIL_STEP_DEG,
   TRAIL_STEPS,
+  advanceRingProgress,
+  advanceSweepDeg,
   beamGlow,
-  ringSweepPulse,
+  ringBreathe,
+  ringPassGlow,
   sweepDurationMs,
   trailHeight,
   trailOpacity,
@@ -30,6 +31,7 @@ import { Avatar } from '@/components/Avatar';
 
 const NODE_SIZE = 36;
 const TRAIL_INDICES = Array.from({ length: TRAIL_STEPS }, (_, i) => i + 1);
+const RING_COUNT = CONCENTRIC_RING_RATIOS.length;
 
 function useAppIsActive(): boolean {
   const [active, setActive] = useState(() => AppState.currentState === 'active');
@@ -54,8 +56,9 @@ function RadarRing({
   tint,
   eventActive,
   invisible,
-  animate,
-  sweepDeg,
+  ringIndex,
+  animating,
+  ringProgress,
 }: {
   size: number;
   ratio: number;
@@ -63,15 +66,22 @@ function RadarRing({
   tint: string;
   eventActive: boolean;
   invisible: boolean;
-  animate: boolean;
-  sweepDeg: SharedValue<number>;
+  ringIndex: number;
+  animating: SharedValue<number>;
+  ringProgress: SharedValue<number>;
 }) {
   const dim = size * ratio;
   const baseOpacity = invisible ? 0.18 : eventActive ? 0.5 : 0.35;
   const style = useAnimatedStyle(() => {
-    if (!animate) return { opacity: baseOpacity };
-    const pulse = RING_PULSE_AMOUNT * ringSweepPulse(sweepDeg.value);
-    return { opacity: Math.min(1, baseOpacity + pulse) };
+    if (animating.value !== 1) {
+      return { opacity: baseOpacity, transform: [{ scale: 1 }] };
+    }
+    const breathe = ringBreathe(ringProgress.value, ringIndex, RING_COUNT);
+    const pass = ringPassGlow(ringProgress.value, ringIndex, RING_COUNT);
+    return {
+      opacity: Math.min(1, baseOpacity + breathe.opacityBoost + pass),
+      transform: [{ scale: breathe.scale }],
+    };
   });
   return (
     <Animated.View
@@ -95,13 +105,14 @@ function RadarRing({
 
 function SweepArm({ size, center, tint }: { size: number; center: number; tint: string }) {
   return (
-    <View pointerEvents="none" style={{ width: size, height: size }}>
+    <View pointerEvents="none" collapsable={false} style={{ width: size, height: size }}>
       {TRAIL_INDICES.map((step) => {
         const height = trailHeight(step);
         return (
           <View
             key={step}
             pointerEvents="none"
+            collapsable={false}
             style={[StyleSheet.absoluteFill, { transform: [{ rotate: `${-step * TRAIL_STEP_DEG}deg` }] }]}>
             <View
               style={{
@@ -132,15 +143,15 @@ function SweepArm({ size, center, tint }: { size: number; center: number; tint: 
         style={{
           position: 'absolute',
           left: center,
-          top: center - 1,
+          top: center - 1.25,
           width: center,
-          height: 2,
+          height: 2.5,
           backgroundColor: tint,
           opacity: 0.95,
           shadowColor: tint,
           shadowOffset: { width: 0, height: 0 },
-          shadowOpacity: 0.9,
-          shadowRadius: 8,
+          shadowOpacity: 0.95,
+          shadowRadius: 10,
         }}
       />
       {CONCENTRIC_RING_RATIOS.map((ratio) => (
@@ -148,13 +159,17 @@ function SweepArm({ size, center, tint }: { size: number; center: number; tint: 
           key={ratio}
           style={{
             position: 'absolute',
-            left: center + center * ratio - 4,
-            top: center - 4,
-            width: 8,
-            height: 8,
-            borderRadius: 4,
+            left: center + center * ratio - 5,
+            top: center - 5,
+            width: 10,
+            height: 10,
+            borderRadius: 5,
             backgroundColor: tint,
-            opacity: 0.42,
+            opacity: 0.72,
+            shadowColor: tint,
+            shadowOffset: { width: 0, height: 0 },
+            shadowOpacity: 0.95,
+            shadowRadius: 8,
           }}
         />
       ))}
@@ -168,28 +183,29 @@ function RadarDot({
   userId,
   onPress,
   sweepDeg,
-  animate,
+  animating,
 }: {
   node: RadarNode;
   color: string;
   userId?: string;
   onPress: () => void;
   sweepDeg: SharedValue<number>;
-  animate: boolean;
+  animating: SharedValue<number>;
 }) {
   const { uri } = useProfilePhoto(userId);
   const nodeDeg = (node.angle * 180) / Math.PI;
   const haloStyle = useAnimatedStyle(() => {
-    const glow = animate ? beamGlow(sweepDeg.value, nodeDeg) : 0;
+    const glow = animating.value === 1 ? beamGlow(sweepDeg.value, nodeDeg) : 0;
     return {
-      opacity: glow * 0.8,
-      transform: [{ scale: 0.85 + glow * 0.45 }],
+      opacity: glow * 0.9,
+      transform: [{ scale: 0.8 + glow * 0.55 }],
     };
   });
   const avatarStyle = useAnimatedStyle(() => {
-    const glow = animate ? beamGlow(sweepDeg.value, nodeDeg) : 0;
+    const glow = animating.value === 1 ? beamGlow(sweepDeg.value, nodeDeg) : 0;
     return {
-      transform: [{ scale: 1 + glow * 0.1 }],
+      transform: [{ scale: 1 + glow * 0.14 }],
+      opacity: 0.88 + glow * 0.12,
     };
   });
   return (
@@ -264,6 +280,9 @@ export function NearbyRadar({
   const tabFocused = useIsFocused();
   const appActive = useAppIsActive();
   const sweepDeg = useSharedValue(0);
+  const ringProgress = useSharedValue(0);
+  const animating = useSharedValue(0);
+  const durationMs = useSharedValue(SWEEP_DURATION_MS);
   const nodes = layoutRadarNodes(peers, size);
   const byToken = new Map(peers.map((peer) => [peer.token, peer]));
   const center = size / 2;
@@ -273,26 +292,32 @@ export function NearbyRadar({
   const discOpacity = invisible ? 0.42 : 1;
   const sweepMs = sweepDurationMs(eventActive);
 
+  const sweepFrame = useFrameCallback((info) => {
+    'worklet';
+    if (animating.value !== 1) return;
+    const dt = info.timeSincePreviousFrame;
+    if (dt == null || dt > 80) return;
+    sweepDeg.value = advanceSweepDeg(sweepDeg.value, dt, durationMs.value);
+    ringProgress.value = advanceRingProgress(ringProgress.value, dt, RING_CYCLE_MS);
+  }, false);
+
   useEffect(() => {
-    if (!animate) {
-      cancelAnimation(sweepDeg);
-      return;
-    }
-    const raw = sweepDeg.value;
-    const start = ((raw % 360) + 360) % 360;
-    sweepDeg.value = start;
-    sweepDeg.value = withRepeat(
-      withTiming(start + 360, { duration: sweepMs, easing: Easing.linear }),
-      -1,
-      false,
-    );
-    return () => {
-      cancelAnimation(sweepDeg);
-    };
-  }, [animate, sweepDeg, sweepMs]);
+    durationMs.value = sweepMs;
+    animating.value = animate ? 1 : 0;
+    sweepFrame.setActive(animate);
+  }, [animate, animating, durationMs, sweepFrame, sweepMs]);
 
   const sweepStyle = useAnimatedStyle(() => ({
-    transform: [{ rotate: `${sweepDeg.value}deg` }],
+    position: 'absolute' as const,
+    left: 0,
+    top: 0,
+    width: size,
+    height: size,
+    zIndex: 2,
+    opacity: animating.value,
+    // Applied on this view (not a zero-size child). Frame updates set the
+    // current angle; we never interpolate rotate 0deg→360deg as one pair.
+    transform: [{ rotate: sweepDeg.value + 'deg' }],
   }));
 
   return (
@@ -309,7 +334,7 @@ export function NearbyRadar({
             opacity: discOpacity,
           },
         ]}>
-        {CONCENTRIC_RING_RATIOS.map((ratio) => (
+        {CONCENTRIC_RING_RATIOS.map((ratio, ringIndex) => (
           <RadarRing
             key={ratio}
             size={size}
@@ -318,21 +343,21 @@ export function NearbyRadar({
             tint={tint}
             eventActive={eventActive}
             invisible={invisible}
-            animate={animate}
-            sweepDeg={sweepDeg}
+            ringIndex={ringIndex}
+            animating={animating}
+            ringProgress={ringProgress}
           />
         ))}
         <View pointerEvents="none" style={[styles.crossH, { backgroundColor: border, top: center }]} />
         <View pointerEvents="none" style={[styles.crossV, { backgroundColor: border, left: center }]} />
-        {animate ? (
-          <Animated.View
-            pointerEvents="none"
-            style={[{ position: 'absolute', width: size, height: size, zIndex: 2 }, sweepStyle]}>
-            <View shouldRasterizeIOS renderToHardwareTextureAndroid>
-              <SweepArm size={size} center={center} tint={tint} />
-            </View>
-          </Animated.View>
-        ) : null}
+        <Animated.View
+          pointerEvents="none"
+          collapsable={false}
+          shouldRasterizeIOS
+          renderToHardwareTextureAndroid
+          style={sweepStyle}>
+          <SweepArm size={size} center={center} tint={tint} />
+        </Animated.View>
         <View style={[styles.center, { backgroundColor: tint, opacity: invisible ? 0.55 : 1 }]}>
           <RadarSelf name={selfName} color={selfColor} userId={selfUserId} />
         </View>
@@ -347,7 +372,7 @@ export function NearbyRadar({
               userId={peer.userId}
               onPress={() => onPressPeer(peer)}
               sweepDeg={sweepDeg}
-              animate={animate}
+              animating={animating}
             />
           );
         })}

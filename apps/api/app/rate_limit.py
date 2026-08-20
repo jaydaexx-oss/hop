@@ -12,6 +12,9 @@ AUTH_LIMIT = int(os.environ.get("RATE_LIMIT_AUTH", "30"))
 AUTH_WINDOW_S = float(os.environ.get("RATE_LIMIT_AUTH_WINDOW", "60"))
 MESSAGE_LIMIT = int(os.environ.get("RATE_LIMIT_MESSAGE", "60"))
 MESSAGE_WINDOW_S = float(os.environ.get("RATE_LIMIT_MESSAGE_WINDOW", "60"))
+REGISTER_DEVICE_LIMIT = int(os.environ.get("RATE_LIMIT_REGISTER_DEVICE", "3"))
+REGISTER_DEVICE_IP_LIMIT = int(os.environ.get("RATE_LIMIT_REGISTER_DEVICE_IP", "5"))
+REGISTER_DEVICE_WINDOW_S = float(os.environ.get("RATE_LIMIT_REGISTER_DEVICE_WINDOW", "86400"))
 
 
 class SlidingWindowLimiter:
@@ -86,6 +89,17 @@ def limit_messages(request: Request) -> None:
     ip = client_ip(request)
     if not _allow(f"msg:{ip}", MESSAGE_LIMIT, MESSAGE_WINDOW_S):
         raise HTTPException(status_code=429, detail="Too many messages")
+
+
+def limit_new_account(request: Request, install_hash: str | None) -> None:
+    """Rate-limit minting a new user_id. Install hash is opaque SHA-256; IP is coarse."""
+    ip = client_ip(request)
+    if not _allow(f"regdev:ip:{ip}", REGISTER_DEVICE_IP_LIMIT, REGISTER_DEVICE_WINDOW_S):
+        raise HTTPException(status_code=429, detail="Too many new accounts from this network")
+    if install_hash and not _allow(
+        f"regdev:install:{install_hash}", REGISTER_DEVICE_LIMIT, REGISTER_DEVICE_WINDOW_S
+    ):
+        raise HTTPException(status_code=429, detail="Too many new accounts from this app install")
 
 
 def reset_limiters() -> None:

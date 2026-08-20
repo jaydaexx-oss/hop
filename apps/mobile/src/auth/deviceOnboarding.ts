@@ -2,6 +2,7 @@ import {
   IdentityError,
   bindPendingIdentityToUser,
   clearLocalDeviceIdentity,
+  hashedInstallHeaderValue,
   loadOrCreateDeviceSecret,
   loadOrCreatePendingIdentity,
   mustNotCreateNewAccount,
@@ -25,7 +26,12 @@ type AuthResponse = { token: string; user: AuthUser };
 type RecoveryAuthResponse = AuthResponse & { needs_passkey_enrollment?: boolean };
 
 export type DeviceOnboardingApi = {
-  registerDevice: (username: string, publicKey: string, deviceSecret: string) => Promise<AuthResponse>;
+  registerDevice: (
+    username: string,
+    publicKey: string,
+    deviceSecret: string,
+    installHeader?: string,
+  ) => Promise<AuthResponse>;
   deviceLogin: (deviceSecret: string) => Promise<AuthResponse>;
 };
 
@@ -40,7 +46,7 @@ export type RecoveryOnboardingApi = {
 
 export const RESET_HOP_TITLE = 'Reset HOP on this device?';
 export const RESET_HOP_MESSAGE =
-  'This removes the HOP identity, keys, and access stored on THIS phone only. Your account, chats, events, and contacts stay on the server. You cannot take your current handle unless it is released. After reset you will choose a new available handle and create a new device identity.';
+  'This removes the HOP identity, keys, and access stored on THIS phone only. Your account, chats, events, and contacts stay on the server. Blocks and reports on the server are not erased. You cannot take your current handle unless it is released. After reset you will choose a new available handle and create a new device identity.';
 export const RESET_HOP_CONFIRM = 'Reset this device';
 
 export type RestoredSession = { token: string | null; user: AuthUser };
@@ -129,7 +135,8 @@ export async function registerDeviceIdentity(
   }
   const identity = await loadOrCreatePendingIdentity(backend, generate);
   const deviceSecret = await loadOrCreateDeviceSecret(backend);
-  const result = await api.registerDevice(username, identity.publicKey, deviceSecret);
+  const installHeader = await hashedInstallHeaderValue(backend);
+  const result = await api.registerDevice(username, identity.publicKey, deviceSecret, installHeader);
   const bound = await bindPendingIdentityToUser(result.user.id, backend);
   if (bound.publicKey !== identity.publicKey) {
     throw new IdentityError(

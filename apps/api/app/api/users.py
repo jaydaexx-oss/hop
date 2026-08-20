@@ -7,6 +7,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, select
 
 from app.avatars import AVATAR_MEDIA_TYPE, build_user_out, validate_avatar_jpeg
+from app.blocks import record_block_install_cooldown
 from app.db import get_session
 from app.identity_keys import is_well_formed_box_public_key
 from app.models.tables import BlockedUser, Device, IdentityWrap, ProfilePhoto, Report, User, utcnow
@@ -199,16 +200,27 @@ def block_user(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> dict[str, str]:
-    handle = validate_username(body.username)
-    if handle == user.username:
+    peer: User | None = None
+    if body.user_id:
+        peer = session.get(User, body.user_id)
+        if peer is None or peer.deleted_at is not None:
+            raise HTTPException(status_code=404, detail="User not found")
+    elif body.username:
+        handle = validate_username(body.username)
+        if handle == user.username:
+            raise HTTPException(status_code=400, detail="Cannot block yourself")
+        peer = session.exec(select(User).where(User.username == handle)).first()
+        if peer is None:
+            raise HTTPException(status_code=404, detail="User not found")
+    else:
+        raise HTTPException(status_code=400, detail="user_id or username is required")
+    if peer.id == user.id:
         raise HTTPException(status_code=400, detail="Cannot block yourself")
-    peer = session.exec(select(User).where(User.username == handle)).first()
-    if peer is None:
-        raise HTTPException(status_code=404, detail="User not found")
     existing = session.get(BlockedUser, (user.id, peer.id))
     if existing is None:
         session.add(BlockedUser(user_id=user.id, blocked_user_id=peer.id))
-        session.commit()
+    record_block_install_cooldown(session, user, peer)
+    session.commit()
     return {"status": "ok"}
 
 
@@ -219,11 +231,13 @@ def list_blocks(
 ) -> dict[str, list[str]]:
     rows = session.exec(select(BlockedUser).where(BlockedUser.user_id == user.id)).all()
     names: list[str] = []
+    ids: list[str] = []
     for row in rows:
         peer = session.get(User, row.blocked_user_id)
         if peer and peer.deleted_at is None:
             names.append(peer.username)
-    return {"usernames": names}
+            ids.append(peer.id)
+    return {"usernames": names, "user_ids": ids}
 
 
 @router.delete("/me/blocks/{username}")

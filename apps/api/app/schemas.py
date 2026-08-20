@@ -215,7 +215,8 @@ class IdentityIn(BaseModel):
 
 
 class BlockIn(BaseModel):
-    username: str
+    username: Optional[str] = None
+    user_id: Optional[str] = None
 
 
 class ReportIn(BaseModel):

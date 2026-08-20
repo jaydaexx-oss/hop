@@ -53,4 +53,34 @@ describe('event member picker sources', () => {
       expect.objectContaining({ username: 'blake' }),
     ]);
   });
+
+  it('omits blocked user ids from invite candidates', () => {
+    const rows = eventPickerCandidates({
+      selfId: 'me',
+      blockedIds: ['blake', 'drew'],
+      nearby: [
+        {
+          token: 't1',
+          ephemeralId: 'e1',
+          deviceId: 'd1',
+          displayName: 'blake',
+          avatarInitials: 'BL',
+          userId: 'blake',
+          proximity: 'nearby',
+          rssi: -60,
+          lastSeenAt: 1,
+          discovered: true,
+          encrypted: true,
+          connected: false,
+          canMessage: true,
+        },
+      ],
+      acceptedIds: ['cara'],
+      conversations: [
+        { id: 'c1', created_at: '2026-01-01', peer: { id: 'cara', username: 'cara' }, kind: 'direct' },
+        { id: 'c2', created_at: '2026-01-01', peer: { id: 'drew', username: 'drew' }, kind: 'direct' },
+      ],
+    });
+    expect(rows.map((row) => row.username)).toEqual(['cara']);
+  });
 });

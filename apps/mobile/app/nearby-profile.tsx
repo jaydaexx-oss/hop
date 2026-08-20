@@ -56,8 +56,8 @@ export default function NearbyPublicProfileScreen() {
   async function block() {
     if (!userId || !safety) return;
     await safety.block(userId);
-    if (token && displayName !== 'HOP user') {
-      await api.blockUser(token, displayName).catch(() => undefined);
+    if (token) {
+      await api.blockUser(token, displayName === 'HOP user' ? '' : displayName, userId).catch(() => undefined);
     }
     router.back();
   }

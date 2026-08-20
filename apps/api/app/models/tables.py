@@ -42,6 +42,7 @@ class Device(SQLModel, table=True):
     platform: str
     identity_public_key: str = ""
     device_secret_hash: Optional[str] = Field(default=None, index=True, unique=True)
+    install_hash: Optional[str] = Field(default=None, index=True, max_length=64)
     created_at: datetime = Field(default_factory=utcnow)
 
 
@@ -137,6 +138,17 @@ class BlockedUser(SQLModel, table=True):
 
     user_id: str = Field(foreign_key="users.id", primary_key=True)
     blocked_user_id: str = Field(foreign_key="users.id", primary_key=True)
+    created_at: datetime = Field(default_factory=utcnow)
+
+
+class BlockInstallCooldown(SQLModel, table=True):
+    """Hashed install id recently blocked by this user. No handles or message plaintext."""
+
+    __tablename__ = "block_install_cooldowns"
+
+    blocker_id: str = Field(foreign_key="users.id", primary_key=True)
+    install_hash: str = Field(primary_key=True, max_length=64)
+    blocked_user_id: str = Field(foreign_key="users.id")
     created_at: datetime = Field(default_factory=utcnow)
 
 

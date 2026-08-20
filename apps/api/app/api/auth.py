@@ -9,13 +9,14 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import Session, select
 
 from app.avatars import build_user_out, identity_public_key
+from app.blocks import parse_install_hash, record_block_install_cooldown
 from app.db import get_session
 from app.identity_keys import is_well_formed_box_public_key
-from app.models.tables import Device
+from app.models.tables import BlockedUser, Device
 from app.models.tables import Session as AuthSession
 from app.models.tables import User
 from app import passkeys
-from app.rate_limit import limit_auth
+from app.rate_limit import limit_auth, limit_new_account
 from app.schemas import (
     AuthOut,
     DeviceSessionIn,
@@ -60,6 +61,7 @@ def register(body: RegisterIn, request: Request, session: Session = Depends(get_
         existing = session.exec(select(User).where(User.username == username)).first()
         if existing:
             raise HTTPException(status_code=409, detail="Username already taken")
+        limit_new_account(request, parse_install_hash(request))
         user = User(username=username, password_hash=hash_password(body.password))
         session.add(user)
         try:
@@ -153,7 +155,14 @@ def register_device(body: RegisterDeviceIn, request: Request, session: Session =
                 session.add(user)
             if not by_secret.identity_public_key:
                 by_secret.identity_public_key = public_key
-                session.add(by_secret)
+            install_hash = parse_install_hash(request)
+            if install_hash and by_secret.install_hash != install_hash:
+                by_secret.install_hash = install_hash
+                for row in session.exec(select(BlockedUser).where(BlockedUser.blocked_user_id == user.id)).all():
+                    blocker = session.get(User, row.user_id)
+                    if blocker is not None:
+                        record_block_install_cooldown(session, blocker, user)
+            session.add(by_secret)
             session.commit()
             session.refresh(user)
             return _issue_auth(session, user)
@@ -166,6 +175,8 @@ def register_device(body: RegisterDeviceIn, request: Request, session: Session =
         if existing is not None:
             raise HTTPException(status_code=409, detail="Username already taken")
 
+        install_hash = parse_install_hash(request)
+        limit_new_account(request, install_hash)
         user = User(username=username, password_hash=DEVICE_PASSWORD_MARKER)
         session.add(user)
         session.flush()
@@ -175,6 +186,7 @@ def register_device(body: RegisterDeviceIn, request: Request, session: Session =
                 platform="mobile",
                 identity_public_key=public_key,
                 device_secret_hash=device_secret_hash,
+                install_hash=install_hash,
             )
         )
         try:

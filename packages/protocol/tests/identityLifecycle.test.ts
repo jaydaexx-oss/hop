@@ -2,15 +2,18 @@ import { describe, expect, it } from "vitest";
 
 import {
   IdentityError,
+  INSTALL_ID_KEY,
   assertIdentityPublishHasNoSecret,
   assertPublishedIdentityMatches,
   bindPendingIdentityToUser,
   clearLocalDeviceIdentity,
   decideIdentityPublish,
+  hashedInstallHeaderValue,
   hasExistingLocalIdentity,
   identityPublishBody,
   loadOrCreateDeviceSecret,
   loadOrCreateIdentity,
+  loadOrCreateInstallId,
   loadOrCreatePendingIdentity,
   mustNotCreateNewAccount,
   peekStoredIdentity,
@@ -277,6 +280,24 @@ describe("device-based onboarding identity binding", () => {
     const backend = memoryBackend();
     expect(await shouldSkipOnboarding(backend, true)).toBe(true);
     expect(await shouldSkipOnboarding(backend, false)).toBe(false);
+  });
+
+  it("keeps hop.install.id across local reset and hashes it for the register header", async () => {
+    const backend = memoryBackend();
+    const installId = await loadOrCreateInstallId(backend);
+    expect(installId).toMatch(
+      /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+    );
+    const header = await hashedInstallHeaderValue(backend);
+    expect(header).toMatch(/^[0-9a-f]{64}$/);
+    expect(header).not.toBe(installId);
+    await loadOrCreateIdentity("user-1", backend, async () => PAIR_A);
+    await writeIdentityOwner("user-1", backend);
+    await loadOrCreateDeviceSecret(backend);
+    await clearLocalDeviceIdentity(backend);
+    expect(await backend.read(INSTALL_ID_KEY)).toBe(installId);
+    expect(await hashedInstallHeaderValue(backend)).toBe(header);
+    expect(await loadOrCreateInstallId(backend)).toBe(installId);
   });
 
   it("clears local identity so a later first-launch can mint a new pair", async () => {

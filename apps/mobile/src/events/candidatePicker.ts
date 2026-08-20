@@ -13,10 +13,12 @@ export function eventPickerCandidates(input: {
   nearby: AroundUsPeer[];
   acceptedIds: Iterable<string>;
   conversations: Conversation[];
+  blockedIds?: Iterable<string>;
 }): EventPickerCandidate[] {
+  const blocked = new Set(input.blockedIds ?? []);
   const out = new Map<string, EventPickerCandidate>();
   for (const peer of input.nearby) {
-    if (!peer.userId || peer.userId === input.selfId) continue;
+    if (!peer.userId || peer.userId === input.selfId || blocked.has(peer.userId)) continue;
     const username = peer.displayName.trim();
     if (!username || username === 'HOP user') continue;
     out.set(peer.userId, { userId: peer.userId, username, source: 'nearby' });
@@ -26,7 +28,7 @@ export function eventPickerCandidates(input: {
     if (convo.kind === 'event') continue;
     const id = convo.peer.id;
     const username = convo.peer.username.trim();
-    if (!id || id === input.selfId || !username || username === 'HOP user') continue;
+    if (!id || id === input.selfId || blocked.has(id) || !username || username === 'HOP user') continue;
     const source = accepted.has(id) ? 'contacts' : 'recent';
     if (!out.has(id) || source === 'contacts') {
       out.set(id, {

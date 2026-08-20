@@ -19,6 +19,7 @@ export function EventMemberPicker({
   nearby,
   acceptedIds,
   conversations,
+  blockedIds,
   selected,
   onChange,
   tint,
@@ -32,6 +33,7 @@ export function EventMemberPicker({
   nearby: AroundUsPeer[];
   acceptedIds: Iterable<string>;
   conversations: Conversation[];
+  blockedIds?: Iterable<string>;
   selected: EventPickerCandidate[];
   onChange: (next: EventPickerCandidate[]) => void;
   tint: string;
@@ -42,9 +44,10 @@ export function EventMemberPicker({
 }) {
   const [query, setQuery] = useState('');
   const [searchError, setSearchError] = useState<string | null>(null);
+  const blocked = useMemo(() => new Set(blockedIds ?? []), [blockedIds]);
   const base = useMemo(
-    () => eventPickerCandidates({ selfId, nearby, acceptedIds, conversations }),
-    [acceptedIds, conversations, nearby, selfId],
+    () => eventPickerCandidates({ selfId, nearby, acceptedIds, conversations, blockedIds: blocked }),
+    [acceptedIds, blocked, conversations, nearby, selfId],
   );
   const visible = filterEventPickerCandidates(base, query);
   const selectedIds = new Set(selected.map((row) => row.userId));
@@ -65,6 +68,10 @@ export function EventMemberPicker({
     try {
       const user = await api.userByUsername(token, username);
       if (user.id === selfId) return;
+      if (blocked.has(user.id)) {
+        setSearchError('This person is blocked.');
+        return;
+      }
       const next = { userId: user.id, username: user.username, source: 'recent' as const, hasAvatar: user.has_avatar };
       if (!selectedIds.has(user.id)) onChange([...selected, next]);
     } catch (err) {

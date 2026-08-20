@@ -2,8 +2,10 @@ import { describe, expect, it } from 'vitest';
 
 import {
   generateIdentityKeyPair,
+  hashedInstallHeaderValue,
   loadOrCreateDeviceSecret,
   loadOrCreateIdentity,
+  loadOrCreateInstallId,
   peekDeviceSecret,
   peekStoredIdentity,
   readIdentityOwner,
@@ -222,6 +224,8 @@ describe('returning-user restore and local reset', () => {
     await loadOrCreateIdentity('user-1', backend, async () => firstPair);
     await writeIdentityOwner('user-1', backend);
     await loadOrCreateDeviceSecret(backend);
+    const installId = await loadOrCreateInstallId(backend);
+    const installHeader = await hashedInstallHeaderValue(backend);
 
     await resetLocalHopOnThisDevice(backend);
 
@@ -229,14 +233,17 @@ describe('returning-user restore and local reset', () => {
     expect(await peekDeviceSecret(backend)).toBeNull();
     expect(await peekStoredIdentity('user-1', backend)).toBeNull();
     expect(await existingInstallSkipsOnboarding(backend, false)).toBe(false);
+    expect(await loadOrCreateInstallId(backend)).toBe(installId);
 
     let generated = 0;
+    let seenHeader: string | undefined;
     const next = await registerDeviceIdentity(
       backend,
       {
-        registerDevice: async (username, publicKey) => {
+        registerDevice: async (username, publicKey, _secret, header) => {
           expect(username).toBe('ada2');
           expect(publicKey).toBe(secondPair.publicKey);
+          seenHeader = header;
           return { token: 'tok-new', user: user('user-2', username, publicKey) };
         },
         deviceLogin: async () => {
@@ -250,6 +257,7 @@ describe('returning-user restore and local reset', () => {
       },
     );
     expect(generated).toBe(1);
+    expect(seenHeader).toBe(installHeader);
     expect(next.user.id).toBe('user-2');
     expect(await peekStoredIdentity('user-1', backend)).toBeNull();
     expect(await peekStoredIdentity('user-2', backend)).toEqual(secondPair);

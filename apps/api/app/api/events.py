@@ -7,9 +7,9 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlmodel import Session, col, select
 
 from app.avatars import build_member_out
+from app.blocks import assert_contact_allowed
 from app.db import get_session
 from app.models.tables import (
-    BlockedUser,
     Conversation,
     ConversationMember,
     Event,
@@ -50,13 +50,6 @@ def _normalize_name(raw: str) -> str:
     if not name:
         raise HTTPException(status_code=400, detail="Event name is required")
     return name
-
-
-def is_blocked(session: Session, user_a: str, user_b: str) -> bool:
-    return (
-        session.get(BlockedUser, (user_a, user_b)) is not None
-        or session.get(BlockedUser, (user_b, user_a)) is not None
-    )
 
 
 def event_schedule_status(event: Event, now: datetime) -> str:
@@ -194,8 +187,7 @@ def _create_invites(session: Session, event: Event, host: User, usernames: list[
         peer = session.exec(select(User).where(User.username == handle)).first()
         if peer is None or peer.deleted_at is not None:
             raise HTTPException(status_code=404, detail=f"User not found: {handle}")
-        if is_blocked(session, host.id, peer.id):
-            raise HTTPException(status_code=403, detail=f"Cannot invite {handle}")
+        assert_contact_allowed(session, host, peer, detail=f"Cannot invite {handle}")
         if _membership(session, event.id, peer.id) is not None:
             continue
         existing = session.get(EventInvite, (event.id, peer.id))
@@ -428,6 +420,9 @@ def join_event(
         return accept_invite(event_id, session, user)
     if event.visibility != "discoverable" or event_schedule_status(event, utcnow()) != "active":
         raise HTTPException(status_code=403, detail="This event is invite only")
+    host = session.get(User, event.host_id)
+    if host is not None:
+        assert_contact_allowed(session, user, host, detail="Cannot join this event")
     member_count = len(session.exec(select(EventMember).where(EventMember.event_id == event.id)).all())
     if member_count >= MAX_MEMBERS:
         raise HTTPException(status_code=400, detail="Event is full")

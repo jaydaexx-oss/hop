@@ -115,10 +115,10 @@ export class ApiError extends Error {
 
 async function request<T>(
   path: string,
-  opts: { method?: string; token?: string | null; body?: unknown } = {},
+  opts: { method?: string; token?: string | null; body?: unknown; headers?: Record<string, string> } = {},
 ): Promise<T> {
   assertSafeApiUrl(API_URL);
-  const headers: Record<string, string> = { Accept: 'application/json' };
+  const headers: Record<string, string> = { Accept: 'application/json', ...opts.headers };
   if (opts.body !== undefined) headers['Content-Type'] = 'application/json';
   if (opts.token) headers.Authorization = `Bearer ${opts.token}`;
   let response: Response;
@@ -166,10 +166,11 @@ async function putJpeg<T>(path: string, token: string, body: Blob | ArrayBuffer 
 export const api = {
   register: (username: string, password: string) =>
     request<AuthResponse>('/auth/register', { method: 'POST', body: { username, password } }),
-  registerDevice: (username: string, publicKey: string, deviceSecret: string) =>
+  registerDevice: (username: string, publicKey: string, deviceSecret: string, installHeader?: string) =>
     request<AuthResponse>('/auth/register-device', {
       method: 'POST',
       body: { username, public_key: publicKey, device_secret: deviceSecret },
+      headers: installHeader ? { 'X-Hop-Install': installHeader } : undefined,
     }),
   deviceLogin: (deviceSecret: string) =>
     request<AuthResponse>('/auth/device', { method: 'POST', body: { device_secret: deviceSecret } }),
@@ -228,11 +229,15 @@ export const api = {
   userById: (token: string, userId: string) => request<User>(`/users/id/${userId}`, { token }),
   putIdentity: (token: string, publicKey: string) =>
     request<User>('/users/me/identity', { method: 'PUT', token, body: identityPublishBody(publicKey) }),
-  blockUser: (token: string, username: string) =>
-    request<{ status: string }>('/users/me/blocks', { method: 'POST', token, body: { username } }),
+  blockUser: (token: string, username: string, userId?: string) =>
+    request<{ status: string }>('/users/me/blocks', {
+      method: 'POST',
+      token,
+      body: { username: username.trim() || undefined, user_id: userId },
+    }),
   unblockUser: (token: string, username: string) =>
     request<{ status: string }>(`/users/me/blocks/${encodeURIComponent(username)}`, { method: 'DELETE', token }),
-  listBlocks: (token: string) => request<{ usernames: string[] }>('/users/me/blocks', { token }),
+  listBlocks: (token: string) => request<{ usernames: string[]; user_ids?: string[] }>('/users/me/blocks', { token }),
   reportUser: (token: string, username: string, category: string, note?: string) =>
     request<{ status: string }>('/users/me/reports', {
       method: 'POST',

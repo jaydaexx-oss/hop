@@ -1,6 +1,6 @@
 import { Redirect } from 'expo-router';
 import { ScrollView, StyleSheet } from 'react-native';
-import { describeProofRoute, isBleDebugEnabled, isSafeDiagnosticsText } from '@hop/protocol';
+import { describeProofRoute, isDeveloperScreenEnabled, isSafeDiagnosticsText } from '@hop/protocol';
 
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
@@ -37,7 +37,7 @@ export default function BleDebugScreen() {
     };
   }, [diag.lastSendResult, diag.handshakeState, status.advertising, status.scanning]);
 
-  if (!isBleDebugEnabled(__DEV__)) {
+  if (!isDeveloperScreenEnabled(__DEV__)) {
     return <Redirect href="/(tabs)/settings" />;
   }
 

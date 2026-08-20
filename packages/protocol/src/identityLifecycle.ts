@@ -9,6 +9,13 @@ export const IDENTITY_OWNER_KEY = "hop.identity.userId";
 /** Companion device credential in SecureStore. Not derived from the handle. */
 export const DEVICE_SECRET_KEY = "hop.device.secret";
 /**
+ * Opaque per-install UUID. Survives Reset HOP so the API can rate-limit
+ * account recreation without a permanent hardware fingerprint.
+ */
+export const INSTALL_ID_KEY = "hop.install.id";
+/** Hashed install id header on POST /auth/register-device. Never the raw UUID. */
+export const INSTALL_HEADER_NAME = "X-Hop-Install";
+/**
  * Temporary SecureStore slot used only before the server assigns `user.id`.
  * After bind, the same keypair is stored under hop.box.{userId} — never a second pair.
  */
@@ -172,7 +179,8 @@ export async function writeIdentityOwner(userId: string, backend: SecretBackend)
 
 /**
  * Explicit local wipe of this device’s HOP identity only.
- * Does not delete the server user, chats, events, or contacts.
+ * Does not delete the server user, chats, events, contacts, or blocks.
+ * Does not clear hop.install.id (anti-abuse signal, not identity).
  * After this, first-launch onboarding may mint a new keypair.
  */
 export async function clearLocalDeviceIdentity(backend: SecretBackend): Promise<void> {
@@ -187,6 +195,28 @@ export async function clearLocalDeviceIdentity(backend: SecretBackend): Promise<
   await backend.write(wrapStoreKey(PENDING_IDENTITY_SLOT), null);
   await backend.write(IDENTITY_OWNER_KEY, null);
   await backend.write(DEVICE_SECRET_KEY, null);
+}
+
+export async function sha256Hex(value: string): Promise<string> {
+  const bytes = new TextEncoder().encode(value);
+  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+export async function loadOrCreateInstallId(backend: SecretBackend): Promise<string> {
+  const existing = await backend.read(INSTALL_ID_KEY);
+  if (existing && existing.trim()) return existing.trim();
+  if (typeof globalThis.crypto?.randomUUID !== "function") {
+    throw new IdentityError("SECRET_STORE_UNAVAILABLE", "CSPRNG UUID is unavailable on this runtime");
+  }
+  const created = globalThis.crypto.randomUUID();
+  await backend.write(INSTALL_ID_KEY, created);
+  return created;
+}
+
+/** SHA-256 hex of the opaque install UUID. Sent as X-Hop-Install; never the raw UUID. */
+export async function hashedInstallHeaderValue(backend: SecretBackend): Promise<string> {
+  return sha256Hex(await loadOrCreateInstallId(backend));
 }
 
 /** Drop an unpublished first-launch pair. Never writes hop.box.{userId}. */

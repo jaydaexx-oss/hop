@@ -1,7 +1,8 @@
+import { Redirect } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
 import { Pressable, ScrollView, StyleSheet } from 'react-native';
 import type { BleLinkStatus, NetworkStatus, PeerTrustRecord, PeerTrustState } from '@hop/protocol';
-import { formatPersistedFingerprint } from '@hop/protocol';
+import { formatPersistedFingerprint, isDeveloperScreenEnabled } from '@hop/protocol';
 
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
@@ -232,12 +233,8 @@ export default function DeviceDiagnosticsScreen() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  if (!__DEV__) {
-    return (
-      <View style={styles.wrap}>
-        <Text style={{ color: colors.muted }}>Diagnostics are not available in this build.</Text>
-      </View>
-    );
+  if (!isDeveloperScreenEnabled(__DEV__)) {
+    return <Redirect href="/(tabs)/settings" />;
   }
 
   const loopback = apiUrlUsesLoopback();

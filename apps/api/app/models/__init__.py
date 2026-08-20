@@ -1,4 +1,5 @@
 from app.models.tables import (
+    BlockInstallCooldown,
     BlockedUser,
     Conversation,
     ConversationMember,
@@ -18,6 +19,7 @@ from app.models.tables import (
 )
 
 __all__ = [
+    "BlockInstallCooldown",
     "BlockedUser",
     "Conversation",
     "ConversationMember",

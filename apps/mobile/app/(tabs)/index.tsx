@@ -248,7 +248,7 @@ export default function ChatsScreen() {
     else if (action === 'unmute') await safety.setMuted(peerId, false);
     else if (action === 'block') {
       await safety.block(peerId);
-      if (token && name) await api.blockUser(token, name).catch(() => undefined);
+      if (token && name) await api.blockUser(token, name, peerId).catch(() => undefined);
     } else if (action === 'report' && category) {
       await safety.report(peerId, category);
       if (token && name) await api.reportUser(token, name, category).catch(() => undefined);

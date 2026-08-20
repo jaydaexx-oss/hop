@@ -256,8 +256,12 @@ export function relationshipAfterUnblock(record: PeerSafetyRecord): PeerRelation
   return "none";
 }
 
-export function isBleDebugEnabled(isDev: boolean): boolean {
+export function isDeveloperScreenEnabled(isDev: boolean): boolean {
   return isDev === true;
+}
+
+export function isBleDebugEnabled(isDev: boolean): boolean {
+  return isDeveloperScreenEnabled(isDev);
 }
 
 /** Hardware IDs stay hidden even in developer BLE debug. */

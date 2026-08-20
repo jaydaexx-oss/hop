@@ -173,7 +173,7 @@ export default function ChatScreen() {
       if (!safety || !recipientId) return;
       if (action === 'block') {
         await safety.block(recipientId);
-        if (token && peer) await api.blockUser(token, String(peer)).catch(() => undefined);
+        if (token && peer) await api.blockUser(token, String(peer), recipientId).catch(() => undefined);
       } else if (action === 'unblock') {
         await safety.unblock(recipientId);
         if (token && peer) await api.unblockUser(token, String(peer)).catch(() => undefined);

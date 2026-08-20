@@ -9,9 +9,9 @@ from sqlalchemy.exc import IntegrityError
 from sqlmodel import Session, col, select
 
 from app.avatars import build_member_out
+from app.blocks import assert_contact_allowed
 from app.db import get_session
 from app.models.tables import (
-    BlockedUser,
     Conversation,
     ConversationMember,
     Device,
@@ -37,13 +37,6 @@ DEFAULT_TTL_MS = 7 * 24 * 60 * 60 * 1000
 def identity_public_key(session: Session, user_id: str) -> str:
     device = session.exec(select(Device).where(Device.user_id == user_id)).first()
     return device.identity_public_key if device and device.identity_public_key else ""
-
-
-def is_blocked(session: Session, user_a: str, user_b: str) -> bool:
-    return (
-        session.get(BlockedUser, (user_a, user_b)) is not None
-        or session.get(BlockedUser, (user_b, user_a)) is not None
-    )
 
 
 def _peer(session: Session, conversation_id: str, me: User) -> User:
@@ -163,8 +156,7 @@ def create_conversation(
     peer = session.exec(select(User).where(User.username == username)).first()
     if peer is None:
         raise HTTPException(status_code=404, detail="User not found")
-    if is_blocked(session, user.id, peer.id):
-        raise HTTPException(status_code=403, detail="Cannot start a conversation with this user")
+    assert_contact_allowed(session, user, peer, detail="Cannot start a conversation with this user")
     existing = _find_direct(session, user.id, peer.id)
     if existing:
         return _conversation_out(session, existing, user)
@@ -288,8 +280,10 @@ async def _send_event_message(
         if copy.recipient_id in seen_recipients:
             continue
         seen_recipients.add(copy.recipient_id)
-        if is_blocked(session, user.id, copy.recipient_id):
-            raise HTTPException(status_code=403, detail="Cannot message this user")
+        recipient = session.get(User, copy.recipient_id)
+        if recipient is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        assert_contact_allowed(session, user, recipient, detail="Cannot message this user")
         if not is_crypto_box_payload(copy.encrypted_payload):
             raise HTTPException(
                 status_code=400,
@@ -338,8 +332,7 @@ async def send_message(
     if _conversation_kind(convo) == "event":
         return await _send_event_message(conversation_id, body, session, user, convo)
     peer = _peer(session, conversation_id, user)
-    if is_blocked(session, user.id, peer.id):
-        raise HTTPException(status_code=403, detail="Cannot message this user")
+    assert_contact_allowed(session, user, peer, detail="Cannot message this user")
     if not body.encrypted_payload or not is_crypto_box_payload(body.encrypted_payload):
         raise HTTPException(
             status_code=400,

@@ -63,7 +63,7 @@ function RootLayoutNav() {
         <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
         <Stack.Screen name="chat/[id]" options={{ title: 'Chat' }} />
         <Stack.Screen name="login" options={{ headerShown: false }} />
-        <Stack.Screen name="device-diagnostics" options={{ title: 'Diagnostics' }} />
+        {__DEV__ ? <Stack.Screen name="device-diagnostics" options={{ title: 'Diagnostics' }} /> : null}
         <Stack.Screen name="qr" options={{ title: 'My HOP QR Code' }} />
         <Stack.Screen name="scan" options={{ title: 'Scan HOP code' }} />
         <Stack.Screen name="requests" options={{ title: 'Message requests' }} />
@@ -71,7 +71,7 @@ function RootLayoutNav() {
         <Stack.Screen name="events/create" options={{ title: 'Create Event' }} />
         <Stack.Screen name="events/[id]" options={{ title: 'Event' }} />
         <Stack.Screen name="nearby-profile" options={{ title: 'Nearby profile' }} />
-        <Stack.Screen name="ble-debug" options={{ title: 'BLE debug' }} />
+        {__DEV__ ? <Stack.Screen name="ble-debug" options={{ title: 'BLE debug' }} /> : null}
       </Stack>
     </ThemeProvider>
   );

@@ -20,6 +20,7 @@ import {
   inboxVisibilityFor,
   inferRelationshipFromHistory,
   isBleDebugEnabled,
+  isDeveloperScreenEnabled,
   isDiscoverableMode,
   privacyModeForDiscoverable,
   rememberDiscoverableMode,
@@ -341,6 +342,8 @@ describe("safety policy", () => {
   });
 
   it("BLE debug is gated to __DEV__ and never exposes hardware IDs", () => {
+    expect(isDeveloperScreenEnabled(true)).toBe(true);
+    expect(isDeveloperScreenEnabled(false)).toBe(false);
     expect(isBleDebugEnabled(true)).toBe(true);
     expect(isBleDebugEnabled(false)).toBe(false);
     expect(bleDebugExposesHardwareId()).toBe(false);

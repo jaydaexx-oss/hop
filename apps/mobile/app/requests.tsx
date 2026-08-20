@@ -84,7 +84,7 @@ export default function MessageRequestsScreen() {
         await safety.block(row.peerId);
         const name = names[row.peerId];
         if (token && name && name !== 'HOP user') {
-          await api.blockUser(token, name).catch(() => undefined);
+          await api.blockUser(token, name, row.peerId).catch(() => undefined);
         }
       }
       await load();

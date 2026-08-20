@@ -30,6 +30,7 @@ export default function EventDetailScreen() {
   const [inviting, setInviting] = useState(false);
   const [selected, setSelected] = useState<EventPickerCandidate[]>([]);
   const [acceptedIds, setAcceptedIds] = useState<string[]>([]);
+  const [blockedIds, setBlockedIds] = useState<string[]>([]);
   const [conversations, setConversations] = useState<Awaited<ReturnType<typeof listCachedConversations>>>([]);
 
   const load = useCallback(async () => {
@@ -65,12 +66,14 @@ export default function EventDetailScreen() {
   );
 
   async function openInvitePicker() {
-    const [convos, accepted] = await Promise.all([
+    const [convos, accepted, blocked] = await Promise.all([
       listCachedConversations(),
       safety ? safety.acceptedPeerIds() : Promise.resolve(new Set<string>()),
+      safety ? safety.blockedPeerIds() : Promise.resolve(new Set<string>()),
     ]);
     setConversations(convos);
     setAcceptedIds([...accepted]);
+    setBlockedIds([...blocked]);
     setInviting(true);
   }
 
@@ -249,6 +252,7 @@ export default function EventDetailScreen() {
                 nearby={peers}
                 acceptedIds={acceptedIds}
                 conversations={conversations}
+                blockedIds={blockedIds}
                 selected={selected}
                 onChange={setSelected}
                 tint={colors.event}

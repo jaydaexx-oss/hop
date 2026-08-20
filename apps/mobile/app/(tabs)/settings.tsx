@@ -91,7 +91,7 @@ export default function SettingsScreen() {
   }
 
   function confirmReplaceIdentity() {
-    if (!user) return;
+    if (!__DEV__ || !user) return;
     Alert.alert(
       'Replace local identity keys?',
       'This creates a new key pair on this device only. Private keys stay in the device Keychain (encrypted iOS backups can migrate them). If this account already published a different public key, the server returns 409 SERVER_KEY_LOCKED and will not accept a second key. Recover my HOP restores the original keys when they are still in Keychain. There is no unauthenticated rotation and no QR safety-number UX yet.',
@@ -260,22 +260,22 @@ export default function SettingsScreen() {
       {identityError ? (
         <Text style={{ color: '#DC2626', marginTop: 16 }}>{identityError}</Text>
       ) : null}
-      <Pressable onPress={confirmReplaceIdentity} style={[styles.button, { borderColor: '#DC2626' }]}>
-        <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Replace local identity keys</Text>
-      </Pressable>
       {__DEV__ ? (
-        <Pressable
-          onPress={() => router.push('/device-diagnostics')}
-          style={[styles.button, { borderColor: colors.tint }]}>
-          <Text style={[styles.buttonLabel, { color: colors.tint }]}>Device diagnostics</Text>
-        </Pressable>
-      ) : null}
-      {__DEV__ ? (
-        <Pressable
-          onPress={() => router.push('/ble-debug')}
-          style={[styles.button, { borderColor: colors.tint, marginTop: 12 }]}>
-          <Text style={[styles.buttonLabel, { color: colors.tint }]}>BLE debug</Text>
-        </Pressable>
+        <>
+          <Pressable onPress={confirmReplaceIdentity} style={[styles.button, { borderColor: '#DC2626' }]}>
+            <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Replace local identity keys</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/device-diagnostics')}
+            style={[styles.button, { borderColor: colors.tint }]}>
+            <Text style={[styles.buttonLabel, { color: colors.tint }]}>Device diagnostics</Text>
+          </Pressable>
+          <Pressable
+            onPress={() => router.push('/ble-debug')}
+            style={[styles.button, { borderColor: colors.tint, marginTop: 12 }]}>
+            <Text style={[styles.buttonLabel, { color: colors.tint }]}>BLE debug</Text>
+          </Pressable>
+        </>
       ) : null}
       <Pressable onPress={confirmResetHop} style={[styles.button, { borderColor: '#DC2626' }]}>
         <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Reset HOP on this device</Text>

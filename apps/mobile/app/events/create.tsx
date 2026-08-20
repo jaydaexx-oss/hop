@@ -46,6 +46,7 @@ export default function CreateEventScreen() {
   const [visibility, setVisibility] = useState<Visibility>('invite_only');
   const [selected, setSelected] = useState<EventPickerCandidate[]>([]);
   const [acceptedIds, setAcceptedIds] = useState<string[]>([]);
+  const [blockedIds, setBlockedIds] = useState<string[]>([]);
   const [conversations, setConversations] = useState<Awaited<ReturnType<typeof listCachedConversations>>>([]);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -59,12 +60,14 @@ export default function CreateEventScreen() {
   const startError = when === 'later' ? scheduledStartError(scheduledStart ?? Number.NaN) : null;
 
   async function loadPicker() {
-    const [convos, accepted] = await Promise.all([
+    const [convos, accepted, blocked] = await Promise.all([
       listCachedConversations(),
       safety ? safety.acceptedPeerIds() : Promise.resolve(new Set<string>()),
+      safety ? safety.blockedPeerIds() : Promise.resolve(new Set<string>()),
     ]);
     setConversations(convos);
     setAcceptedIds([...accepted]);
+    setBlockedIds([...blocked]);
   }
 
   async function create() {
@@ -232,6 +235,7 @@ export default function CreateEventScreen() {
             nearby={peers}
             acceptedIds={acceptedIds}
             conversations={conversations}
+            blockedIds={blockedIds}
             selected={selected}
             onChange={setSelected}
             tint={colors.event}

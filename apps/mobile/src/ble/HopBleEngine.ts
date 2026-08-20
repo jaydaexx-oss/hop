@@ -33,6 +33,8 @@ import {
   verifyAuthenticatedBleAck,
   verifyAuthenticatedHandshake,
   type AckAttempt,
+  type BleAdapterState,
+  type BleAuthorizationStatus,
   type BleDiagnosticsSnapshot,
   type BleHandshakePhase,
   type BleLink,
@@ -57,6 +59,35 @@ export type BleDiscoveryProfile = 'standard' | 'event';
 
 const ACK_TIMEOUT_MS = 8_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 15_000;
+const ADAPTER_STATE_WAIT_MS = 2_500;
+
+const ADAPTER_STATES = new Set<BleAdapterState>([
+  'unknown',
+  'resetting',
+  'unsupported',
+  'unauthorized',
+  'poweredOff',
+  'poweredOn',
+]);
+const AUTHORIZATION_STATES = new Set<BleAuthorizationStatus>([
+  'notDetermined',
+  'restricted',
+  'denied',
+  'allowedAlways',
+  'unknown',
+]);
+
+function parseAdapterState(value: unknown): BleAdapterState | null {
+  return typeof value === 'string' && ADAPTER_STATES.has(value as BleAdapterState)
+    ? (value as BleAdapterState)
+    : null;
+}
+
+function parseAuthorization(value: unknown): BleAuthorizationStatus | null {
+  return typeof value === 'string' && AUTHORIZATION_STATES.has(value as BleAuthorizationStatus)
+    ? (value as BleAuthorizationStatus)
+    : null;
+}
 
 function withTimeout<T>(promise: Promise<T>, ms: number, label: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -79,6 +110,12 @@ export class HopBleEngine implements BleLink {
   private session: BleSessionOptions | null = null;
   private permissionGranted = false;
   private bluetoothOn = false;
+  private adapterState: BleAdapterState = 'unknown';
+  private authorization: BleAuthorizationStatus = 'unknown';
+  private nativeProbed = false;
+  private centralManagerInitialized = false;
+  private adapterListenersBound = false;
+  private readonly adapterWaiters = new Set<() => void>();
   private advertising = false;
   private scanning = false;
   private advertisingSupported = true;
@@ -134,25 +171,57 @@ export class HopBleEngine implements BleLink {
       scanning: this.scanning,
       advertisingSupported: this.advertisingSupported,
       detail: blocked ?? this.detail,
+      adapterState: this.adapterState,
+      authorization: this.authorization,
+      nativeProbed: this.nativeProbed,
+      centralManagerInitialized: this.centralManagerInitialized,
     };
+  }
+
+  /**
+   * Load munim-bluetooth so iOS instantiates CBCentralManager and can show the
+   * Bluetooth authorization prompt. Safe to call on startup before Nearby starts.
+   */
+  async primeCoreBluetooth(): Promise<void> {
+    await this.requestPermission();
   }
 
   async requestPermission(): Promise<boolean> {
     const native = await this.ensureNative();
-    if (!native) return false;
+    if (!native) {
+      this.nativeProbed = true;
+      this.detail = bleRuntimeBlockedReason() ?? 'Native BLE module is missing. Build a development client.';
+      this.emitPeers();
+      return false;
+    }
+    this.bindAdapterEvents(native);
+    if (
+      this.centralManagerInitialized &&
+      this.authorization !== 'unknown' &&
+      this.authorization !== 'notDetermined' &&
+      this.adapterState !== 'unknown'
+    ) {
+      this.applyPermissionSnapshot();
+      this.emitPeers();
+      return this.permissionGranted && this.bluetoothOn;
+    }
+    const pending = this.waitForAdapterEvent(ADAPTER_STATE_WAIT_MS);
+    this.centralManagerInitialized = true;
     this.permissionGranted = await native.requestBluetoothPermission();
     this.bluetoothOn = await native.isBluetoothEnabled();
+    if (this.permissionGranted) this.authorization = 'allowedAlways';
+    if (this.bluetoothOn) this.adapterState = 'poweredOn';
     try {
       const caps = await native.getCapabilities?.();
       if (caps) this.advertisingSupported = caps.peripheralAdvertising !== false;
     } catch {
       /* capabilities are optional */
     }
-    this.detail = this.permissionGranted
-      ? this.bluetoothOn
-        ? 'Bluetooth permission granted.'
-        : 'Turn on Bluetooth to use Nearby.'
-      : 'Bluetooth permission was denied.';
+    if (this.authorization === 'notDetermined' || this.adapterState === 'unknown') {
+      await pending;
+    }
+    this.applyPermissionSnapshot();
+    this.logBleDiag('requestPermission');
     this.emitPeers();
     return this.permissionGranted && this.bluetoothOn;
   }
@@ -177,6 +246,10 @@ export class HopBleEngine implements BleLink {
       handshakeState,
       nativeImplemented: Boolean(this.native),
       blockedReason: blocked,
+      authorization: this.authorization,
+      adapterState: this.adapterState,
+      centralManagerInitialized: this.centralManagerInitialized,
+      nativeProbed: this.nativeProbed,
     };
   }
 
@@ -905,9 +978,111 @@ export class HopBleEngine implements BleLink {
     this.staleTimer = null;
   }
 
+  private bindAdapterEvents(native: NativeBle): void {
+    if (this.adapterListenersBound) return;
+    this.adapterListenersBound = true;
+    native.addEventListener('adapterStateChanged', (payload) => {
+      this.applyAdapterEvent(payload);
+    });
+  }
+
+  private waitForAdapterEvent(ms: number): Promise<void> {
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.adapterWaiters.delete(finish);
+        resolve();
+      }, ms);
+      const finish = () => {
+        clearTimeout(timer);
+        this.adapterWaiters.delete(finish);
+        resolve();
+      };
+      this.adapterWaiters.add(finish);
+    });
+  }
+
+  private finishAdapterWait(): void {
+    const waiters = [...this.adapterWaiters];
+    this.adapterWaiters.clear();
+    for (const waiter of waiters) waiter();
+  }
+
+  private applyAdapterEvent(payload: Record<string, unknown>): void {
+    const nextState = parseAdapterState(payload.state);
+    const nextAuth = parseAuthorization(payload.authorization);
+    if (nextState) this.adapterState = nextState;
+    if (nextAuth) this.authorization = nextAuth;
+    this.centralManagerInitialized = true;
+    this.applyPermissionSnapshot();
+    this.finishAdapterWait();
+    this.logBleDiag('adapterStateChanged');
+    this.emitPeers();
+  }
+
+  private applyPermissionSnapshot(): void {
+    if (this.authorization === 'allowedAlways') this.permissionGranted = true;
+    if (
+      this.authorization === 'denied' ||
+      this.authorization === 'restricted' ||
+      this.authorization === 'notDetermined' ||
+      this.adapterState === 'unauthorized'
+    ) {
+      this.permissionGranted = false;
+    }
+    if (this.adapterState === 'poweredOn') {
+      this.bluetoothOn = true;
+    } else if (this.adapterState !== 'unknown') {
+      this.bluetoothOn = false;
+    }
+    this.detail = this.detailForAdapter();
+  }
+
+  private detailForAdapter(): string {
+    if (this.adapterState === 'unauthorized' || this.authorization === 'denied' || this.authorization === 'restricted') {
+      return 'HOP needs Bluetooth permission to find people around you.';
+    }
+    if (this.authorization === 'notDetermined') {
+      return 'HOP is requesting Bluetooth permission.';
+    }
+    switch (this.adapterState) {
+      case 'poweredOn':
+        return this.permissionGranted ? 'Bluetooth permission granted.' : 'HOP needs Bluetooth permission to find people around you.';
+      case 'poweredOff':
+        return 'Bluetooth is off. Turn it on to use Nearby.';
+      case 'unsupported':
+        return 'This device does not support Bluetooth Low Energy.';
+      case 'resetting':
+        return 'Bluetooth is restarting.';
+      case 'unknown':
+        return 'Bluetooth state is unknown.';
+      default:
+        return this.permissionGranted
+          ? this.bluetoothOn
+            ? 'Bluetooth permission granted.'
+            : 'Bluetooth is off. Turn it on to use Nearby.'
+          : 'HOP needs Bluetooth permission to find people around you.';
+    }
+  }
+
+  private logBleDiag(reason: string): void {
+    if (typeof __DEV__ === 'undefined' || !__DEV__) return;
+    const snap = this.diagnosticsSnapshot();
+    console.log('[HOP BLE]', reason, {
+      authorization: snap.authorization,
+      adapterState: snap.adapterState,
+      centralManagerInitialized: snap.centralManagerInitialized,
+      nativeProbed: snap.nativeProbed,
+      scanning: snap.scanning,
+      advertising: snap.advertising,
+      permissionGranted: snap.permissionGranted,
+      adapterOn: snap.adapterOn,
+    });
+  }
+
   private async ensureNative(): Promise<NativeBle | null> {
     if (this.native) return this.native;
     this.native = await loadNativeBle();
+    this.nativeProbed = true;
     if (!this.native) {
       this.detail = bleRuntimeBlockedReason() ?? 'Native BLE module is missing. Build a development client.';
     }

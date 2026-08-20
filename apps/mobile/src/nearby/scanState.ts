@@ -3,6 +3,18 @@ import type { BleLinkStatus } from '@hop/protocol';
 import type { AroundUsScanState, NearbyPrivacyMode } from './types';
 import { SEARCHING_GRACE_MS } from './types';
 
+function authorizationBlocked(status: BleLinkStatus): boolean {
+  if (status.adapterState === 'unauthorized') return true;
+  if (
+    status.authorization === 'notDetermined' ||
+    status.authorization === 'denied' ||
+    status.authorization === 'restricted'
+  ) {
+    return true;
+  }
+  return !status.permissionGranted;
+}
+
 export function deriveScanState(input: {
   privacyMode: NearbyPrivacyMode;
   status: BleLinkStatus;
@@ -14,8 +26,22 @@ export function deriveScanState(input: {
 }): AroundUsScanState {
   if (input.privacyMode === 'invisible') return 'invisible';
   if (input.connectionError) return 'connection_failure';
-  if (!input.status.implemented || !input.status.bluetoothOn) return 'bluetooth_off';
-  if (!input.status.permissionGranted) return 'permission_needed';
+
+  const { status } = input;
+  if (!status.implemented) {
+    // Native not loaded yet — do not claim the radio is off.
+    if (!status.nativeProbed) return 'permission_needed';
+    return 'bluetooth_off';
+  }
+
+  // Authorization problems are never "Bluetooth off".
+  if (authorizationBlocked(status)) return 'permission_needed';
+  if (status.adapterState === 'unsupported') return 'connection_failure';
+  if (status.adapterState === 'resetting') {
+    if (input.peerCount > 0) return 'peers_found';
+    return 'searching';
+  }
+  if (status.adapterState === 'poweredOff' || !status.bluetoothOn) return 'bluetooth_off';
   if (input.peerCount > 0) return 'peers_found';
   if (!input.sessionActive) return 'nobody_nearby';
   const started = input.sessionStartedAt ?? input.now;

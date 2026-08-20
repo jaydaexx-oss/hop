@@ -133,6 +133,7 @@ describe("inbox badges, mute-safe clear, and Bluetooth copy", () => {
     }
     expect(bluetoothStatusLabel("invisible")).toContain("Invisible");
     expect(bluetoothStatusLabel("bluetooth_off")).toContain("off");
+    expect(bluetoothStatusLabel("permission_needed").toLowerCase()).not.toContain("off");
   });
 });
 

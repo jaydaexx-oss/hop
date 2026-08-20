@@ -235,6 +235,7 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
     async (mode: NearbyPrivacyMode, eventEnabled: boolean) => {
       const liveMode = privacyRef.current;
       if (liveMode === 'invisible' || mode === 'invisible') return;
+      await engine.requestPermission().catch(() => false);
       const snap = engine.status();
       if (
         !shouldRunNearbyDiscovery({
@@ -277,17 +278,18 @@ export function NearbyProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!ready) return;
     const livePrivacy = privacyRef.current;
-    if (
-      livePrivacy === 'invisible' ||
-      !shouldRunNearbyDiscovery({
-        privacyMode: livePrivacy,
-        appActive: AppState.currentState === 'active',
-        bluetoothOn: status.bluetoothOn,
-        permissionGranted: status.permissionGranted,
-      })
-    ) {
+    if (livePrivacy === 'invisible') {
       if (sessionActive) haltDiscovery().catch(() => undefined);
       return;
+    }
+    const canRun = shouldRunNearbyDiscovery({
+      privacyMode: livePrivacy,
+      appActive: AppState.currentState === 'active',
+      bluetoothOn: status.bluetoothOn,
+      permissionGranted: status.permissionGranted,
+    });
+    if (!canRun && sessionActive) {
+      haltDiscovery().catch(() => undefined);
     }
     startDiscovery(livePrivacy, survivingEventEnabled(livePrivacy, eventMode.enabled)).catch(
       () => undefined,

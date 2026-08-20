@@ -112,6 +112,26 @@ export function BleProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
+    let cancelled = false;
+    engineRef.current
+      .primeCoreBluetooth()
+      .catch(() => undefined)
+      .finally(() => {
+        if (cancelled) return;
+        refresh();
+        if (typeof __DEV__ !== 'undefined' && __DEV__) {
+          const snap = engineRef.current.diagnosticsSnapshot();
+          appendLog(
+            `BLE diag auth=${snap.authorization} state=${snap.adapterState} central=${snap.centralManagerInitialized ? 'yes' : 'no'} scan=${snap.scanning ? 'on' : 'off'} adv=${snap.advertising ? 'on' : 'off'}`,
+          );
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [appendLog, refresh]);
+
+  useEffect(() => {
     const engine = engineRef.current;
     const offPeers = engine.onPeersChanged(refresh);
     const offConn = engine.onConnectionChanged((deviceId, connected) => {

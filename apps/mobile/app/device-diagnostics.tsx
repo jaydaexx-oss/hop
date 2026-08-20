@@ -58,9 +58,21 @@ function transportLabel(status: NetworkStatus): Probe['transport'] {
 }
 
 function bluetoothLabel(status: BleLinkStatus): Probe['bluetooth'] {
+  if (status.adapterState === 'unauthorized' || status.authorization === 'denied' || status.authorization === 'restricted' || status.authorization === 'notDetermined') {
+    return 'Permission Required';
+  }
   if (status.permissionGranted && status.bluetoothOn) return 'Ready';
   if (status.implemented && !status.permissionGranted) return 'Permission Required';
   return 'Available';
+}
+
+function adapterLabel(snap: BleDiagnosticsSnapshot): string {
+  if (snap.adapterState === 'unauthorized') return 'Unauthorized';
+  if (snap.adapterState === 'poweredOn') return 'On';
+  if (snap.adapterState === 'poweredOff') return 'Off';
+  if (snap.adapterState === 'unsupported') return 'Unsupported';
+  if (snap.adapterState === 'resetting') return 'Resetting';
+  return snap.adapterState || (snap.adapterOn ? 'On' : 'Unknown');
 }
 
 function aggregateTrust(records: PeerTrustRecord[]): PeerTrustState {
@@ -306,6 +318,24 @@ export default function DeviceDiagnosticsScreen() {
             Not two-phone proof. Adapter on this device only.
           </Text>
           <Row
+            label="CBManager.authorization"
+            value={probe.bleTech.authorization}
+            tone={probe.bleTech.authorization === 'allowedAlways' ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
+            label="CBCentralManager.state"
+            value={probe.bleTech.adapterState}
+            tone={probe.bleTech.adapterState === 'poweredOn' ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
+            label="Central manager"
+            value={probe.bleTech.centralManagerInitialized ? 'Initialized' : 'Not initialized'}
+            tone={probe.bleTech.centralManagerInitialized ? 'ok' : 'warn'}
+            muted={colors.muted}
+          />
+          <Row
             label="BT permission"
             value={probe.bleTech.permissionGranted ? 'Granted' : 'Not granted'}
             tone={probe.bleTech.permissionGranted ? 'ok' : 'warn'}
@@ -313,8 +343,8 @@ export default function DeviceDiagnosticsScreen() {
           />
           <Row
             label="Adapter"
-            value={probe.bleTech.adapterOn ? 'On' : 'Off'}
-            tone={probe.bleTech.adapterOn ? 'ok' : 'warn'}
+            value={adapterLabel(probe.bleTech)}
+            tone={probe.bleTech.adapterState === 'poweredOn' ? 'ok' : 'warn'}
             muted={colors.muted}
           />
           <Row

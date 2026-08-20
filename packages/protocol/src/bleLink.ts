@@ -14,6 +14,21 @@ export interface BlePeer {
   lastSeenAt: number;
 }
 
+export type BleAdapterState =
+  | "unknown"
+  | "resetting"
+  | "unsupported"
+  | "unauthorized"
+  | "poweredOff"
+  | "poweredOn";
+
+export type BleAuthorizationStatus =
+  | "notDetermined"
+  | "restricted"
+  | "denied"
+  | "allowedAlways"
+  | "unknown";
+
 export interface BleLinkStatus {
   implemented: boolean;
   bluetoothOn: boolean;
@@ -22,6 +37,14 @@ export interface BleLinkStatus {
   scanning: boolean;
   advertisingSupported: boolean;
   detail: string;
+  /** CoreBluetooth / adapter state. Never treat unauthorized as poweredOff. */
+  adapterState?: BleAdapterState;
+  /** CBManager.authorization (iOS) or nearest platform equivalent. */
+  authorization?: BleAuthorizationStatus;
+  /** True after a native BLE load was attempted (success or Expo Go / missing module). */
+  nativeProbed?: boolean;
+  /** True after CBCentralManager / native adapter object was created. */
+  centralManagerInitialized?: boolean;
 }
 
 export interface BleSessionOptions {

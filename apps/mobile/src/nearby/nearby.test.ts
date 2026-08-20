@@ -187,7 +187,67 @@ describe('scan states', () => {
     expect(
       deriveScanState({
         privacyMode: 'everyone',
-        status: { ...status, permissionGranted: false },
+        status: { ...status, bluetoothOn: false, permissionGranted: false },
+        sessionActive: true,
+        peerCount: 0,
+        connectionError: null,
+        now: 20_000,
+        sessionStartedAt: 19_000,
+      }),
+    ).toBe('permission_needed');
+    expect(
+      deriveScanState({
+        privacyMode: 'everyone',
+        status: {
+          ...status,
+          bluetoothOn: false,
+          permissionGranted: false,
+          adapterState: 'unauthorized',
+          authorization: 'notDetermined',
+        },
+        sessionActive: true,
+        peerCount: 0,
+        connectionError: null,
+        now: 20_000,
+        sessionStartedAt: 19_000,
+      }),
+    ).toBe('permission_needed');
+    expect(
+      deriveScanState({
+        privacyMode: 'everyone',
+        status: {
+          ...status,
+          bluetoothOn: false,
+          permissionGranted: true,
+          adapterState: 'poweredOff',
+          authorization: 'allowedAlways',
+        },
+        sessionActive: true,
+        peerCount: 0,
+        connectionError: null,
+        now: 20_000,
+        sessionStartedAt: 19_000,
+      }),
+    ).toBe('bluetooth_off');
+    expect(
+      deriveScanState({
+        privacyMode: 'everyone',
+        status: {
+          ...status,
+          adapterState: 'unknown',
+          authorization: 'unknown',
+        },
+        sessionActive: true,
+        peerCount: 0,
+        connectionError: null,
+        now: 20_000,
+        sessionStartedAt: 19_000,
+      }),
+    ).toBe('searching');
+    expect(
+      deriveScanState({
+        privacyMode: 'everyone',
+        status: { ...status, implemented: false, nativeProbed: false, bluetoothOn: false, permissionGranted: false },
         sessionActive: true,
         peerCount: 0,
         connectionError: null,

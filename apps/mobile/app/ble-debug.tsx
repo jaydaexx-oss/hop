@@ -10,17 +10,22 @@ import { useBle } from '@/src/ble/BleProvider';
 export default function BleDebugScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
-  const { status, sessionActive, peers } = useBle();
+  const { engine, status, sessionActive, peers } = useBle();
+  const diag = engine.diagnosticsSnapshot();
 
   if (!isBleDebugEnabled(__DEV__)) {
     return <Redirect href="/(tabs)/settings" />;
   }
 
   const lines = [
-    `Bluetooth: ${status.bluetoothOn ? 'on' : 'off'}`,
-    `Permission: ${status.permissionGranted ? 'granted' : 'needed'}`,
-    `Advertising: ${status.advertising ? 'yes' : 'no'}`,
-    `Scanning: ${status.scanning ? 'yes' : 'no'}`,
+    `CBManager.authorization: ${diag.authorization}`,
+    `CBCentralManager.state: ${diag.adapterState}`,
+    `Central manager initialized: ${diag.centralManagerInitialized ? 'yes' : 'no'}`,
+    `Native probed: ${diag.nativeProbed ? 'yes' : 'no'}`,
+    `Bluetooth powered: ${diag.adapterState === 'poweredOn' ? 'yes' : 'no'} (${diag.adapterState})`,
+    `Permission granted: ${diag.permissionGranted ? 'yes' : 'no'}`,
+    `Scan state: ${status.scanning ? 'scanning' : 'not scanning'}`,
+    `Peripheral/advertising: ${status.advertising ? 'advertising' : 'not advertising'}`,
     `Session: ${sessionActive ? 'active' : 'idle'}`,
     `Nearby peers (count only): ${peers.length}`,
   ];

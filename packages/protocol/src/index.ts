@@ -47,7 +47,15 @@ export { InternetTransport, createInternetTransport } from "./internetTransport.
 export type { HopHttpClient } from "./http.js";
 export { createRelayTransport } from "./stubTransports.js";
 export { createBluetoothTransport, BluetoothTransport, type BlePayloadPreparer } from "./bluetoothTransport.js";
-export type { BleLink, BleLinkStatus, BlePeer, BleScanMode, BleSessionOptions } from "./bleLink.js";
+export type {
+  BleAdapterState,
+  BleAuthorizationStatus,
+  BleLink,
+  BleLinkStatus,
+  BlePeer,
+  BleScanMode,
+  BleSessionOptions,
+} from "./bleLink.js";
 export {
   createProductionAppTransportManager,
   assertProductionTransportSet,

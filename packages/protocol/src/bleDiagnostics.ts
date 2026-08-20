@@ -1,3 +1,4 @@
+import type { BleAdapterState, BleAuthorizationStatus } from "./bleLink.js";
 import type { NetworkStatus } from "./transport.js";
 
 export type BleHandshakePhase = "idle" | "announced" | "authenticating" | "authenticated" | "failed";
@@ -25,6 +26,10 @@ export type BleDiagnosticsSnapshot = {
   handshakeState: BleHandshakePhase;
   nativeImplemented: boolean;
   blockedReason: string | null;
+  authorization: BleAuthorizationStatus;
+  adapterState: BleAdapterState;
+  centralManagerInitialized: boolean;
+  nativeProbed: boolean;
 };
 
 export function describeTransportSelection(input: {

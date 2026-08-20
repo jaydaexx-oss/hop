@@ -1,10 +1,11 @@
 from __future__ import annotations
 
+import logging
 from typing import Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials
-from sqlalchemy.exc import IntegrityError
+from sqlalchemy.exc import IntegrityError, OperationalError
 from sqlmodel import Session, select
 
 from app.db import get_session
@@ -22,6 +23,7 @@ from app.security import (
     verify_password,
 )
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["auth"])
 
 
@@ -39,19 +41,29 @@ def user_out(session: Session, user: User) -> UserOut:
 def register(body: RegisterIn, request: Request, session: Session = Depends(get_session)) -> AuthOut:
     limit_auth(request)
     username = validate_username(body.username)
-    existing = session.exec(select(User).where(User.username == username)).first()
-    if existing:
-        raise HTTPException(status_code=409, detail="Username already taken")
-    user = User(username=username, password_hash=hash_password(body.password))
-    session.add(user)
     try:
-        session.commit()
-    except IntegrityError:
-        session.rollback()
-        raise HTTPException(status_code=409, detail="Username already taken") from None
-    session.refresh(user)
-    token = issue_token(session, user)
-    return AuthOut(token=token, user=user_out(session, user))
+        existing = session.exec(select(User).where(User.username == username)).first()
+        if existing:
+            raise HTTPException(status_code=409, detail="Username already taken")
+        user = User(username=username, password_hash=hash_password(body.password))
+        session.add(user)
+        try:
+            session.commit()
+        except IntegrityError:
+            session.rollback()
+            raise HTTPException(status_code=409, detail="Username already taken") from None
+        session.refresh(user)
+        token = issue_token(session, user)
+        return AuthOut(token=token, user=user_out(session, user))
+    except HTTPException:
+        raise
+    except OperationalError:
+        try:
+            session.rollback()
+        except Exception:
+            pass
+        logger.warning("register failed: database connection unavailable")
+        raise HTTPException(status_code=503, detail="Service temporarily unavailable") from None
 
 
 @router.post("/login", response_model=AuthOut)

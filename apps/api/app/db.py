@@ -12,6 +12,15 @@ from app.db_url import normalize_database_url
 
 logger = logging.getLogger(__name__)
 
+# Fly Postgres drops idle clients. /health does not check out this pool, so the
+# first POST /auth/register after idle used a dead connection and returned 500.
+POSTGRES_POOL_PRE_PING = True
+POSTGRES_POOL_RECYCLE_S = 300
+
+
+def postgres_engine_options() -> dict[str, int | bool]:
+    return {"pool_pre_ping": POSTGRES_POOL_PRE_PING, "pool_recycle": POSTGRES_POOL_RECYCLE_S}
+
 
 @lru_cache
 def get_engine():
@@ -26,7 +35,7 @@ def get_engine():
             connect_args={"check_same_thread": False},
             poolclass=StaticPool,
         )
-    return create_engine(url)
+    return create_engine(url, **postgres_engine_options())
 
 
 def init_db() -> bool:

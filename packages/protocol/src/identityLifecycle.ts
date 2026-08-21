@@ -198,10 +198,55 @@ export async function clearLocalDeviceIdentity(backend: SecretBackend): Promise<
   await backend.write(DEVICE_SECRET_KEY, null);
 }
 
+type ExpoDigestStringAsync = (
+  algorithm: string,
+  data: string,
+  options?: { encoding?: string },
+) => Promise<string>;
+
+type HopCrypto = Crypto & {
+  digestStringAsync?: ExpoDigestStringAsync;
+};
+
+function bytesToSha256Hex(bytes: Uint8Array): string {
+  return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function normalizeSha256Hex(hex: string): string {
+  const normalized = hex.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(normalized)) {
+    throw new Error("SHA-256 hex digest is malformed");
+  }
+  return normalized;
+}
+
+function expoDigestStringAsync(): ExpoDigestStringAsync | undefined {
+  const cryptoObj = globalThis.crypto as HopCrypto | undefined;
+  if (typeof cryptoObj?.digestStringAsync === "function") {
+    return cryptoObj.digestStringAsync.bind(cryptoObj);
+  }
+  return undefined;
+}
+
+/**
+ * SHA-256 hex of a UTF-8 string. Hermes has `crypto` (getRandomValues) but no
+ * `crypto.subtle`, so `crypto.subtle.digest` throws. Prefer expo-crypto
+ * `digestStringAsync` when the mobile polyfill installed it; otherwise Web Crypto.
+ * Never a non-cryptographic hash.
+ */
 export async function sha256Hex(value: string): Promise<string> {
-  const bytes = new TextEncoder().encode(value);
-  const digest = await globalThis.crypto.subtle.digest("SHA-256", bytes);
-  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+  const expoDigest = expoDigestStringAsync();
+  if (expoDigest) {
+    const hex = await expoDigest("SHA-256", value, { encoding: "hex" });
+    return normalizeSha256Hex(hex);
+  }
+  const subtle = globalThis.crypto?.subtle;
+  if (typeof subtle?.digest === "function") {
+    const bytes = new TextEncoder().encode(value);
+    const digest = await subtle.digest("SHA-256", bytes);
+    return normalizeSha256Hex(bytesToSha256Hex(new Uint8Array(digest)));
+  }
+  throw new Error("SHA-256 is unavailable on this runtime");
 }
 
 export async function loadOrCreateInstallId(backend: SecretBackend): Promise<string> {

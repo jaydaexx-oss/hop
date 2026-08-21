@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto';
 import { describe, expect, it } from 'vitest';
 
 import {
@@ -10,6 +11,7 @@ import {
   peekDeviceSecret,
   peekStoredIdentity,
   readIdentityOwner,
+  sha256Hex,
   writeIdentityOwner,
   type SecretBackend,
 } from '@hop/protocol';
@@ -262,6 +264,63 @@ describe('returning-user restore and local reset', () => {
     expect(next.user.id).toBe('user-2');
     expect(await peekStoredIdentity('user-1', backend)).toBeNull();
     expect(await peekStoredIdentity('user-2', backend)).toEqual(secondPair);
+  });
+
+  it('sends SHA-256 X-Hop-Install when crypto.subtle is missing', async () => {
+    const cryptoObj = globalThis.crypto as Crypto & {
+      digestStringAsync?: (algorithm: string, data: string) => Promise<string>;
+    };
+    const originalSubtle = cryptoObj.subtle;
+    const originalDigest = cryptoObj.digestStringAsync;
+    Object.defineProperty(cryptoObj, 'subtle', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(cryptoObj, 'digestStringAsync', {
+      value: async (algorithm: string, data: string) => {
+        expect(algorithm).toBe('SHA-256');
+        return createHash('sha256').update(data, 'utf8').digest('hex');
+      },
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(globalThis.crypto.subtle).toBeUndefined();
+      const backend = memoryBackend();
+      const pair = await generateIdentityKeyPair();
+      let seenHeader: string | undefined;
+      await registerDeviceIdentity(
+        backend,
+        {
+          registerDevice: async (_username, _publicKey, _secret, header) => {
+            seenHeader = header;
+            return { token: 'tok-1', user: user('user-1', 'ada', pair.publicKey) };
+          },
+          deviceLogin: async () => {
+            throw new Error('should not device-login on first register');
+          },
+        },
+        'ada',
+        async () => pair,
+      );
+      const installId = await loadOrCreateInstallId(backend);
+      expect(seenHeader).toBe(createHash('sha256').update(installId, 'utf8').digest('hex'));
+      expect(seenHeader).toMatch(/^[0-9a-f]{64}$/);
+      expect(await sha256Hex(installId)).toBe(seenHeader);
+      expect(await hashedInstallHeaderValue(backend)).toBe(seenHeader);
+    } finally {
+      Object.defineProperty(cryptoObj, 'subtle', {
+        value: originalSubtle,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(cryptoObj, 'digestStringAsync', {
+        value: originalDigest,
+        configurable: true,
+        writable: true,
+      });
+    }
   });
 });
 

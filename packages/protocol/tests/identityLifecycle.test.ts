@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   IdentityError,
@@ -20,6 +21,7 @@ import {
   publishIdentityIfAllowed,
   readIdentityOwner,
   replaceIdentityExplicit,
+  sha256Hex,
   shouldSkipOnboarding,
   writeIdentityOwner,
   type IdentityKeyPair,
@@ -298,6 +300,104 @@ describe("device-based onboarding identity binding", () => {
     expect(await backend.read(INSTALL_ID_KEY)).toBe(installId);
     expect(await hashedInstallHeaderValue(backend)).toBe(header);
     expect(await loadOrCreateInstallId(backend)).toBe(installId);
+  });
+
+  const SHA256_ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";
+
+  type HopCrypto = Crypto & { digestStringAsync?: (algorithm: string, data: string) => Promise<string> };
+
+  function nodeSha256Hex(value: string): string {
+    return createHash("sha256").update(value, "utf8").digest("hex");
+  }
+
+  function withHermesSha256(run: () => Promise<void>): Promise<void> {
+    const cryptoObj = globalThis.crypto as HopCrypto;
+    const originalSubtle = cryptoObj.subtle;
+    const originalDigest = cryptoObj.digestStringAsync;
+    Object.defineProperty(cryptoObj, "subtle", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(cryptoObj, "digestStringAsync", {
+      value: async (algorithm: string, data: string) => {
+        if (algorithm !== "SHA-256") throw new Error(`unsupported ${algorithm}`);
+        return nodeSha256Hex(data);
+      },
+      configurable: true,
+      writable: true,
+    });
+    return run().finally(() => {
+      Object.defineProperty(cryptoObj, "subtle", {
+        value: originalSubtle,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(cryptoObj, "digestStringAsync", {
+        value: originalDigest,
+        configurable: true,
+        writable: true,
+      });
+    });
+  }
+
+  it("hashes hop.install.id as lowercase SHA-256 hex for X-Hop-Install", async () => {
+    const backend = memoryBackend();
+    const installId = await loadOrCreateInstallId(backend);
+    const header = await hashedInstallHeaderValue(backend);
+    expect(header).toBe(await sha256Hex(installId));
+    expect(header).toBe(nodeSha256Hex(installId));
+    expect(header).toMatch(/^[0-9a-f]{64}$/);
+    expect(await sha256Hex("abc")).toBe(SHA256_ABC);
+  });
+
+  it("hashes with expo-crypto digestStringAsync when crypto.subtle is missing", async () => {
+    await withHermesSha256(async () => {
+      expect(globalThis.crypto.subtle).toBeUndefined();
+      expect(typeof (globalThis.crypto as HopCrypto).digestStringAsync).toBe("function");
+      expect(typeof globalThis.crypto.getRandomValues).toBe("function");
+      expect(await sha256Hex("abc")).toBe(SHA256_ABC);
+
+      const backend = memoryBackend();
+      const installId = await loadOrCreateInstallId(backend);
+      const header = await hashedInstallHeaderValue(backend);
+      expect(header).toBe(nodeSha256Hex(installId));
+      expect(header).toMatch(/^[0-9a-f]{64}$/);
+      expect(header).not.toBe(installId);
+    });
+  });
+
+  it("throws when SHA-256 is missing and does not use a string hash fallback", async () => {
+    const cryptoObj = globalThis.crypto as HopCrypto;
+    const originalSubtle = cryptoObj.subtle;
+    const originalDigest = cryptoObj.digestStringAsync;
+    Object.defineProperty(cryptoObj, "subtle", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    Object.defineProperty(cryptoObj, "digestStringAsync", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    const spy = vi.spyOn(Math, "random");
+    try {
+      await expect(sha256Hex("abc")).rejects.toThrow(/SHA-256 is unavailable on this runtime/);
+      expect(spy).not.toHaveBeenCalled();
+    } finally {
+      spy.mockRestore();
+      Object.defineProperty(cryptoObj, "subtle", {
+        value: originalSubtle,
+        configurable: true,
+        writable: true,
+      });
+      Object.defineProperty(cryptoObj, "digestStringAsync", {
+        value: originalDigest,
+        configurable: true,
+        writable: true,
+      });
+    }
   });
 
   it("mints hop.install.id from getRandomValues when crypto.randomUUID is missing", async () => {

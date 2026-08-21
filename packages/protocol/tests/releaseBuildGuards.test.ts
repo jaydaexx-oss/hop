@@ -96,6 +96,9 @@ describe("mobile production send path source", () => {
     expect(hopApi).toContain("X-Hop-Install");
     const onboarding = readRepo("apps/mobile/src/auth/deviceOnboarding.ts");
     expect(onboarding).toContain("hashedInstallHeaderValue");
+    const polyfill = readRepo("apps/mobile/src/crypto/polyfillGetRandomValues.ts");
+    expect(polyfill).toContain("digestStringAsync");
+    expect(polyfill).toContain("CryptoDigestAlgorithm.SHA256");
     expect(onboarding).toMatch(/Local SecureStore wipe only/);
     expect(onboarding).not.toMatch(/\/users\/me\/blocks/);
     const hopBle = readRepo("apps/mobile/src/ble/HopBleEngine.ts");

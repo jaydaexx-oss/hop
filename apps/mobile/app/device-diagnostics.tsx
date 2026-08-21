@@ -1,6 +1,6 @@
-import { Redirect } from 'expo-router';
+import { Redirect, useRouter } from 'expo-router';
 import { useCallback, useEffect, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet } from 'react-native';
+import { Alert, Pressable, ScrollView, StyleSheet } from 'react-native';
 import type { BleLinkStatus, NetworkStatus, PeerTrustRecord, PeerTrustState } from '@hop/protocol';
 import { formatPersistedFingerprint, isDeveloperScreenEnabled } from '@hop/protocol';
 
@@ -15,6 +15,7 @@ import {
 } from '@/src/api/client';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
+import { replaceIdentityExplicit } from '@/src/crypto/identity';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import {
   describeProofRoute,
@@ -165,6 +166,7 @@ function Row({
 export default function DeviceDiagnosticsScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
+  const router = useRouter();
   const { user } = useAuth();
   const { engine, connectedId } = useBle();
   const { status: networkStatus, identityError, tofu, service } = useOffline();
@@ -232,6 +234,26 @@ export default function DeviceDiagnosticsScreen() {
     // Probe on open and when the user taps Refresh — not on every network-status tick.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  function confirmReplaceIdentity() {
+    if (!user) return;
+    Alert.alert(
+      'Replace local identity keys?',
+      'This creates a new key pair on this device only. Private keys stay in the device Keychain (encrypted iOS backups can migrate them). If this account already published a different public key, the server returns 409 SERVER_KEY_LOCKED and will not accept a second key. Recover my HOP restores the original keys when they are still in Keychain. There is no unauthenticated rotation and no QR safety-number UX yet.',
+      [
+        { text: 'Cancel', style: 'cancel' },
+        {
+          text: 'Replace keys',
+          style: 'destructive',
+          onPress: () => {
+            replaceIdentityExplicit(user.id).catch((err) => {
+              Alert.alert('Could not replace identity', err instanceof Error ? err.message : 'Unknown error');
+            });
+          },
+        },
+      ],
+    );
+  }
 
   if (!isDeveloperScreenEnabled(__DEV__)) {
     return <Redirect href="/(tabs)/settings" />;
@@ -476,6 +498,14 @@ export default function DeviceDiagnosticsScreen() {
         <Text style={[styles.buttonLabel, { color: colors.tint }]}>
           {busy ? 'Checking…' : 'Refresh'}
         </Text>
+      </Pressable>
+      <Pressable
+        onPress={() => router.push('/ble-debug')}
+        style={[styles.button, { borderColor: colors.tint }]}>
+        <Text style={[styles.buttonLabel, { color: colors.tint }]}>BLE debug</Text>
+      </Pressable>
+      <Pressable onPress={confirmReplaceIdentity} style={[styles.button, { borderColor: '#DC2626' }]}>
+        <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Replace local identity keys</Text>
       </Pressable>
     </ScrollView>
   );

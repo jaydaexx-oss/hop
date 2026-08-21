@@ -1,5 +1,6 @@
 import { Alert, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
-import { useState } from 'react';
+import { useRef, useState } from 'react';
+import Constants from 'expo-constants';
 import { useRouter } from 'expo-router';
 import { bluetoothStatusLabel, LOCAL_AVATAR_COLORS } from '@hop/protocol';
 
@@ -13,7 +14,6 @@ import { api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { RESET_HOP_CONFIRM, RESET_HOP_MESSAGE, RESET_HOP_TITLE } from '@/src/auth/deviceOnboarding';
 import { useBle } from '@/src/ble/BleProvider';
-import { replaceIdentityExplicit } from '@/src/crypto/identity';
 import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { AUDIENCE_LABELS, OPERATING_MODE_LABELS } from '@/src/nearby/types';
 import { INVISIBLE_RADAR_COPY } from '@/src/nearby/nearbyPolicy';
@@ -22,6 +22,9 @@ import { pickPreparedProfilePhoto } from '@/src/profile/pickProfilePhoto';
 import { clearProfilePhotoCache, uploadProfilePhotoFile } from '@/src/profile/profilePhotoCache';
 import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
 import { useProfilePhoto } from '@/src/profile/useProfilePhoto';
+
+const DEV_VERSION_TAPS = 7;
+const DEV_VERSION_TAP_WINDOW_MS = 2000;
 
 export default function SettingsScreen() {
   const { user, token, resetThisDevice, refreshUser, changeHandle } = useAuth();
@@ -43,6 +46,9 @@ export default function SettingsScreen() {
   const [handleBusy, setHandleBusy] = useState(false);
   const [handleError, setHandleError] = useState<string | null>(null);
   const hasPhoto = Boolean(user?.has_avatar || photoUri);
+  const versionTapCount = useRef(0);
+  const versionTapTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const hopVersion = Constants.expoConfig?.version ?? '0.1.0';
 
   async function applyPhoto(source: 'library' | 'camera') {
     if (!token || !user) return;
@@ -90,24 +96,18 @@ export default function SettingsScreen() {
     ]);
   }
 
-  function confirmReplaceIdentity() {
-    if (!__DEV__ || !user) return;
-    Alert.alert(
-      'Replace local identity keys?',
-      'This creates a new key pair on this device only. Private keys stay in the device Keychain (encrypted iOS backups can migrate them). If this account already published a different public key, the server returns 409 SERVER_KEY_LOCKED and will not accept a second key. Recover my HOP restores the original keys when they are still in Keychain. There is no unauthenticated rotation and no QR safety-number UX yet.',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Replace keys',
-          style: 'destructive',
-          onPress: () => {
-            replaceIdentityExplicit(user.id).catch((err) => {
-              Alert.alert('Could not replace identity', err instanceof Error ? err.message : 'Unknown error');
-            });
-          },
-        },
-      ],
-    );
+  function onVersionPress() {
+    if (!__DEV__) return;
+    versionTapCount.current += 1;
+    if (versionTapTimer.current) clearTimeout(versionTapTimer.current);
+    if (versionTapCount.current >= DEV_VERSION_TAPS) {
+      versionTapCount.current = 0;
+      router.push('/device-diagnostics');
+      return;
+    }
+    versionTapTimer.current = setTimeout(() => {
+      versionTapCount.current = 0;
+    }, DEV_VERSION_TAP_WINDOW_MS);
   }
 
   return (
@@ -260,25 +260,11 @@ export default function SettingsScreen() {
       {identityError ? (
         <Text style={{ color: '#DC2626', marginTop: 16 }}>{identityError}</Text>
       ) : null}
-      {__DEV__ ? (
-        <>
-          <Pressable onPress={confirmReplaceIdentity} style={[styles.button, { borderColor: '#DC2626' }]}>
-            <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Replace local identity keys</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => router.push('/device-diagnostics')}
-            style={[styles.button, { borderColor: colors.tint }]}>
-            <Text style={[styles.buttonLabel, { color: colors.tint }]}>Device diagnostics</Text>
-          </Pressable>
-          <Pressable
-            onPress={() => router.push('/ble-debug')}
-            style={[styles.button, { borderColor: colors.tint, marginTop: 12 }]}>
-            <Text style={[styles.buttonLabel, { color: colors.tint }]}>BLE debug</Text>
-          </Pressable>
-        </>
-      ) : null}
       <Pressable onPress={confirmResetHop} style={[styles.button, { borderColor: '#DC2626' }]}>
         <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Reset HOP on this device</Text>
+      </Pressable>
+      <Pressable onPress={onVersionPress} accessibilityRole="text" accessibilityLabel={`HOP ${hopVersion}`}>
+        <Text style={{ color: colors.muted, textAlign: 'center', marginTop: 8 }}>HOP {hopVersion}</Text>
       </Pressable>
       <ActionSheet
         visible={photoSheet}

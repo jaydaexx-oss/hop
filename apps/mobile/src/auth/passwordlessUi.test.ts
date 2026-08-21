@@ -45,16 +45,17 @@ describe('passwordless consumer auth UI', () => {
     expect(RESET_HOP_MESSAGE).toMatch(/Blocks and reports on the server are not erased/i);
   });
 
-  it('keeps developer Settings and diagnostics behind __DEV__ and off login', () => {
+  it('does not list developer tools on Settings even when __DEV__ is true', () => {
     const settings = readApp('app/(tabs)/settings.tsx');
-    expect(settings).toMatch(/\{__DEV__ \? \([\s\S]*Device diagnostics/);
-    expect(settings).toMatch(/\{__DEV__ \? \([\s\S]*Replace local identity keys/);
-    const unguarded = settings.replace(/\{__DEV__ \? \([\s\S]*?\) : null\}/g, '');
-    expect(unguarded).not.toContain('/device-diagnostics');
-    expect(unguarded).not.toContain('/ble-debug');
-    expect(unguarded).not.toMatch(/buttonLabel[\s\S]*Replace local identity keys/);
+    expect(settings).not.toContain('Replace local identity keys');
+    expect(settings).not.toContain('Device diagnostics');
+    expect(settings).not.toContain('BLE debug');
+    expect(settings).not.toMatch(/buttonLabel[\s\S]*Replace local identity keys/);
+    expect(settings).not.toMatch(/buttonLabel[\s\S]*Device diagnostics/);
+    expect(settings).not.toMatch(/buttonLabel[\s\S]*BLE debug/);
     const login = readApp('app/login.tsx');
     expect(login).not.toContain('/device-diagnostics');
     expect(login).not.toContain('/ble-debug');
+    expect(login).not.toContain('Device diagnostics');
   });
 });

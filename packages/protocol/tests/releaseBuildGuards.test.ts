@@ -66,12 +66,14 @@ describe("mobile production send path source", () => {
     expect(diagnostics).toContain("isAccountCreationResetActionEnabled(__DEV__)");
     expect(diagnostics).toContain("resetAccountCreationTestCounter");
     const resetHelper = readRepo("apps/mobile/src/auth/devAccountCreationReset.ts");
-    expect(resetHelper).toContain("Reset account-creation test counter");
+    expect(resetHelper).toContain("Reset this network/IP and install test counter");
+    expect(resetHelper).toContain("this network/IP");
     expect(resetHelper).toContain("typeof __DEV__ !== 'undefined' && __DEV__");
     const settings = readRepo("apps/mobile/app/(tabs)/settings.tsx");
     expect(settings).not.toContain("Replace local identity keys");
     expect(settings).not.toContain("Device diagnostics");
     expect(settings).not.toContain("BLE debug");
+    expect(settings).not.toContain("Reset this network/IP and install test counter");
     expect(settings).not.toContain("Reset account-creation test counter");
     expect(settings).not.toContain("devAccountCreationReset");
     expect(settings).not.toMatch(/buttonLabel[\s\S]*Replace local identity keys/);

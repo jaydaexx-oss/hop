@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+import subprocess
 from pathlib import Path
 
 from fastapi.testclient import TestClient
@@ -13,6 +15,8 @@ from tests.keys import box_pk
 
 AUTH_PY = Path(__file__).resolve().parents[1] / "app" / "api" / "auth.py"
 RATE_LIMIT_PY = Path(__file__).resolve().parents[1] / "app" / "rate_limit.py"
+API_ROOT = Path(__file__).resolve().parents[1]
+RESET_SCRIPT = API_ROOT / "scripts" / "reset-account-creation-limits.sh"
 RESET_PATH = "/auth/dev/reset-account-creation-limits"
 
 
@@ -37,6 +41,9 @@ def test_fly_does_not_enable_dev_rate_limit_reset() -> None:
     assert 'RATE_LIMIT_REGISTER_DEVICE", "3"' in src
     assert 'RATE_LIMIT_REGISTER_DEVICE_IP", "5"' in src
     assert 'RATE_LIMIT_REGISTER_DEVICE_WINDOW", "86400"' in src
+    assert 'regdev:ip:{client_ip(request)}' in src or 'regdev:ip:{ip}' in src
+    assert "cleared.append(\"ip\")" in src
+    assert "A Mac curl therefore cannot clear an iPhone" in src
     blocks = (Path(__file__).resolve().parents[1] / "app" / "blocks.py").read_text()
     assert 'BLOCK_INSTALL_COOLDOWN_S", str(7 * 24 * 60 * 60)' in blocks
 
@@ -220,3 +227,64 @@ def test_dev_reset_404_on_wrong_key_when_key_configured(client: TestClient, monk
     )
     assert ok.status_code == 200
     monkeypatch.delenv("DEV_RATE_LIMIT_RESET_KEY", raising=False)
+
+
+def test_dev_reset_clears_network_ip_mint_limit(client: TestClient, monkeypatch) -> None:
+    import app.rate_limit as rl
+
+    monkeypatch.setattr(rl, "REGISTER_DEVICE_LIMIT", 20)
+    monkeypatch.setattr(rl, "REGISTER_DEVICE_IP_LIMIT", 2)
+    reset_limiters()
+    try:
+        assert _register_device(client, "acnetone", "acnet-1", "1" * 64).status_code == 200
+        assert _register_device(client, "acnettwo", "acnet-2", "2" * 64).status_code == 200
+        denied = _register_device(client, "acnetthree", "acnet-3", "3" * 64)
+        assert denied.status_code == 429
+        assert denied.json()["detail"] == "Too many new accounts from this network"
+
+        reset = client.post(RESET_PATH)
+        assert reset.status_code == 200
+        body = reset.json()
+        assert body["status"] == "ok"
+        assert body["cleared"] == ["ip"]
+        assert body["blocks_unchanged"] is True
+
+        allowed = _register_device(client, "acnetfour", "acnet-4", "4" * 64)
+        assert allowed.status_code == 200
+    finally:
+        reset_limiters()
+
+
+def test_reset_script_refuses_production_fly_url() -> None:
+    env = os.environ.copy()
+    env["EXPO_PUBLIC_API_URL"] = "https://hop-uokqmg.fly.dev"
+    env.pop("HOP_API_URL", None)
+    result = subprocess.run(
+        ["sh", str(RESET_SCRIPT)],
+        cwd=str(API_ROOT),
+        env=env,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 2
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert "hop-uokqmg.fly.dev" in combined
+    assert "ENABLE_DEV_RATE_LIMIT_RESET" in combined
+
+    argv = subprocess.run(
+        ["sh", str(RESET_SCRIPT), "https://hop-uokqmg.fly.dev"],
+        cwd=str(API_ROOT),
+        env={**os.environ, "EXPO_PUBLIC_API_URL": "http://127.0.0.1:8000"},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert argv.returncode == 2
+
+
+def test_reset_script_is_packaged_as_npm_script() -> None:
+    package = (API_ROOT / "package.json").read_text()
+    assert '"reset:account-creation-limits"' in package
+    assert "reset-account-creation-limits.sh" in package
+    assert RESET_SCRIPT.is_file()

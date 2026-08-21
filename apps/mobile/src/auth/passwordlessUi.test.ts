@@ -89,12 +89,14 @@ describe('passwordless consumer auth UI', () => {
     expect(settings).not.toMatch(/buttonLabel[\s\S]*Replace local identity keys/);
     expect(settings).not.toMatch(/buttonLabel[\s\S]*Device diagnostics/);
     expect(settings).not.toMatch(/buttonLabel[\s\S]*BLE debug/);
+    expect(settings).not.toContain('Reset this network/IP and install test counter');
     expect(settings).not.toContain('Reset account-creation test counter');
     expect(settings).not.toContain('devAccountCreationReset');
     const login = readApp('app/login.tsx');
     expect(login).not.toContain('/device-diagnostics');
     expect(login).not.toContain('/ble-debug');
     expect(login).not.toContain('Device diagnostics');
+    expect(login).not.toContain('Reset this network/IP and install test counter');
     expect(login).not.toContain('Reset account-creation test counter');
   });
 
@@ -113,6 +115,8 @@ describe('passwordless consumer auth UI', () => {
     expect(resetHelper).toContain('/auth/dev/reset-account-creation-limits');
     expect(resetHelper).toContain('hashedInstallHeaderValue');
     expect(resetHelper).toContain("typeof __DEV__ !== 'undefined' && __DEV__");
+    expect(resetHelper).toContain('this network/IP');
+    expect(resetHelper).toContain('5/network/IP');
     expect(resetHelper).not.toContain('INSTALL_ID_KEY');
     expect(resetHelper).not.toMatch(/backend\.write/);
   });

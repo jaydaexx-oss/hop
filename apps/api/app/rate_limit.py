@@ -173,9 +173,13 @@ def require_dev_account_creation_reset(request: Request) -> None:
 
 
 def clear_new_account_mint_limits(request: Request, install_hash: str | None) -> list[str]:
-    """Drop register-device mint buckets for this IP and optional install hash.
+    """Drop register-device mint buckets for this request's source IP and optional install hash.
 
-    Does not touch `block_install_cooldowns`, BlockedUser rows, or hop.install.id.
+    The IP key is `regdev:ip:{client_ip(request)}` — the TCP/proxy peer of *this* HTTP
+    call. A Mac curl therefore cannot clear an iPhone's cellular or Wi-Fi bucket.
+    On a local test API, the hidden in-app reset (phone sends X-Hop-Install) is the
+    way to clear that phone's seen IP. Does not touch `block_install_cooldowns`,
+    BlockedUser rows, or hop.install.id.
     """
     cleared: list[str] = []
     ip_key = f"regdev:ip:{client_ip(request)}"

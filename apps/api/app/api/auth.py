@@ -305,10 +305,12 @@ def recover_bind_device(
     include_in_schema=False,
 )
 def reset_account_creation_limits(request: Request) -> DevAccountCreationResetOut:
-    """Development-only: clear register-device mint Redis/memory keys for this install/IP.
+    """Development-only: clear register-device mint Redis/memory keys for this network/IP and install.
 
-    Never deletes blocks or block_install_cooldowns. 404 when the server flag is off
-    (production hop-uokqmg leaves ENABLE_DEV_RATE_LIMIT_RESET unset).
+    Always deletes the request-source IP bucket (`regdev:ip:…`, 5/24h) and, when
+    X-Hop-Install is present, the install bucket. Never deletes blocks or
+    block_install_cooldowns. 404 when the server flag is off (production
+    hop-uokqmg leaves ENABLE_DEV_RATE_LIMIT_RESET unset).
     """
     require_dev_account_creation_reset(request)
     cleared = clear_new_account_mint_limits(request, parse_install_hash(request))

@@ -60,6 +60,16 @@ DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=http://localhost:8081 \
 
 `--host 0.0.0.0` is required so a physical iPhone on your LAN can reach the API. Simulator-only use can stay on 127.0.0.1.
 
+To clear the **network/IP** new-account test limiter on this local API (`APP_ENV=development`), not production:
+
+```bash
+cd apps/api
+npm run reset:account-creation-limits
+# same as: curl -sS -X POST http://127.0.0.1:8000/auth/dev/reset-account-creation-limits
+```
+
+That curl uses the **Mac's** source IP. It does **not** clear an iPhone pointed at `https://hop-uokqmg.fly.dev`. The script refuses `hop-uokqmg.fly.dev`. For a physical phone, set `EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000`, restart Metro, and use the hidden 7-tap diagnostics reset on the phone.
+
 Postgres migrations (when Postgres is running):
 
 ```bash

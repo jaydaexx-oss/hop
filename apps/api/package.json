@@ -1,0 +1,7 @@
+{
+  "name": "hop-api",
+  "private": true,
+  "scripts": {
+    "reset:account-creation-limits": "./scripts/reset-account-creation-limits.sh"
+  }
+}

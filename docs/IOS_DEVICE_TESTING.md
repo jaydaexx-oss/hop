@@ -82,7 +82,38 @@ DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=http://localhost:8081 \
   uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Then in `apps/mobile/.env`: `EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000` (example `http://192.168.1.23:8000`). Development clients allow RFC1918 LAN HTTP; release builds (`__DEV__ === false`) refuse it.
+Then in `apps/mobile/.env`: `EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000` (example `http://192.168.1.23:8000`). Development clients allow RFC1918 LAN HTTP; release builds (`__DEV__ === false`) refuse it. Restart Metro after changing `EXPO_PUBLIC_API_URL` (inlined at bundle time). Do **not** rebuild EAS for this JS-only env change.
+
+### Clearing “Too many new accounts from this network” (test API only)
+
+Production `hop-uokqmg` enforces **5 new accounts / IP / 24h** on `POST /auth/register-device`. That limiter stays on. `ENABLE_DEV_RATE_LIMIT_RESET` must remain **unset** on Fly. Recovery of an existing handle does not use this limiter.
+
+**Does not work while the phone uses production:** if Metro `EXPO_PUBLIC_API_URL=https://hop-uokqmg.fly.dev`, the hidden reset 404s and a Mac curl cannot clear the iPhone’s cellular/Wi‑Fi IP bucket.
+
+**Copy-paste for the Mac local/test API** (`APP_ENV=development`, API already running):
+
+```bash
+cd /Users/jaydae/hop/apps/api
+npm run reset:account-creation-limits
+```
+
+Same request:
+
+```bash
+curl -sS -X POST http://127.0.0.1:8000/auth/dev/reset-account-creation-limits
+```
+
+`pnpm --dir apps/api reset:account-creation-limits` is equivalent. The script **refuses** `hop-uokqmg.fly.dev`.
+
+That curl clears the **Mac’s** source IP on **that** API. It does not clear the iPhone’s IP.
+
+**Physical iPhone on the LAN test API:** keep both the app and the reset aimed at the same local origin:
+
+1. `apps/mobile/.env`: `EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000`
+2. Restart Metro (`npx expo start --dev-client`). EAS `development` bakes Fly into the native profile; Metro JS still overrides from `.env`.
+3. On the phone: Settings → 7-tap the version → Device diagnostics → **Reset this network/IP and install test counter**. The phone sends `X-Hop-Install` from that device, so the test API clears **this phone’s LAN IP** plus this install.
+
+If you curl the LAN API from the Mac instead, you clear the Mac’s IP, not the phone’s, unless they happen to share a public/NAT address — on a typical LAN they do not.
 
 ## 2. Install the native app (USB)
 
@@ -144,6 +175,8 @@ It reports:
 - Encryption ready/error
 
 **One-phone BLE rows are technical state on this device. They are not two-phone radio proof.** Do not raise the BLE score from this screen.
+
+In `__DEV__` only, Device diagnostics includes **Reset this network/IP and install test counter**. It is not on Settings. It 404s against production `hop-uokqmg`. See **Clearing “Too many new accounts from this network”** above.
 
 No private keys, plaintext, voice clips, or `crypto_box` payloads are shown.
 

@@ -53,6 +53,17 @@ Production defaults to **docs disabled**. Set `DOCS_ENABLED=true` temporarily fo
 
 Rate limited (`429`) by client IP.
 
+`POST /auth/register-device` also mints a new `user_id` and is limited to **3 / install / 24h** and **5 / network IP / 24h** (`Too many new accounts from this network`). Recovery routes (`/auth/recover/*`, handle lookup, passkey authenticate) do **not** use that mint limiter.
+
+Hidden development-only `POST /auth/dev/reset-account-creation-limits` (omitted from OpenAPI) deletes the **request source IP** mint bucket and, if `X-Hop-Install` is sent, the install bucket. Enabled when `APP_ENV` is not production (or when both `ENABLE_DEV_RATE_LIMIT_RESET` and `DEV_RATE_LIMIT_RESET_KEY` are set — leave both unset on `hop-uokqmg`). Local copy-paste:
+
+```bash
+cd apps/api && npm run reset:account-creation-limits
+# curl -sS -X POST http://127.0.0.1:8000/auth/dev/reset-account-creation-limits
+```
+
+The npm script refuses `https://hop-uokqmg.fly.dev`. A Mac curl cannot clear an iPhone’s IP. See `docs/IOS_DEVICE_TESTING.md`.
+
 ## Users
 
 | Method | Path | Description |

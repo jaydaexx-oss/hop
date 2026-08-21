@@ -28,7 +28,14 @@ import {
 import { api, type RecoveryOptions } from '@/src/api/hop';
 import { LOOPBACK_API_DEVICE_HINT, apiUrlUsesLoopback } from '@/src/api/client';
 import { useAuth } from '@/src/auth/AuthProvider';
-import { RESET_HOP_CONFIRM, RESET_HOP_MESSAGE, RESET_HOP_TITLE } from '@/src/auth/deviceOnboarding';
+import {
+  ERASE_IDENTITY_CONFIRM,
+  ERASE_IDENTITY_CONTINUE,
+  ERASE_IDENTITY_MESSAGE,
+  ERASE_IDENTITY_MESSAGE_2,
+  ERASE_IDENTITY_TITLE,
+  ERASE_IDENTITY_TITLE_2,
+} from '@/src/auth/deviceOnboarding';
 import { forgetPersistedHandleHint, loadPersistedHandleHint } from '@/src/auth/handleHintStorage';
 import { PASSKEY_NATIVE_REQUIRED_MESSAGE, platformPasskeysAvailable } from '@/src/auth/passkeys';
 import { loadToken } from '@/src/auth/storage';
@@ -41,8 +48,16 @@ import { uploadProfilePhotoFile } from '@/src/profile/profilePhotoCache';
 const kv = createPersistentKv();
 
 export default function LoginScreen() {
-  const { user, startHopping, recoverHop, continueOnDevice, resetThisDevice, refreshUser, skipOnboarding, error } =
-    useAuth();
+  const {
+    user,
+    startHopping,
+    recoverHop,
+    continueOnDevice,
+    eraseThisDeviceIdentity,
+    refreshUser,
+    skipOnboarding,
+    error,
+  } = useAuth();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const [username, setUsername] = useState('');
@@ -174,18 +189,29 @@ export default function LoginScreen() {
     }
   }
 
-  function confirmResetHop() {
-    Alert.alert(RESET_HOP_TITLE, RESET_HOP_MESSAGE, [
+  function confirmEraseIdentity() {
+    Alert.alert(ERASE_IDENTITY_TITLE, ERASE_IDENTITY_MESSAGE, [
       { text: 'Cancel', style: 'cancel' },
       {
-        text: RESET_HOP_CONFIRM,
+        text: ERASE_IDENTITY_CONTINUE,
         style: 'destructive',
         onPress: () => {
-          setBusy(true);
-          setLocalError(null);
-          resetThisDevice()
-            .catch((err) => setLocalError(err instanceof Error ? err.message : 'Could not reset this device'))
-            .finally(() => setBusy(false));
+          Alert.alert(ERASE_IDENTITY_TITLE_2, ERASE_IDENTITY_MESSAGE_2, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: ERASE_IDENTITY_CONFIRM,
+              style: 'destructive',
+              onPress: () => {
+                setBusy(true);
+                setLocalError(null);
+                eraseThisDeviceIdentity()
+                  .catch((err) =>
+                    setLocalError(err instanceof Error ? err.message : 'Could not erase identity'),
+                  )
+                  .finally(() => setBusy(false));
+              },
+            },
+          ]);
         },
       },
     ]);
@@ -241,8 +267,8 @@ export default function LoginScreen() {
             style={[styles.button, { backgroundColor: colors.tint, opacity: busy ? 0.6 : 1 }]}>
             <Text style={styles.buttonLabel}>{busy ? 'Restoring…' : 'Try again'}</Text>
           </Pressable>
-          <Pressable onPress={confirmResetHop} disabled={busy}>
-            <Text style={[styles.switch, { color: '#DC2626' }]}>Reset HOP on this device</Text>
+          <Pressable onPress={confirmEraseIdentity} disabled={busy}>
+            <Text style={[styles.switch, { color: '#DC2626' }]}>Erase HOP identity from this device</Text>
           </Pressable>
         </View>
       </KeyboardAvoidingView>

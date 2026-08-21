@@ -184,7 +184,7 @@ export async function recoverExistingIdentity<A extends RecoveryAuth>(
     await api.logout(auth.token).catch(() => undefined);
     throw new IdentityError(
       "IDENTITY_INACCESSIBLE",
-      "This device already has a different HOP identity. Reset this device before recovering another account.",
+      "This device already has a different HOP identity. Erase HOP identity from this device before recovering another account.",
     );
   }
 

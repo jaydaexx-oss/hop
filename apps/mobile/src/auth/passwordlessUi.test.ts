@@ -3,7 +3,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 
-import { RESET_HOP_MESSAGE } from './deviceOnboarding';
+import { ERASE_IDENTITY_MESSAGE, RESET_HOP_MESSAGE } from './deviceOnboarding';
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -38,18 +38,29 @@ describe('passwordless consumer auth UI', () => {
     expect(login).toContain('Do not call recoverHop — a handle hint is not authentication.');
   });
 
-  it('replaces Settings logout with a confirmed local reset', () => {
+  it('replaces Settings logout with session reset plus a separate identity erase', () => {
     const settings = readApp('app/(tabs)/settings.tsx');
-    expect(settings).toContain('Reset HOP on this device');
+    expect(settings).toContain('Reset HOP app');
+    expect(settings).toContain('Erase HOP identity from this device');
     expect(settings).toContain('RESET_HOP_TITLE');
     expect(settings).toContain('RESET_HOP_CONFIRM');
-    expect(settings).toContain('confirmResetHop');
+    expect(settings).toContain('confirmResetHopApp');
+    expect(settings).toContain('confirmEraseIdentity');
+    expect(settings).toContain('ERASE_IDENTITY_TITLE_2');
+    expect(settings).toContain('eraseThisDeviceIdentity');
+    expect(settings).not.toContain('Reset HOP on this device');
     expect(settings).not.toMatch(/Log out/);
     expect(settings).not.toMatch(/\blogout\b/);
-    expect(RESET_HOP_MESSAGE).toMatch(/THIS phone only/i);
-    expect(RESET_HOP_MESSAGE).toMatch(/stay on the server/i);
-    expect(RESET_HOP_MESSAGE).toMatch(/cannot take your current handle/i);
-    expect(RESET_HOP_MESSAGE).toMatch(/Blocks and reports on the server are not erased/i);
+    expect(RESET_HOP_MESSAGE).toMatch(/does not mint a new identity/i);
+    expect(RESET_HOP_MESSAGE).toMatch(/same account/i);
+    expect(RESET_HOP_MESSAGE).toMatch(/not logout that creates a replacement identity/i);
+    expect(RESET_HOP_MESSAGE).toMatch(/Blocks and reports stay on the server/i);
+    expect(ERASE_IDENTITY_MESSAGE).toMatch(/permanently deletes the HOP keys/i);
+    expect(ERASE_IDENTITY_MESSAGE).toMatch(/not a normal reset/i);
+    const login = readApp('app/login.tsx');
+    expect(login).toContain('Erase HOP identity from this device');
+    expect(login).toContain('confirmEraseIdentity');
+    expect(login).not.toContain('Reset HOP on this device');
   });
 
   it('prefills a remembered handle and does not auto-start recovery', () => {
@@ -64,7 +75,10 @@ describe('passwordless consumer auth UI', () => {
     expect(auth).toContain('handleFromCachedUser');
     expect(auth).toContain('handleHintStore');
     expect(auth).toContain('lastHandle');
-    expect(auth).toMatch(/resetLocalHopOnThisDevice\(identityBackend, \{ store: handleHintStore, lastHandle \}\)/);
+    expect(auth).toMatch(/resetAppSession\(identityBackend, \{ store: handleHintStore, lastHandle \}\)/);
+    expect(auth).toMatch(/eraseLocalIdentity\(identityBackend, \{ store: handleHintStore, lastHandle \}\)/);
+    expect(auth).toContain('restoreExistingSession');
+    expect(auth).not.toMatch(/async resetThisDevice\(\)[\s\S]*?registerDeviceIdentity/);
   });
 
   it('does not list developer tools on Settings even when __DEV__ is true', () => {

@@ -25,7 +25,8 @@ import {
   recoverHopAccount,
   reconnectExistingIdentity,
   registerDeviceIdentity,
-  resetLocalHopOnThisDevice,
+  eraseLocalIdentity,
+  resetAppSession,
   restoreExistingSession,
 } from './deviceOnboarding';
 
@@ -238,7 +239,50 @@ describe('returning-user restore and local reset', () => {
     expect(restored?.user.id).toBe('user-1');
   });
 
-  it('reset wipes local identity so onboarding can mint a new device identity', async () => {
+  it('session reset keeps keys and the same user_id, then restores without register-device', async () => {
+    const backend = memoryBackend();
+    const hintStore = memoryHintStore();
+    const pair = await generateIdentityKeyPair();
+    await loadOrCreateIdentity('user-1', backend, async () => pair);
+    await writeIdentityOwner('user-1', backend);
+    const deviceSecret = await loadOrCreateDeviceSecret(backend);
+    const installId = await loadOrCreateInstallId(backend);
+
+    await resetAppSession(backend, { store: hintStore, lastHandle: 'Ada' });
+
+    expect(await readHandleHint(hintStore)).toBe('ada');
+    expect(await readIdentityOwner(backend)).toBe('user-1');
+    expect(await peekDeviceSecret(backend)).toBe(deviceSecret);
+    expect(await peekStoredIdentity('user-1', backend)).toEqual(pair);
+    expect(await existingInstallSkipsOnboarding(backend, false)).toBe(true);
+    expect(await loadOrCreateInstallId(backend)).toBe(installId);
+
+    let registered = 0;
+    const restored = await restoreExistingSession(
+      backend,
+      {
+        registerDevice: async () => {
+          registered += 1;
+          throw new Error('must not register-device after session reset');
+        },
+        deviceLogin: async (secret) => {
+          expect(secret).toBe(deviceSecret);
+          return { token: 'tok-restored', user: user('user-1', 'ada', pair.publicKey) };
+        },
+      },
+      user('user-1', 'ada', pair.publicKey),
+      null,
+      async () => {
+        throw new Error('session token was cleared');
+      },
+    );
+    expect(registered).toBe(0);
+    expect(restored?.token).toBe('tok-restored');
+    expect(restored?.user.id).toBe('user-1');
+    expect(await peekStoredIdentity('user-1', backend)).toEqual(pair);
+  });
+
+  it('erase wipes local identity so onboarding can mint a new device identity', async () => {
     const backend = memoryBackend();
     const firstPair = await generateIdentityKeyPair();
     const secondPair = await generateIdentityKeyPair();
@@ -248,7 +292,7 @@ describe('returning-user restore and local reset', () => {
     const installId = await loadOrCreateInstallId(backend);
     const installHeader = await hashedInstallHeaderValue(backend);
 
-    await resetLocalHopOnThisDevice(backend);
+    await eraseLocalIdentity(backend);
 
     expect(await readIdentityOwner(backend)).toBeNull();
     expect(await peekDeviceSecret(backend)).toBeNull();
@@ -284,7 +328,7 @@ describe('returning-user restore and local reset', () => {
     expect(await peekStoredIdentity('user-2', backend)).toEqual(secondPair);
   });
 
-  it('reset stores a handle hint, clears keys/session, and does not recover from the hint', async () => {
+  it('erase stores a handle hint, clears keys/session, and does not recover from the hint', async () => {
     const backend = memoryBackend();
     const hintStore = memoryHintStore();
     const pair = await generateIdentityKeyPair();
@@ -292,7 +336,7 @@ describe('returning-user restore and local reset', () => {
     await writeIdentityOwner('user-1', backend);
     await loadOrCreateDeviceSecret(backend);
 
-    await resetLocalHopOnThisDevice(backend, { store: hintStore, lastHandle: 'Ada' });
+    await eraseLocalIdentity(backend, { store: hintStore, lastHandle: 'Ada' });
 
     expect(await readHandleHint(hintStore)).toBe('ada');
     expect(hintStore.map.get(HANDLE_HINT_KEY)).toBe('ada');
@@ -333,7 +377,7 @@ describe('returning-user restore and local reset', () => {
     await loadOrCreateDeviceSecret(backend);
     const installHeader = await hashedInstallHeaderValue(backend);
 
-    await resetLocalHopOnThisDevice(backend, { store: hintStore, lastHandle: 'ada' });
+    await eraseLocalIdentity(backend, { store: hintStore, lastHandle: 'ada' });
     expect(await readHandleHint(hintStore)).toBe('ada');
     await hintStore.write(HANDLE_HINT_KEY, null);
     expect(await readHandleHint(hintStore)).toBeNull();
@@ -362,7 +406,7 @@ describe('returning-user restore and local reset', () => {
   it('shows normal onboarding when no handle hint is remembered', async () => {
     const backend = memoryBackend();
     const hintStore = memoryHintStore();
-    await resetLocalHopOnThisDevice(backend, { store: hintStore, lastHandle: null });
+    await eraseLocalIdentity(backend, { store: hintStore, lastHandle: null });
     expect(await readHandleHint(hintStore)).toBeNull();
     expect(await existingInstallSkipsOnboarding(backend, false)).toBe(false);
   });

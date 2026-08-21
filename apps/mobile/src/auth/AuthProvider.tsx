@@ -12,7 +12,8 @@ import {
   existingInstallSkipsOnboarding,
   recoverHopAccount,
   registerDeviceIdentity,
-  resetLocalHopOnThisDevice,
+  eraseLocalIdentity,
+  resetAppSession,
   restoreExistingSession,
 } from '@/src/auth/deviceOnboarding';
 import { handleHintStore } from '@/src/auth/handleHintStorage';
@@ -35,6 +36,7 @@ type AuthState = {
   register: (username: string, password: string) => Promise<void>;
   changeHandle: (username: string) => Promise<void>;
   resetThisDevice: () => Promise<void>;
+  eraseThisDeviceIdentity: () => Promise<void>;
   refreshUser: () => Promise<void>;
 };
 
@@ -193,6 +195,39 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(me);
       },
       async resetThisDevice() {
+        const cachedUser = user ?? (await loadSession()).user;
+        const lastHandle = handleFromCachedUser(cachedUser);
+        if (token) {
+          try {
+            await api.logout(token);
+          } catch {
+            /* still clear locally — do not delete the server user */
+          }
+        }
+        await resetAppSession(identityBackend, { store: handleHintStore, lastHandle });
+        clearProfilePhotoCache();
+        await saveSession(null, null);
+        setToken(null);
+        setUser(null);
+        setError(null);
+        const restored = await restoreExistingSession(
+          identityBackend,
+          deviceApi,
+          cachedUser,
+          null,
+          (sessionToken) => api.me(sessionToken),
+        );
+        if (restored) {
+          setToken(restored.token);
+          setUser(restored.user);
+          setSkipOnboarding(true);
+          await saveSession(restored.token, restored.user);
+          await writeIdentityOwner(restored.user.id, identityBackend);
+          return;
+        }
+        setSkipOnboarding(await existingInstallSkipsOnboarding(identityBackend, false));
+      },
+      async eraseThisDeviceIdentity() {
         const lastHandle =
           handleFromCachedUser(user) ?? handleFromCachedUser((await loadSession()).user);
         if (token) {
@@ -202,7 +237,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             /* still clear locally — do not delete the server user */
           }
         }
-        await resetLocalHopOnThisDevice(identityBackend, { store: handleHintStore, lastHandle });
+        await eraseLocalIdentity(identityBackend, { store: handleHintStore, lastHandle });
         clearProfilePhotoCache();
         await saveSession(null, null);
         setToken(null);

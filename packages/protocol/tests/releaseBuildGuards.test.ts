@@ -67,7 +67,9 @@ describe("mobile production send path source", () => {
     expect(settings).not.toContain("Device diagnostics");
     expect(settings).not.toContain("BLE debug");
     expect(settings).not.toMatch(/buttonLabel[\s\S]*Replace local identity keys/);
-    expect(settings).toContain("Reset HOP on this device");
+    expect(settings).toContain("Reset HOP app");
+    expect(settings).toContain("Erase HOP identity from this device");
+    expect(settings).not.toContain("Reset HOP on this device");
     expect(settings).not.toMatch(/Log out/);
     expect(settings).toMatch(/if \(!__DEV__\) return;[\s\S]*router\.push\('\/device-diagnostics'\)/);
     const login = readRepo("apps/mobile/app/login.tsx");
@@ -101,7 +103,9 @@ describe("mobile production send path source", () => {
     const polyfill = readRepo("apps/mobile/src/crypto/polyfillGetRandomValues.ts");
     expect(polyfill).toContain("digestStringAsync");
     expect(polyfill).toContain("CryptoDigestAlgorithm.SHA256");
-    expect(onboarding).toMatch(/Local SecureStore wipe only/);
+    expect(onboarding).toContain("resetAppSession");
+    expect(onboarding).toContain("eraseLocalIdentity");
+    expect(onboarding).toMatch(/Permanent identity erase on this device/);
     expect(onboarding).not.toMatch(/\/users\/me\/blocks/);
     const hopBle = readRepo("apps/mobile/src/ble/HopBleEngine.ts");
     expect(hopBle).toMatch(/HOP_BLE_HANDSHAKE_UUID[\s\S]*properties: \['read', 'write', 'notify'\]/);

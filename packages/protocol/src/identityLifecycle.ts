@@ -10,8 +10,8 @@ export const IDENTITY_OWNER_KEY = "hop.identity.userId";
 /** Companion device credential in SecureStore. Not derived from the handle. */
 export const DEVICE_SECRET_KEY = "hop.device.secret";
 /**
- * Opaque per-install UUID. Survives Reset HOP so the API can rate-limit
- * account recreation without a permanent hardware fingerprint.
+ * Opaque per-install UUID. Survives Reset HOP app and identity erase so the
+ * API can rate-limit account recreation without a permanent hardware fingerprint.
  */
 export const INSTALL_ID_KEY = "hop.install.id";
 /** Hashed install id header on POST /auth/register-device. Never the raw UUID. */
@@ -179,14 +179,26 @@ export async function writeIdentityOwner(userId: string, backend: SecretBackend)
 }
 
 /**
- * Explicit local wipe of this device’s HOP identity only.
+ * Normal Reset HOP app: drop unpublished first-launch leftovers only.
+ * Must preserve hop.box.{userId} + marker, hop.wrap.{userId}, hop.identity.userId,
+ * hop.device.secret, and hop.install.id so the same phone can restore the same
+ * account via POST /auth/device. Never mints keys or a new user_id.
+ */
+export async function resetAppSession(backend: SecretBackend): Promise<void> {
+  await backend.write(secretStoreKey(PENDING_IDENTITY_SLOT), null);
+  await backend.write(markerStoreKey(PENDING_IDENTITY_SLOT), null);
+  await backend.write(wrapStoreKey(PENDING_IDENTITY_SLOT), null);
+}
+
+/**
+ * Permanent identity erase on THIS device only.
  * Does not delete the server user, chats, events, contacts, or blocks.
  * Does not clear hop.install.id (anti-abuse signal, not identity).
  * Does not touch hop.handle.hint — that last-used handle lives in non-secret
  * storage and is not identity. Never restore keys from a remembered handle.
  * After this, first-launch onboarding may mint a new keypair.
  */
-export async function clearLocalDeviceIdentity(backend: SecretBackend): Promise<void> {
+export async function eraseLocalIdentity(backend: SecretBackend): Promise<void> {
   const owner = await readIdentityOwner(backend);
   if (owner) {
     await backend.write(secretStoreKey(owner), null);
@@ -198,6 +210,11 @@ export async function clearLocalDeviceIdentity(backend: SecretBackend): Promise<
   await backend.write(wrapStoreKey(PENDING_IDENTITY_SLOT), null);
   await backend.write(IDENTITY_OWNER_KEY, null);
   await backend.write(DEVICE_SECRET_KEY, null);
+}
+
+/** @deprecated Use eraseLocalIdentity. Kept so older callers still wipe, not session-reset. */
+export async function clearLocalDeviceIdentity(backend: SecretBackend): Promise<void> {
+  await eraseLocalIdentity(backend);
 }
 
 type ExpoDigestStringAsync = (

@@ -9,6 +9,7 @@ import {
   bindPendingIdentityToUser,
   clearLocalDeviceIdentity,
   decideIdentityPublish,
+  eraseLocalIdentity,
   hashedInstallHeaderValue,
   hasExistingLocalIdentity,
   identityPublishBody,
@@ -17,13 +18,17 @@ import {
   loadOrCreateInstallId,
   loadOrCreatePendingIdentity,
   mustNotCreateNewAccount,
+  peekDeviceSecret,
   peekStoredIdentity,
+  peekWrapKey,
   publishIdentityIfAllowed,
   readIdentityOwner,
   replaceIdentityExplicit,
+  resetAppSession,
   sha256Hex,
   shouldSkipOnboarding,
   writeIdentityOwner,
+  writeWrapKey,
   type IdentityKeyPair,
   type SecretBackend,
 } from "../src/identityLifecycle.js";
@@ -298,7 +303,7 @@ describe("device-based onboarding identity binding", () => {
     await writeIdentityOwner("user-1", backend);
     await loadOrCreateDeviceSecret(backend);
     await backend.write(HANDLE_HINT_KEY, "ada");
-    await clearLocalDeviceIdentity(backend);
+    await eraseLocalIdentity(backend);
     expect(await backend.read(INSTALL_ID_KEY)).toBe(installId);
     expect(await hashedInstallHeaderValue(backend)).toBe(header);
     expect(await loadOrCreateInstallId(backend)).toBe(installId);
@@ -425,6 +430,38 @@ describe("device-based onboarding identity binding", () => {
         writable: true,
       });
     }
+  });
+
+  it("session reset preserves identity ownership; erase wipes keys but keeps install id", async () => {
+    const backend = memoryBackend();
+    await loadOrCreateIdentity("user-1", backend, async () => PAIR_A);
+    await writeIdentityOwner("user-1", backend);
+    await writeWrapKey("user-1", PAIR_B, backend);
+    const deviceSecret = await loadOrCreateDeviceSecret(backend);
+    const installId = await loadOrCreateInstallId(backend);
+    await loadOrCreateIdentity("pending", backend, async () => PAIR_B);
+
+    await resetAppSession(backend);
+
+    expect(await readIdentityOwner(backend)).toBe("user-1");
+    expect(await peekStoredIdentity("user-1", backend)).toEqual(PAIR_A);
+    expect(await backend.read("hop.box.marker.user-1")).toBe(PAIR_A.publicKey);
+    expect(await peekWrapKey("user-1", backend)).toEqual(PAIR_B);
+    expect(await peekDeviceSecret(backend)).toBe(deviceSecret);
+    expect(await backend.read(INSTALL_ID_KEY)).toBe(installId);
+    expect(await peekStoredIdentity("pending", backend)).toBeNull();
+    expect(await hasExistingLocalIdentity(backend)).toBe(true);
+    expect(await shouldSkipOnboarding(backend, false)).toBe(true);
+
+    await eraseLocalIdentity(backend);
+
+    expect(await readIdentityOwner(backend)).toBeNull();
+    expect(await peekStoredIdentity("user-1", backend)).toBeNull();
+    expect(await peekWrapKey("user-1", backend)).toBeNull();
+    expect(await peekDeviceSecret(backend)).toBeNull();
+    expect(await backend.read(INSTALL_ID_KEY)).toBe(installId);
+    expect(await hasExistingLocalIdentity(backend)).toBe(false);
+    expect(await shouldSkipOnboarding(backend, false)).toBe(false);
   });
 
   it("clears local identity so a later first-launch can mint a new pair", async () => {

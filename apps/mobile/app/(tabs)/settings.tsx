@@ -12,7 +12,17 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
-import { RESET_HOP_CONFIRM, RESET_HOP_MESSAGE, RESET_HOP_TITLE } from '@/src/auth/deviceOnboarding';
+import {
+  ERASE_IDENTITY_CONFIRM,
+  ERASE_IDENTITY_CONTINUE,
+  ERASE_IDENTITY_MESSAGE,
+  ERASE_IDENTITY_MESSAGE_2,
+  ERASE_IDENTITY_TITLE,
+  ERASE_IDENTITY_TITLE_2,
+  RESET_HOP_CONFIRM,
+  RESET_HOP_MESSAGE,
+  RESET_HOP_TITLE,
+} from '@/src/auth/deviceOnboarding';
 import { useBle } from '@/src/ble/BleProvider';
 import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { AUDIENCE_LABELS, OPERATING_MODE_LABELS } from '@/src/nearby/types';
@@ -27,7 +37,7 @@ const DEV_VERSION_TAPS = 7;
 const DEV_VERSION_TAP_WINDOW_MS = 2000;
 
 export default function SettingsScreen() {
-  const { user, token, resetThisDevice, refreshUser, changeHandle } = useAuth();
+  const { user, token, resetThisDevice, eraseThisDeviceIdentity, refreshUser, changeHandle } = useAuth();
   const { relayConsent, setRelayConsent } = useBle();
   const { operatingMode, audience, eventMode, eventRemainingLabel, scanState } = useNearbyPeers();
   const { identityError } = useOffline();
@@ -81,16 +91,42 @@ export default function SettingsScreen() {
     }
   }
 
-  function confirmResetHop() {
+  function confirmResetHopApp() {
     Alert.alert(RESET_HOP_TITLE, RESET_HOP_MESSAGE, [
       { text: 'Cancel', style: 'cancel' },
       {
         text: RESET_HOP_CONFIRM,
-        style: 'destructive',
         onPress: () => {
           resetThisDevice().catch((err) => {
-            Alert.alert('Could not reset HOP', err instanceof Error ? err.message : 'Unknown error');
+            Alert.alert('Could not reset HOP app', err instanceof Error ? err.message : 'Unknown error');
           });
+        },
+      },
+    ]);
+  }
+
+  function confirmEraseIdentity() {
+    Alert.alert(ERASE_IDENTITY_TITLE, ERASE_IDENTITY_MESSAGE, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: ERASE_IDENTITY_CONTINUE,
+        style: 'destructive',
+        onPress: () => {
+          Alert.alert(ERASE_IDENTITY_TITLE_2, ERASE_IDENTITY_MESSAGE_2, [
+            { text: 'Cancel', style: 'cancel' },
+            {
+              text: ERASE_IDENTITY_CONFIRM,
+              style: 'destructive',
+              onPress: () => {
+                eraseThisDeviceIdentity().catch((err) => {
+                  Alert.alert(
+                    'Could not erase identity',
+                    err instanceof Error ? err.message : 'Unknown error',
+                  );
+                });
+              },
+            },
+          ]);
         },
       },
     ]);
@@ -260,8 +296,14 @@ export default function SettingsScreen() {
       {identityError ? (
         <Text style={{ color: '#DC2626', marginTop: 16 }}>{identityError}</Text>
       ) : null}
-      <Pressable onPress={confirmResetHop} style={[styles.button, { borderColor: '#DC2626' }]}>
-        <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Reset HOP on this device</Text>
+      <Pressable onPress={confirmResetHopApp} style={[styles.button, { borderColor: colors.tint }]}>
+        <Text style={[styles.buttonLabel, { color: colors.tint }]}>Reset HOP app</Text>
+      </Pressable>
+      <Text style={{ color: colors.muted, textAlign: 'center' }}>
+        Clears session and cached data. Keeps this iPhone’s HOP identity so the same account can restore here.
+      </Text>
+      <Pressable onPress={confirmEraseIdentity} style={[styles.button, { borderColor: '#DC2626' }]}>
+        <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Erase HOP identity from this device</Text>
       </Pressable>
       <Pressable onPress={onVersionPress} accessibilityRole="text" accessibilityLabel={`HOP ${hopVersion}`}>
         <Text style={{ color: colors.muted, textAlign: 'center', marginTop: 8 }}>HOP {hopVersion}</Text>

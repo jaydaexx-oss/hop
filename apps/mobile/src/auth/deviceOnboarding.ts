@@ -1,7 +1,7 @@
 import {
   IdentityError,
   bindPendingIdentityToUser,
-  clearLocalDeviceIdentity,
+  eraseLocalIdentity as wipeLocalIdentitySecrets,
   hashedInstallHeaderValue,
   loadOrCreateDeviceSecret,
   loadOrCreatePendingIdentity,
@@ -9,6 +9,7 @@ import {
   peekDeviceSecret,
   readIdentityOwner,
   recoverExistingIdentity,
+  resetAppSession as discardUnpublishedPendingIdentity,
   sanitizeHandleHint,
   shouldSkipOnboarding,
   writeHandleHint,
@@ -47,10 +48,19 @@ export type RecoveryOnboardingApi = {
   putIdentityWrap: (token: string, wrappedBlob: string) => Promise<unknown>;
 };
 
-export const RESET_HOP_TITLE = 'Reset HOP on this device?';
+export const RESET_HOP_TITLE = 'Reset HOP app?';
 export const RESET_HOP_MESSAGE =
-  'This removes the HOP identity, keys, and access stored on THIS phone only. Your account, chats, events, and contacts stay on the server. Blocks and reports on the server are not erased. You cannot take your current handle unless it is released. After reset you will choose a new available handle and create a new device identity.';
-export const RESET_HOP_CONFIRM = 'Reset this device';
+  'This clears the signed-in session and cached app data on this phone. It does not mint a new identity or a new account. Your HOP keys stay on this iPhone so it can restore the same account automatically. Blocks and reports stay on the server. This is not logout that creates a replacement identity.';
+export const RESET_HOP_CONFIRM = 'Reset HOP app';
+
+export const ERASE_IDENTITY_TITLE = 'Erase HOP identity from this device?';
+export const ERASE_IDENTITY_MESSAGE =
+  'This permanently deletes the HOP keys stored on THIS phone. Encrypted history may be unrecoverable without a recovery backup or passkey on a device that still has the original keys. Your account, chats, events, contacts, blocks, and reports stay on the server. You cannot take this handle unless it is released. This is not a normal reset.';
+export const ERASE_IDENTITY_CONTINUE = 'Continue';
+export const ERASE_IDENTITY_TITLE_2 = 'Really erase this identity?';
+export const ERASE_IDENTITY_MESSAGE_2 =
+  'This iPhone will not be able to prove ownership of this account unless you restore an encrypted backup from before this erase. A remembered handle can still help Recover from another device, but the keys on this phone will be gone.';
+export const ERASE_IDENTITY_CONFIRM = 'Erase identity';
 
 export type RestoredSession = { token: string | null; user: AuthUser };
 
@@ -191,18 +201,39 @@ export async function existingInstallSkipsOnboarding(
   return shouldSkipOnboarding(backend, hasSessionUser);
 }
 
+async function rememberHandleHint(
+  hint?: { store: NonSecretStore; lastHandle?: string | null },
+): Promise<void> {
+  if (!hint?.store) return;
+  const handle = sanitizeHandleHint(hint.lastHandle ?? null);
+  if (handle) await writeHandleHint(hint.store, handle);
+}
+
 /**
- * Local SecureStore wipe only. Does not delete the server user row.
+ * Normal Reset HOP app. Clears unpublished pending leftovers only.
+ * Preserves hop.box.{userId}, marker, wrap, hop.identity.userId, hop.device.secret,
+ * and hop.install.id. Does not call register-device. Does not delete the server user.
  * Copies the last-used handle into non-secret storage first. That hint is not
  * authentication and never restores identity keys.
  */
-export async function resetLocalHopOnThisDevice(
+export async function resetAppSession(
   backend: SecretBackend,
   hint?: { store: NonSecretStore; lastHandle?: string | null },
 ): Promise<void> {
-  if (hint?.store) {
-    const handle = sanitizeHandleHint(hint.lastHandle ?? null);
-    if (handle) await writeHandleHint(hint.store, handle);
-  }
-  await clearLocalDeviceIdentity(backend);
+  await rememberHandleHint(hint);
+  await discardUnpublishedPendingIdentity(backend);
+}
+
+/**
+ * Permanent identity erase on this device. SecureStore wipe of keys and device_secret.
+ * Does not delete the server user row, chats, events, contacts, or blocks.
+ * Copies the last-used handle into non-secret storage first. That hint is not
+ * authentication and never restores identity keys.
+ */
+export async function eraseLocalIdentity(
+  backend: SecretBackend,
+  hint?: { store: NonSecretStore; lastHandle?: string | null },
+): Promise<void> {
+  await rememberHandleHint(hint);
+  await wipeLocalIdentitySecrets(backend);
 }

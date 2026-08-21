@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { generateIdentityKeyPair, type IdentityKeyPair } from "../src/cryptoBox.js";
+import { createCsprngUuid } from "../src/ids.js";
 import {
   DEVICE_SECRET_KEY,
   bindPendingIdentityToUser,
@@ -208,6 +209,39 @@ describe("recoverExistingIdentity", () => {
     expect(await peekDeviceSecret(backend)).toBeTruthy();
     expect(api.boundSecrets).toHaveLength(1);
     expect(api.registered).toBe(0);
+  });
+
+  it("recovers when crypto.randomUUID is missing if getRandomValues CSPRNG is present", async () => {
+    const cryptoObj = globalThis.crypto;
+    const original = cryptoObj.randomUUID;
+    Object.defineProperty(cryptoObj, "randomUUID", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(createCsprngUuid()).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      const backend = memoryBackend();
+      const pair = await generateIdentityKeyPair();
+      await persistRestoredIdentity("user-jay", pair, backend);
+      backend.map.delete("hop.identity.userId");
+      const existing = auth("user-jay", "jaydae", pair.publicKey);
+      const api = apiFor(existing);
+      const result = await recoverExistingIdentity(backend, api, "jaydae", {
+        method: "passkey",
+      });
+      expect(result.user.id).toBe("user-jay");
+      expect(await peekStoredIdentity("user-jay", backend)).toEqual(pair);
+      expect(api.boundSecrets[0]?.length).toBeGreaterThanOrEqual(32);
+    } finally {
+      Object.defineProperty(cryptoObj, "randomUUID", {
+        value: original,
+        configurable: true,
+        writable: true,
+      });
+    }
   });
 
   it("does not register or persist identity when recovery credentials fail", async () => {

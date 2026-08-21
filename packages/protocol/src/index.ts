@@ -1,4 +1,4 @@
-export { createMessageId } from "./ids.js";
+export { createCsprngUuid, createMessageId } from "./ids.js";
 export {
   ACK_PROTOCOL_VERSION,
   AckType,

@@ -300,6 +300,30 @@ describe("device-based onboarding identity binding", () => {
     expect(await loadOrCreateInstallId(backend)).toBe(installId);
   });
 
+  it("mints hop.install.id from getRandomValues when crypto.randomUUID is missing", async () => {
+    const cryptoObj = globalThis.crypto;
+    const original = cryptoObj.randomUUID;
+    Object.defineProperty(cryptoObj, "randomUUID", {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    try {
+      const backend = memoryBackend();
+      const installId = await loadOrCreateInstallId(backend);
+      expect(installId).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      expect(await loadOrCreateInstallId(backend)).toBe(installId);
+    } finally {
+      Object.defineProperty(cryptoObj, "randomUUID", {
+        value: original,
+        configurable: true,
+        writable: true,
+      });
+    }
+  });
+
   it("clears local identity so a later first-launch can mint a new pair", async () => {
     const backend = memoryBackend();
     await loadOrCreateIdentity("user-1", backend, async () => PAIR_A);

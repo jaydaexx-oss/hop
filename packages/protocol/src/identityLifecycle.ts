@@ -1,4 +1,5 @@
 import { generateIdentityKeyPair, isWellFormedBoxPublicKey, type IdentityKeyPair } from "./cryptoBox.js";
+import { createCsprngUuid } from "./ids.js";
 
 export const IDENTITY_SECRET_PREFIX = "hop.box.";
 export const IDENTITY_MARKER_PREFIX = "hop.box.marker.";
@@ -206,10 +207,12 @@ export async function sha256Hex(value: string): Promise<string> {
 export async function loadOrCreateInstallId(backend: SecretBackend): Promise<string> {
   const existing = await backend.read(INSTALL_ID_KEY);
   if (existing && existing.trim()) return existing.trim();
-  if (typeof globalThis.crypto?.randomUUID !== "function") {
+  let created: string;
+  try {
+    created = createCsprngUuid();
+  } catch {
     throw new IdentityError("SECRET_STORE_UNAVAILABLE", "CSPRNG UUID is unavailable on this runtime");
   }
-  const created = globalThis.crypto.randomUUID();
   await backend.write(INSTALL_ID_KEY, created);
   return created;
 }

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  createCsprngUuid,
   generateIdentityKeyPair,
   hashedInstallHeaderValue,
   loadOrCreateDeviceSecret,
@@ -299,6 +300,60 @@ describe('recover my HOP on a new install', () => {
     expect(restored.user.id).toBe('user-jay');
     expect(await peekStoredIdentity('user-jay', backend)).toEqual(pair);
     expect(await readIdentityOwner(backend)).toBe('user-jay');
+  });
+
+  it('recovers and mints CSPRNG UUIDs when crypto.randomUUID is missing', async () => {
+    const cryptoObj = globalThis.crypto;
+    const original = cryptoObj.randomUUID;
+    Object.defineProperty(cryptoObj, 'randomUUID', {
+      value: undefined,
+      configurable: true,
+      writable: true,
+    });
+    try {
+      expect(typeof globalThis.crypto.getRandomValues).toBe('function');
+      expect(createCsprngUuid()).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      expect(await loadOrCreateInstallId(memoryBackend())).toMatch(
+        /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
+      );
+      const backend = memoryBackend();
+      const pair = await generateIdentityKeyPair();
+      await loadOrCreateIdentity('user-jay', backend, async () => pair);
+      backend.map.delete('hop.identity.userId');
+      const restored = await recoverHopAccount(
+        backend,
+        {
+          recoverPassword: async () => {
+            throw new Error('password not used');
+          },
+          passkeyAuthenticate: async () => ({
+            token: 'rec-tok',
+            user: user('user-jay', 'jaydae', pair.publicKey),
+          }),
+          bindRecoveredDevice: async (_token, secret) => {
+            expect(secret.length).toBeGreaterThanOrEqual(32);
+            return { token: 'bound-tok', user: user('user-jay', 'jaydae', pair.publicKey) };
+          },
+          logout: async () => undefined,
+          getIdentityWrap: async () => {
+            throw Object.assign(new Error('not found'), { status: 404, name: 'ApiError' });
+          },
+          putIdentityWrap: async () => undefined,
+        },
+        'jaydae',
+        { method: 'passkey' },
+      );
+      expect(restored.user.id).toBe('user-jay');
+      expect(await peekStoredIdentity('user-jay', backend)).toEqual(pair);
+    } finally {
+      Object.defineProperty(cryptoObj, 'randomUUID', {
+        value: original,
+        configurable: true,
+        writable: true,
+      });
+    }
   });
 
   it('does not register when recovery fails', async () => {

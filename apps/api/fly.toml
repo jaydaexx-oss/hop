@@ -4,6 +4,8 @@
 #
 # After `fly apps create`, set `app` and [env] API_PUBLIC_URL / CORS_ORIGINS
 # to https://<your-app>.fly.dev (restrictive HTTPS allow-list, not *).
+# Leave the development mint-counter reset flag and its secret unset on this app.
+# Production mint limits (3/install/day, 5/IP/day) must stay enforced.
 
 app = "hop-uokqmg"
 primary_region = "sjc"

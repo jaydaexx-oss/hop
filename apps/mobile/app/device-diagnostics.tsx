@@ -14,6 +14,13 @@ import {
   getHealth,
 } from '@/src/api/client';
 import { useAuth } from '@/src/auth/AuthProvider';
+import {
+  DEV_RESET_CONFIRM_MESSAGE,
+  DEV_RESET_SUCCESS_MESSAGE,
+  RESET_ACCOUNT_CREATION_TEST_COUNTER_LABEL,
+  isAccountCreationResetActionEnabled,
+  resetAccountCreationTestCounter,
+} from '@/src/auth/devAccountCreationReset';
 import { useBle } from '@/src/ble/BleProvider';
 import { replaceIdentityExplicit } from '@/src/crypto/identity';
 import { useOffline } from '@/src/offline/OfflineProvider';
@@ -253,6 +260,28 @@ export default function DeviceDiagnosticsScreen() {
         },
       ],
     );
+  }
+
+  function confirmResetAccountCreationCounter() {
+    if (!isAccountCreationResetActionEnabled(__DEV__)) return;
+    Alert.alert(RESET_ACCOUNT_CREATION_TEST_COUNTER_LABEL, DEV_RESET_CONFIRM_MESSAGE, [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Reset test counter',
+        onPress: () => {
+          resetAccountCreationTestCounter()
+            .then(() => {
+              Alert.alert('Mint counter reset', DEV_RESET_SUCCESS_MESSAGE);
+            })
+            .catch((err) => {
+              Alert.alert(
+                'Could not reset test counter',
+                err instanceof Error ? err.message : 'Unknown error',
+              );
+            });
+        },
+      },
+    ]);
   }
 
   if (!isDeveloperScreenEnabled(__DEV__)) {
@@ -507,6 +536,13 @@ export default function DeviceDiagnosticsScreen() {
       <Pressable onPress={confirmReplaceIdentity} style={[styles.button, { borderColor: '#DC2626' }]}>
         <Text style={[styles.buttonLabel, { color: '#DC2626' }]}>Replace local identity keys</Text>
       </Pressable>
+      {isAccountCreationResetActionEnabled(__DEV__) ? (
+        <Pressable onPress={confirmResetAccountCreationCounter} style={[styles.button, { borderColor: colors.tint }]}>
+          <Text style={[styles.buttonLabel, { color: colors.tint }]}>
+            {RESET_ACCOUNT_CREATION_TEST_COUNTER_LABEL}
+          </Text>
+        </Pressable>
+      ) : null}
     </ScrollView>
   );
 }

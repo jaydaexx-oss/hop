@@ -589,6 +589,38 @@ describe('recover my HOP on a new install', () => {
     expect(await peekStoredIdentity('user-jay', backend)).toBeNull();
   });
 
+  it('does not call register-device even after a successful recovery proof', async () => {
+    const backend = memoryBackend();
+    const pair = await generateIdentityKeyPair();
+    await loadOrCreateIdentity('user-jay', backend, async () => pair);
+    backend.map.delete('hop.identity.userId');
+    const calls: string[] = [];
+    await recoverHopAccount(
+      backend,
+      {
+        recoverPassword: async () => {
+          calls.push('recoverPassword');
+          return { token: 'rec-tok', user: user('user-jay', 'jaydae', pair.publicKey) };
+        },
+        passkeyAuthenticate: async () => {
+          throw new Error('passkey not used');
+        },
+        bindRecoveredDevice: async () => {
+          calls.push('bindRecoveredDevice');
+          return { token: 'bound-tok', user: user('user-jay', 'jaydae', pair.publicKey) };
+        },
+        logout: async () => undefined,
+        getIdentityWrap: async () => {
+          throw Object.assign(new Error('not found'), { status: 404, name: 'ApiError' });
+        },
+        putIdentityWrap: async () => undefined,
+      },
+      'jaydae',
+      { method: 'legacy_password_once', password: 'ok-secret' },
+    );
+    expect(calls).toEqual(['recoverPassword', 'bindRecoveredDevice']);
+  });
+
   it('does not mint keys when Keychain is empty after a successful password proof', async () => {
     const backend = memoryBackend();
     const server = await generateIdentityKeyPair();

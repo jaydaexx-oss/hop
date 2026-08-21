@@ -89,9 +89,31 @@ describe('passwordless consumer auth UI', () => {
     expect(settings).not.toMatch(/buttonLabel[\s\S]*Replace local identity keys/);
     expect(settings).not.toMatch(/buttonLabel[\s\S]*Device diagnostics/);
     expect(settings).not.toMatch(/buttonLabel[\s\S]*BLE debug/);
+    expect(settings).not.toContain('Reset account-creation test counter');
+    expect(settings).not.toContain('devAccountCreationReset');
     const login = readApp('app/login.tsx');
     expect(login).not.toContain('/device-diagnostics');
     expect(login).not.toContain('/ble-debug');
     expect(login).not.toContain('Device diagnostics');
+    expect(login).not.toContain('Reset account-creation test counter');
+  });
+
+  it('Recover my HOP does not call register-device', () => {
+    const onboarding = readApp('src/auth/deviceOnboarding.ts');
+    const recover = onboarding.split('export async function recoverHopAccount')[1]?.split('export async function')[0];
+    expect(recover).toBeTruthy();
+    expect(recover).toContain('recoverExistingIdentity');
+    expect(recover).toContain('bindRecoveredDevice');
+    expect(recover).not.toContain('registerDevice');
+    expect(recover).not.toContain('registerDeviceIdentity');
+    const login = readApp('app/login.tsx');
+    expect(login).toContain('await recoverHop(handle, proof)');
+    expect(login).not.toMatch(/submitRecover[\s\S]{0,400}startHopping/);
+    const resetHelper = readApp('src/auth/devAccountCreationReset.ts');
+    expect(resetHelper).toContain('/auth/dev/reset-account-creation-limits');
+    expect(resetHelper).toContain('hashedInstallHeaderValue');
+    expect(resetHelper).toContain("typeof __DEV__ !== 'undefined' && __DEV__");
+    expect(resetHelper).not.toContain('INSTALL_ID_KEY');
+    expect(resetHelper).not.toMatch(/backend\.write/);
   });
 });

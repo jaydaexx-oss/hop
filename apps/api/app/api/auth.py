@@ -16,10 +16,16 @@ from app.models.tables import BlockedUser, Device
 from app.models.tables import Session as AuthSession
 from app.models.tables import User
 from app import passkeys
-from app.rate_limit import limit_auth, limit_new_account
+from app.rate_limit import (
+    clear_new_account_mint_limits,
+    limit_auth,
+    limit_new_account,
+    require_dev_account_creation_reset,
+)
 from app.schemas import (
     AuthOut,
     DeviceSessionIn,
+    DevAccountCreationResetOut,
     HandleAvailableOut,
     LoginIn,
     PasskeyBeginIn,
@@ -123,6 +129,7 @@ def _bind_device_for_user(session: Session, user: User, device_secret: str) -> D
 
 @router.get("/handle-available", response_model=HandleAvailableOut)
 def handle_available(username: str, request: Request, session: Session = Depends(get_session)) -> HandleAvailableOut:
+    """Lookup only. Not account creation — must not call limit_new_account."""
     limit_auth(request)
     handle = validate_username(username)
     existing = session.exec(select(User).where(User.username == handle)).first()
@@ -176,6 +183,7 @@ def register_device(body: RegisterDeviceIn, request: Request, session: Session =
             raise HTTPException(status_code=409, detail="Username already taken")
 
         install_hash = parse_install_hash(request)
+        # Minting a new user_id only. Existing-device retry and recovery bind skip this limiter.
         limit_new_account(request, install_hash)
         user = User(username=username, password_hash=DEVICE_PASSWORD_MARKER)
         session.add(user)
@@ -247,7 +255,7 @@ def logout(
 
 @router.get("/recovery-options", response_model=RecoveryOptionsOut)
 def recovery_options(username: str, request: Request, session: Session = Depends(get_session)) -> RecoveryOptionsOut:
-    """Lookup only. Handle existence is not authentication."""
+    """Lookup only. Handle existence is not authentication. Not a new-account mint."""
     limit_auth(request)
     handle = validate_username(username)
     existing = session.exec(select(User).where(User.username == handle)).first()
@@ -263,7 +271,10 @@ def recovery_options(username: str, request: Request, session: Session = Depends
 
 @router.post("/recover/password", response_model=RecoveryAuthOut)
 def recover_password(body: RecoverPasswordIn, request: Request, session: Session = Depends(get_session)) -> RecoveryAuthOut:
-    """One-time proof for pre-passkey accounts. Does not create a user or rotate identity keys."""
+    """One-time proof for pre-passkey accounts. Does not create a user or rotate identity keys.
+
+    Recovery is not account creation. Do not call limit_new_account.
+    """
     limit_auth(request)
     username = validate_username(body.username)
     user = session.exec(select(User).where(User.username == username)).first()
@@ -279,10 +290,29 @@ def recover_bind_device(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> AuthOut:
-    """Issue a new device_secret for this device bound to the recovered user_id. No public key accepted."""
+    """Issue a new device_secret for this device bound to the recovered user_id. No public key accepted.
+
+    Attaches a credential to an existing user. Do not call limit_new_account.
+    """
     limit_auth(request)
     _bind_device_for_user(session, user, body.device_secret)
     return _issue_auth(session, user)
+
+
+@router.post(
+    "/dev/reset-account-creation-limits",
+    response_model=DevAccountCreationResetOut,
+    include_in_schema=False,
+)
+def reset_account_creation_limits(request: Request) -> DevAccountCreationResetOut:
+    """Development-only: clear register-device mint Redis/memory keys for this install/IP.
+
+    Never deletes blocks or block_install_cooldowns. 404 when the server flag is off
+    (production hop-uokqmg leaves ENABLE_DEV_RATE_LIMIT_RESET unset).
+    """
+    require_dev_account_creation_reset(request)
+    cleared = clear_new_account_mint_limits(request, parse_install_hash(request))
+    return DevAccountCreationResetOut(status="ok", cleared=cleared, blocks_unchanged=True)
 
 
 @router.post("/passkey/register/begin", response_model=PasskeyBeginOut)
@@ -331,6 +361,7 @@ def passkey_authenticate_complete(
     request: Request,
     session: Session = Depends(get_session),
 ) -> RecoveryAuthOut:
+    """Passkey proof for an existing user. Do not call limit_new_account."""
     limit_auth(request)
     user = passkeys.authentication_complete(session, request, body.challenge_id, body.credential)
     return _recovery_auth(session, user)

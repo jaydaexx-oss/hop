@@ -83,6 +83,12 @@ class RecoverBindDeviceIn(BaseModel):
     device_secret: str = Field(min_length=32, max_length=128)
 
 
+class DevAccountCreationResetOut(BaseModel):
+    status: str
+    cleared: list[str]
+    blocks_unchanged: bool = True
+
+
 class RecoveryAuthOut(AuthOut):
     needs_passkey_enrollment: bool = False
 

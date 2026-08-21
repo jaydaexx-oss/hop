@@ -1,6 +1,11 @@
 import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
 
-import { writeIdentityOwner, generateIdentityKeyPair, upsertIdentityWrap } from '@hop/protocol';
+import {
+  generateIdentityKeyPair,
+  handleFromCachedUser,
+  upsertIdentityWrap,
+  writeIdentityOwner,
+} from '@hop/protocol';
 
 import { api, type User } from '@/src/api/hop';
 import {
@@ -10,6 +15,7 @@ import {
   resetLocalHopOnThisDevice,
   restoreExistingSession,
 } from '@/src/auth/deviceOnboarding';
+import { handleHintStore } from '@/src/auth/handleHintStorage';
 import { completePasskeyAssertion, completePasskeyAttestation, platformPasskeysAvailable } from '@/src/auth/passkeys';
 import { loadSession, saveSession } from '@/src/auth/storage';
 import { identityBackend } from '@/src/crypto/identity';
@@ -187,6 +193,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(me);
       },
       async resetThisDevice() {
+        const lastHandle =
+          handleFromCachedUser(user) ?? handleFromCachedUser((await loadSession()).user);
         if (token) {
           try {
             await api.logout(token);
@@ -194,7 +202,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
             /* still clear locally — do not delete the server user */
           }
         }
-        await resetLocalHopOnThisDevice(identityBackend);
+        await resetLocalHopOnThisDevice(identityBackend, { store: handleHintStore, lastHandle });
         clearProfilePhotoCache();
         await saveSession(null, null);
         setToken(null);

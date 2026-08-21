@@ -306,6 +306,20 @@ export {
   type SecretBackend,
 } from "./identityLifecycle.js";
 export {
+  HANDLE_HINT_KEY,
+  USE_DIFFERENT_HANDLE_LABEL,
+  clearHandleHint,
+  formatPreviousHopLabel,
+  handleFromCachedUser,
+  handleHintIsAuthentication,
+  onboardingModeForHandleHint,
+  readHandleHint,
+  sanitizeHandleHint,
+  shouldAutoStartRecoveryFromHandleHint,
+  writeHandleHint,
+  type NonSecretStore,
+} from "./handleHint.js";
+export {
   HANDLE_IS_NOT_AUTH_MESSAGE,
   HANDLE_TAKEN_RECOVER_COPY,
   IDENTITY_RECOVERY_EXTENSION_POINTS,

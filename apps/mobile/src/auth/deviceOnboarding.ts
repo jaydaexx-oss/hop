@@ -9,9 +9,12 @@ import {
   peekDeviceSecret,
   readIdentityOwner,
   recoverExistingIdentity,
+  sanitizeHandleHint,
   shouldSkipOnboarding,
+  writeHandleHint,
   writeIdentityOwner,
   type IdentityKeyPair,
+  type NonSecretStore,
   type RecoveryProof,
   type SecretBackend,
 } from '@hop/protocol';
@@ -188,7 +191,18 @@ export async function existingInstallSkipsOnboarding(
   return shouldSkipOnboarding(backend, hasSessionUser);
 }
 
-/** Local SecureStore wipe only. Does not delete the server user row. */
-export async function resetLocalHopOnThisDevice(backend: SecretBackend): Promise<void> {
+/**
+ * Local SecureStore wipe only. Does not delete the server user row.
+ * Copies the last-used handle into non-secret storage first. That hint is not
+ * authentication and never restores identity keys.
+ */
+export async function resetLocalHopOnThisDevice(
+  backend: SecretBackend,
+  hint?: { store: NonSecretStore; lastHandle?: string | null },
+): Promise<void> {
+  if (hint?.store) {
+    const handle = sanitizeHandleHint(hint.lastHandle ?? null);
+    if (handle) await writeHandleHint(hint.store, handle);
+  }
   await clearLocalDeviceIdentity(backend);
 }

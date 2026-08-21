@@ -4,15 +4,19 @@ import { describe, expect, it } from 'vitest';
 import {
   createCsprngUuid,
   generateIdentityKeyPair,
+  HANDLE_HINT_KEY,
   hashedInstallHeaderValue,
   loadOrCreateDeviceSecret,
   loadOrCreateIdentity,
   loadOrCreateInstallId,
   peekDeviceSecret,
   peekStoredIdentity,
+  readHandleHint,
   readIdentityOwner,
   sha256Hex,
+  shouldAutoStartRecoveryFromHandleHint,
   writeIdentityOwner,
+  type NonSecretStore,
   type SecretBackend,
 } from '@hop/protocol';
 
@@ -26,6 +30,20 @@ import {
 } from './deviceOnboarding';
 
 function memoryBackend(): SecretBackend & { map: Map<string, string> } {
+  const map = new Map<string, string>();
+  return {
+    map,
+    async read(key) {
+      return map.get(key) ?? null;
+    },
+    async write(key, value) {
+      if (value) map.set(key, value);
+      else map.delete(key);
+    },
+  };
+}
+
+function memoryHintStore(): NonSecretStore & { map: Map<string, string> } {
   const map = new Map<string, string>();
   return {
     map,
@@ -264,6 +282,89 @@ describe('returning-user restore and local reset', () => {
     expect(next.user.id).toBe('user-2');
     expect(await peekStoredIdentity('user-1', backend)).toBeNull();
     expect(await peekStoredIdentity('user-2', backend)).toEqual(secondPair);
+  });
+
+  it('reset stores a handle hint, clears keys/session, and does not recover from the hint', async () => {
+    const backend = memoryBackend();
+    const hintStore = memoryHintStore();
+    const pair = await generateIdentityKeyPair();
+    await loadOrCreateIdentity('user-1', backend, async () => pair);
+    await writeIdentityOwner('user-1', backend);
+    await loadOrCreateDeviceSecret(backend);
+
+    await resetLocalHopOnThisDevice(backend, { store: hintStore, lastHandle: 'Ada' });
+
+    expect(await readHandleHint(hintStore)).toBe('ada');
+    expect(hintStore.map.get(HANDLE_HINT_KEY)).toBe('ada');
+    expect(JSON.stringify([...hintStore.map.entries()])).not.toMatch(/user-1|live-token|secretKey|publicKey/);
+    expect(await readIdentityOwner(backend)).toBeNull();
+    expect(await peekDeviceSecret(backend)).toBeNull();
+    expect(await peekStoredIdentity('user-1', backend)).toBeNull();
+    expect(await existingInstallSkipsOnboarding(backend, false)).toBe(false);
+    expect(shouldAutoStartRecoveryFromHandleHint()).toBe(false);
+
+    const nextPair = await generateIdentityKeyPair();
+    const next = await registerDeviceIdentity(
+      backend,
+      {
+        registerDevice: async (username, publicKey) => ({
+          token: 'tok-new',
+          user: user('user-2', username, publicKey),
+        }),
+        deviceLogin: async () => {
+          throw new Error('must not device-login from a handle hint');
+        },
+      },
+      'ada2',
+      async () => nextPair,
+    );
+    expect(next.user.id).toBe('user-2');
+    expect(await peekStoredIdentity('user-1', backend)).toBeNull();
+    expect(await peekStoredIdentity('user-2', backend)).toEqual(nextPair);
+    expect(await readHandleHint(hintStore)).toBe('ada');
+  });
+
+  it('clears the handle hint for a different handle without bypassing install rate limits', async () => {
+    const backend = memoryBackend();
+    const hintStore = memoryHintStore();
+    const firstPair = await generateIdentityKeyPair();
+    await loadOrCreateIdentity('user-1', backend, async () => firstPair);
+    await writeIdentityOwner('user-1', backend);
+    await loadOrCreateDeviceSecret(backend);
+    const installHeader = await hashedInstallHeaderValue(backend);
+
+    await resetLocalHopOnThisDevice(backend, { store: hintStore, lastHandle: 'ada' });
+    expect(await readHandleHint(hintStore)).toBe('ada');
+    await hintStore.write(HANDLE_HINT_KEY, null);
+    expect(await readHandleHint(hintStore)).toBeNull();
+    expect(await existingInstallSkipsOnboarding(backend, false)).toBe(false);
+
+    const secondPair = await generateIdentityKeyPair();
+    let seenHeader: string | undefined;
+    await registerDeviceIdentity(
+      backend,
+      {
+        registerDevice: async (username, publicKey, _secret, header) => {
+          expect(username).toBe('bob');
+          seenHeader = header;
+          return { token: 'tok-bob', user: user('user-2', username, publicKey) };
+        },
+        deviceLogin: async () => {
+          throw new Error('must not device-login');
+        },
+      },
+      'bob',
+      async () => secondPair,
+    );
+    expect(seenHeader).toBe(installHeader);
+  });
+
+  it('shows normal onboarding when no handle hint is remembered', async () => {
+    const backend = memoryBackend();
+    const hintStore = memoryHintStore();
+    await resetLocalHopOnThisDevice(backend, { store: hintStore, lastHandle: null });
+    expect(await readHandleHint(hintStore)).toBeNull();
+    expect(await existingInstallSkipsOnboarding(backend, false)).toBe(false);
   });
 
   it('sends SHA-256 X-Hop-Install when crypto.subtle is missing', async () => {

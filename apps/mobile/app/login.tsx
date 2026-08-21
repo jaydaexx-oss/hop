@@ -22,11 +22,14 @@ import {
   KEYS_MISSING_MESSAGE,
   NO_RECOVERY_METHODS_MESSAGE,
   RECOVER_MY_HOP_LABEL,
+  USE_DIFFERENT_HANDLE_LABEL,
+  formatPreviousHopLabel,
 } from '@hop/protocol';
 import { api, type RecoveryOptions } from '@/src/api/hop';
 import { LOOPBACK_API_DEVICE_HINT, apiUrlUsesLoopback } from '@/src/api/client';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { RESET_HOP_CONFIRM, RESET_HOP_MESSAGE, RESET_HOP_TITLE } from '@/src/auth/deviceOnboarding';
+import { forgetPersistedHandleHint, loadPersistedHandleHint } from '@/src/auth/handleHintStorage';
 import { PASSKEY_NATIVE_REQUIRED_MESSAGE, platformPasskeysAvailable } from '@/src/auth/passkeys';
 import { loadToken } from '@/src/auth/storage';
 import { POST_LOGIN_HREF } from '@/src/navigation/tabOrder';
@@ -51,6 +54,7 @@ export default function LoginScreen() {
   const [recovering, setRecovering] = useState(false);
   const [recoveryPassword, setRecoveryPassword] = useState('');
   const [recoveryOptions, setRecoveryOptions] = useState<RecoveryOptions | null>(null);
+  const [rememberedHandle, setRememberedHandle] = useState<string | null>(null);
 
   useEffect(() => {
     if (user || !skipOnboarding) return;
@@ -64,6 +68,20 @@ export default function LoginScreen() {
       .finally(() => {
         if (!cancelled) setBusy(false);
       });
+    return () => {
+      cancelled = true;
+    };
+  }, [user, skipOnboarding]);
+
+  useEffect(() => {
+    if (user || skipOnboarding) return;
+    let cancelled = false;
+    void loadPersistedHandleHint().then((handle) => {
+      if (cancelled || !handle) return;
+      setRememberedHandle(handle);
+      setUsername(handle);
+      // Do not call recoverHop — a handle hint is not authentication.
+    });
     return () => {
       cancelled = true;
     };
@@ -87,9 +105,9 @@ export default function LoginScreen() {
         .then((result) => {
           if (!cancelled) {
             setHandleStatus(result.available ? 'ok' : 'taken');
-            setRecovering(false);
-            setRecoveryPassword('');
             if (result.available) {
+              setRecovering(false);
+              setRecoveryPassword('');
               setRecoveryOptions(null);
             } else {
               api
@@ -173,6 +191,17 @@ export default function LoginScreen() {
     ]);
   }
 
+  function useDifferentHandle() {
+    void forgetPersistedHandleHint();
+    setRememberedHandle(null);
+    setUsername('');
+    setRecovering(false);
+    setRecoveryPassword('');
+    setRecoveryOptions(null);
+    setHandleStatus('idle');
+    setLocalError(null);
+  }
+
   const hopDisabled = busy || handleStatus !== 'ok';
   const passkeysReady = platformPasskeysAvailable();
   const showPasskey = Boolean(recoveryOptions?.passkey_enrolled && passkeysReady);
@@ -181,6 +210,12 @@ export default function LoginScreen() {
   const showNoMethods = Boolean(
     recoveryOptions && !recoveryOptions.passkey_enrolled && !recoveryOptions.legacy_password,
   );
+  const rememberedPrefill = Boolean(
+    rememberedHandle && normalizeHopUsername(username) === rememberedHandle,
+  );
+  const showingRememberedRecover = rememberedPrefill && !recovering;
+  const showRecoverCta = (handleStatus === 'taken' || rememberedPrefill) && !recovering;
+  const showRecoveryForm = (handleStatus === 'taken' || rememberedPrefill) && recovering;
 
   if (skipOnboarding) {
     return (
@@ -221,6 +256,9 @@ export default function LoginScreen() {
       <ScrollView contentContainerStyle={styles.card} keyboardShouldPersistTaps="handled">
         <Text style={styles.brand}>HOP</Text>
         <Text style={[styles.sub, { color: colors.muted }]}>Choose a handle and hop in. No password.</Text>
+        {rememberedHandle ? (
+          <Text style={[styles.sub, { color: colors.muted }]}>{formatPreviousHopLabel(rememberedHandle)}</Text>
+        ) : null}
         <View style={styles.hero}>
           <Avatar username={username || 'HOP'} color={avatarColor} uri={photoUri} size={96} borderColor={colors.tint} borderWidth={2} />
           <View style={styles.photoRow}>
@@ -262,7 +300,7 @@ export default function LoginScreen() {
           onChangeText={setUsername}
           style={[styles.input, { color: colors.text, backgroundColor: colors.card, borderColor: colors.tabIconDefault }]}
         />
-        {handleStatus === 'taken' ? (
+        {handleStatus === 'taken' && !rememberedPrefill ? (
           <Text style={styles.error}>{HANDLE_TAKEN_RECOVER_COPY}</Text>
         ) : null}
         {handleStatus === 'invalid' && username.trim() ? (
@@ -270,7 +308,7 @@ export default function LoginScreen() {
         ) : null}
         {(localError || error) && <Text style={styles.error}>{localError || error}</Text>}
         {__DEV__ && apiUrlUsesLoopback() ? <Text style={styles.error}>{LOOPBACK_API_DEVICE_HINT}</Text> : null}
-        {handleStatus === 'taken' && !recovering ? (
+        {showRecoverCta ? (
           <Pressable
             onPress={() => {
               setLocalError(null);
@@ -281,7 +319,12 @@ export default function LoginScreen() {
             <Text style={styles.buttonLabel}>{RECOVER_MY_HOP_LABEL}</Text>
           </Pressable>
         ) : null}
-        {handleStatus === 'taken' && recovering ? (
+        {showingRememberedRecover ? (
+          <Pressable onPress={useDifferentHandle} disabled={busy}>
+            <Text style={[styles.switch, { color: colors.muted }]}>{USE_DIFFERENT_HANDLE_LABEL}</Text>
+          </Pressable>
+        ) : null}
+        {showRecoveryForm ? (
           <>
             <Text style={[styles.hint, { color: colors.muted }]}>{HANDLE_IS_NOT_AUTH_MESSAGE}</Text>
             <Text style={[styles.hint, { color: colors.muted }]}>
@@ -333,7 +376,7 @@ export default function LoginScreen() {
             </Pressable>
           </>
         ) : null}
-        {handleStatus !== 'taken' ? (
+        {handleStatus !== 'taken' && !rememberedPrefill ? (
           <Pressable
             onPress={() => void submitStart()}
             disabled={hopDisabled}

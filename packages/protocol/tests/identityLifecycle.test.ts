@@ -27,6 +27,7 @@ import {
   type IdentityKeyPair,
   type SecretBackend,
 } from "../src/identityLifecycle.js";
+import { HANDLE_HINT_KEY } from "../src/handleHint.js";
 import { readWithSecretPolicy, shouldFailClosedSecretStore, writeWithSecretPolicy } from "../src/secretPolicy.js";
 
 function memoryBackend(): SecretBackend & { map: Map<string, string> } {
@@ -296,10 +297,12 @@ describe("device-based onboarding identity binding", () => {
     await loadOrCreateIdentity("user-1", backend, async () => PAIR_A);
     await writeIdentityOwner("user-1", backend);
     await loadOrCreateDeviceSecret(backend);
+    await backend.write(HANDLE_HINT_KEY, "ada");
     await clearLocalDeviceIdentity(backend);
     expect(await backend.read(INSTALL_ID_KEY)).toBe(installId);
     expect(await hashedInstallHeaderValue(backend)).toBe(header);
     expect(await loadOrCreateInstallId(backend)).toBe(installId);
+    expect(await backend.read(HANDLE_HINT_KEY)).toBe("ada");
   });
 
   const SHA256_ABC = "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad";

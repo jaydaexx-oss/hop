@@ -78,6 +78,8 @@ describe("mobile production send path source", () => {
     expect(login).not.toMatch(/placeholder=["']Username["']/);
     expect(login).toContain("HANDLE_TAKEN_RECOVER_COPY");
     expect(login).toContain("RECOVER_MY_HOP_LABEL");
+    expect(login).toContain("USE_DIFFERENT_HANDLE_LABEL");
+    expect(login).toContain("formatPreviousHopLabel");
     expect(login).toContain('placeholder="One-time recovery password"');
     const appJson = readRepo("apps/mobile/app.json");
     expect(appJson).toContain("webcredentials:hop-uokqmg.fly.dev");

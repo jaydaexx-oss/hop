@@ -21,6 +21,11 @@ describe('passwordless consumer auth UI', () => {
     expect(login).toContain('RECOVER_MY_HOP_LABEL');
     expect(login).toContain('placeholder="One-time recovery password"');
     expect(login).toContain('PASSKEY_NATIVE_REQUIRED_MESSAGE');
+    expect(login).toContain('loadPersistedHandleHint');
+    expect(login).toContain('formatPreviousHopLabel');
+    expect(login).toContain('USE_DIFFERENT_HANDLE_LABEL');
+    expect(login).toContain('forgetPersistedHandleHint');
+    expect(login).toContain('showingRememberedRecover');
     expect(login).not.toContain('Welcome back');
     expect(login).not.toContain('I already have an account');
     expect(login).not.toMatch(/placeholder=["']Password["']/);
@@ -29,6 +34,8 @@ describe('passwordless consumer auth UI', () => {
     expect(login).not.toContain('Device diagnostics');
     expect(login).not.toContain("setMode('password')");
     expect(login).not.toContain('submitPassword');
+    expect(login).not.toMatch(/loadPersistedHandleHint[\s\S]{0,500}recoverHop\(/);
+    expect(login).toContain('Do not call recoverHop — a handle hint is not authentication.');
   });
 
   it('replaces Settings logout with a confirmed local reset', () => {
@@ -43,6 +50,21 @@ describe('passwordless consumer auth UI', () => {
     expect(RESET_HOP_MESSAGE).toMatch(/stay on the server/i);
     expect(RESET_HOP_MESSAGE).toMatch(/cannot take your current handle/i);
     expect(RESET_HOP_MESSAGE).toMatch(/Blocks and reports on the server are not erased/i);
+  });
+
+  it('prefills a remembered handle and does not auto-start recovery', () => {
+    const login = readApp('app/login.tsx');
+    expect(login).toContain('setUsername(handle)');
+    expect(login).toContain('formatPreviousHopLabel(rememberedHandle)');
+    expect(login).toContain('RECOVER_MY_HOP_LABEL');
+    expect(login).toContain('USE_DIFFERENT_HANDLE_LABEL');
+    expect(login).toContain('forgetPersistedHandleHint');
+    expect(login).toContain('setRecovering(true)');
+    const auth = readApp('src/auth/AuthProvider.tsx');
+    expect(auth).toContain('handleFromCachedUser');
+    expect(auth).toContain('handleHintStore');
+    expect(auth).toContain('lastHandle');
+    expect(auth).toMatch(/resetLocalHopOnThisDevice\(identityBackend, \{ store: handleHintStore, lastHandle \}\)/);
   });
 
   it('does not list developer tools on Settings even when __DEV__ is true', () => {

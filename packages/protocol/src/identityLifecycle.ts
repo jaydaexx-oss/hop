@@ -182,6 +182,8 @@ export async function writeIdentityOwner(userId: string, backend: SecretBackend)
  * Explicit local wipe of this device’s HOP identity only.
  * Does not delete the server user, chats, events, contacts, or blocks.
  * Does not clear hop.install.id (anti-abuse signal, not identity).
+ * Does not touch hop.handle.hint — that last-used handle lives in non-secret
+ * storage and is not identity. Never restore keys from a remembered handle.
  * After this, first-launch onboarding may mint a new keypair.
  */
 export async function clearLocalDeviceIdentity(backend: SecretBackend): Promise<void> {

@@ -5,13 +5,17 @@ from collections.abc import Mapping
 from functools import lru_cache
 from typing import Optional
 
+from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from app.db_url import normalize_database_url
 
+load_dotenv()
+
 PLACEHOLDER = "CHANGE_ME"
 DEFAULT_DATABASE_URL = "postgresql+psycopg://hop@localhost:5432/hop"
+PRODUCTION_FLY_DB_MARKER = "hop-uokqmg"
 # Opaque crypto_box JSON is capped at 64KiB; allow headers/JSON wrapping headroom.
 MAX_REQUEST_BYTES = 262_144
 
@@ -123,6 +127,33 @@ def assert_production_config(
 def _is_loopback_url(value: str) -> bool:
     lowered = value.lower()
     return "localhost" in lowered or "127.0.0.1" in lowered or "0.0.0.0" in lowered
+
+
+def database_url_targets_production_fly(database_url: str) -> bool:
+    """True when DATABASE_URL is the live Fly cluster (hop-uokqmg / hop-uokqmg-db)."""
+    return PRODUCTION_FLY_DB_MARKER in database_url.lower()
+
+
+def development_database_host_label(database_url: str) -> str:
+    """Hostname class for logs. Never includes userinfo or the raw URL."""
+    if database_url_targets_production_fly(database_url):
+        return "hop-uokqmg"
+    lowered = database_url.lower()
+    if "localhost" in lowered or "127.0.0.1" in lowered:
+        return "localhost"
+    return "non-local"
+
+
+def assert_development_database_is_not_production_fly(settings: Settings) -> None:
+    """Block APP_ENV=development from using hop-uokqmg-db (no migrate/seed/wipe)."""
+    if settings.is_production:
+        return
+    if database_url_targets_production_fly(settings.database_url):
+        raise RuntimeError(
+            "Refusing to start: APP_ENV is development but DATABASE_URL points at hop-uokqmg. "
+            "Use local Postgres (postgresql+psycopg://hop@localhost:5432/hop). "
+            "Do not migrate, seed, or wipe hop-uokqmg-db from a development process."
+        )
 
 
 @lru_cache

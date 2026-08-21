@@ -34,6 +34,69 @@ export function isPrivateLanIpv4(hostname: string): boolean {
   return false;
 }
 
+/** Live Fly production API. Metro/EAS pointing here is PRODUCTION, not local DEV. */
+export const PRODUCTION_API_HOST = "hop-uokqmg.fly.dev";
+
+export type ApiDeploymentKind = "development" | "production";
+
+export type ApiDeploymentClassification = {
+  kind: ApiDeploymentKind;
+  label: "DEV" | "PRODUCTION";
+  host: string;
+  versionEnv: string | null;
+  mismatch: boolean;
+};
+
+export function hostnameFromApiUrl(apiUrl: string): string {
+  try {
+    return new URL(apiUrl).hostname.toLowerCase();
+  } catch {
+    return "";
+  }
+}
+
+export function kindFromVersionEnv(env: string | null | undefined): ApiDeploymentKind | null {
+  if (!env) return null;
+  const normalized = env.trim().toLowerCase();
+  if (normalized === "production" || normalized === "prod") return "production";
+  if (normalized === "development" || normalized === "dev" || normalized === "test" || normalized === "local") {
+    return "development";
+  }
+  return null;
+}
+
+/**
+ * Classify from the API origin only — not a client-side fake flag.
+ * hop-uokqmg.fly.dev is PRODUCTION. Loopback and RFC1918 LAN are DEV.
+ */
+export function kindFromApiUrl(apiUrl: string): ApiDeploymentKind | null {
+  const host = hostnameFromApiUrl(apiUrl);
+  if (!host) return null;
+  if (host === PRODUCTION_API_HOST || host.includes("hop-uokqmg")) return "production";
+  if (isLoopbackApiHost(host) || isPrivateLanIpv4(host)) return "development";
+  return null;
+}
+
+export function classifyApiDeployment(
+  apiUrl: string,
+  versionEnv?: string | null,
+): ApiDeploymentClassification {
+  const host = hostnameFromApiUrl(apiUrl) || "(invalid API URL)";
+  const fromUrl = kindFromApiUrl(apiUrl);
+  const fromVersion = kindFromVersionEnv(versionEnv);
+  const mismatch = fromUrl != null && fromVersion != null && fromUrl !== fromVersion;
+  // URL wins for hop-uokqmg vs local/LAN. Unknown remote hosts fail closed to PRODUCTION
+  // until /version env is known, so we never silently treat Fly as DEV.
+  const kind: ApiDeploymentKind = fromUrl ?? fromVersion ?? "production";
+  return {
+    kind,
+    label: kind === "production" ? "PRODUCTION" : "DEV",
+    host,
+    versionEnv: versionEnv ?? null,
+    mismatch,
+  };
+}
+
 export function resolveApiUrl(envUrl: string | undefined, isDev: boolean): string {
   const trimmed = envUrl?.trim();
   if (trimmed) return trimmed;

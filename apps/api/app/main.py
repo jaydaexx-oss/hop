@@ -11,7 +11,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, PlainTextResponse
 
 from app.api import api_router
-from app.config import MAX_REQUEST_BYTES, assert_production_config, get_settings
+from app.config import (
+    MAX_REQUEST_BYTES,
+    assert_development_database_is_not_production_fly,
+    assert_production_config,
+    development_database_host_label,
+    get_settings,
+)
 from app.db import init_db
 from app.errors import client_error_payload
 from app.logging_config import configure_logging
@@ -24,8 +30,26 @@ logger = logging.getLogger(__name__)
 async def lifespan(_app: FastAPI):
     settings = get_settings()
     configure_logging(settings.log_level, settings.log_format)
-    logger.info("Starting HOP API env=%s version=%s", settings.app_env, settings.app_version)
+    assert_development_database_is_not_production_fly(settings)
     assert_production_config(settings)
+    db_host = development_database_host_label(settings.database_url)
+    if settings.is_production:
+        logger.warning(
+            "HOP API PRODUCTION env=%s version=%s database_host=%s — live Fly. "
+            "Do not run local wipe/seed/reset against hop-uokqmg-db.",
+            settings.app_env,
+            settings.app_version,
+            db_host,
+        )
+    else:
+        logger.warning(
+            "HOP API DEV env=%s version=%s database_host=%s redis=local "
+            "(not hop-uokqmg). ENABLE_DEV_RATE_LIMIT_RESET is for this process only.",
+            settings.app_env,
+            settings.app_version,
+            db_host,
+        )
+    logger.info("Starting HOP API env=%s version=%s", settings.app_env, settings.app_version)
     init_db()
     yield
     logger.info("Shutting down HOP API")

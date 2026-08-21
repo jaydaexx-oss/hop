@@ -33,7 +33,10 @@ def test_metrics_endpoint(client: TestClient) -> None:
 def test_version_endpoint(client: TestClient) -> None:
     response = client.get("/version")
     assert response.status_code == 200
-    assert response.json()["service"] == "hop-api"
+    body = response.json()
+    assert body["service"] == "hop-api"
+    assert "env" in body
+    assert body["env"]
 
 
 def test_unimplemented_push_returns_404_not_offered(client: TestClient) -> None:

@@ -12,6 +12,7 @@ import {
 } from 'react-native';
 
 import { Avatar } from '@/components/Avatar';
+import { ApiEnvironmentBanner } from '@/components/ApiEnvironmentBanner';
 import { Text } from '@/components/Themed';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
@@ -249,6 +250,7 @@ export default function LoginScreen() {
         style={[styles.wrap, { backgroundColor: colors.background }]}
         behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
         <View style={styles.card}>
+          <ApiEnvironmentBanner compact />
           <Text style={styles.brand}>HOP</Text>
           <Text style={[styles.sub, { color: colors.muted }]}>
             {busy ? 'Restoring this device…' : 'Could not restore HOP on this device.'}
@@ -280,6 +282,7 @@ export default function LoginScreen() {
       style={[styles.wrap, { backgroundColor: colors.background }]}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}>
       <ScrollView contentContainerStyle={styles.card} keyboardShouldPersistTaps="handled">
+        <ApiEnvironmentBanner compact />
         <Text style={styles.brand}>HOP</Text>
         <Text style={[styles.sub, { color: colors.muted }]}>Choose a handle and hop in. No password.</Text>
         {rememberedHandle ? (

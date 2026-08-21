@@ -2,8 +2,10 @@ import { DarkTheme, DefaultTheme, Stack, ThemeProvider } from 'expo-router';
 import { useFonts } from 'expo-font';
 import * as SplashScreen from 'expo-splash-screen';
 import { useEffect } from 'react';
+import { View } from 'react-native';
 import 'react-native-reanimated';
 
+import { ApiEnvironmentBanner } from '@/components/ApiEnvironmentBanner';
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider, useAuth } from '@/src/auth/AuthProvider';
 import { BleProvider } from '@/src/ble/BleProvider';
@@ -59,20 +61,25 @@ function RootLayoutNav() {
 
   return (
     <ThemeProvider value={colorScheme === 'dark' ? DarkTheme : DefaultTheme}>
-      <Stack>
-        <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
-        <Stack.Screen name="chat/[id]" options={{ title: 'Chat' }} />
-        <Stack.Screen name="login" options={{ headerShown: false }} />
-        {__DEV__ ? <Stack.Screen name="device-diagnostics" options={{ title: 'Diagnostics' }} /> : null}
-        <Stack.Screen name="qr" options={{ title: 'My HOP QR Code' }} />
-        <Stack.Screen name="scan" options={{ title: 'Scan HOP code' }} />
-        <Stack.Screen name="requests" options={{ title: 'Message requests' }} />
-        <Stack.Screen name="events/index" options={{ title: 'Events' }} />
-        <Stack.Screen name="events/create" options={{ title: 'Create Event' }} />
-        <Stack.Screen name="events/[id]" options={{ title: 'Event' }} />
-        <Stack.Screen name="nearby-profile" options={{ title: 'Nearby profile' }} />
-        {__DEV__ ? <Stack.Screen name="ble-debug" options={{ title: 'BLE debug' }} /> : null}
-      </Stack>
+      <View style={{ flex: 1 }}>
+        <ApiEnvironmentBanner />
+        <View style={{ flex: 1 }}>
+          <Stack>
+            <Stack.Screen name="(tabs)" options={{ headerShown: false }} />
+            <Stack.Screen name="chat/[id]" options={{ title: 'Chat' }} />
+            <Stack.Screen name="login" options={{ headerShown: false }} />
+            {__DEV__ ? <Stack.Screen name="device-diagnostics" options={{ title: 'Diagnostics' }} /> : null}
+            <Stack.Screen name="qr" options={{ title: 'My HOP QR Code' }} />
+            <Stack.Screen name="scan" options={{ title: 'Scan HOP code' }} />
+            <Stack.Screen name="requests" options={{ title: 'Message requests' }} />
+            <Stack.Screen name="events/index" options={{ title: 'Events' }} />
+            <Stack.Screen name="events/create" options={{ title: 'Create Event' }} />
+            <Stack.Screen name="events/[id]" options={{ title: 'Event' }} />
+            <Stack.Screen name="nearby-profile" options={{ title: 'Nearby profile' }} />
+            {__DEV__ ? <Stack.Screen name="ble-debug" options={{ title: 'BLE debug' }} /> : null}
+          </Stack>
+        </View>
+      </View>
     </ThemeProvider>
   );
 }

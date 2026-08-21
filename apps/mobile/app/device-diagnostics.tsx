@@ -5,6 +5,7 @@ import type { BleLinkStatus, NetworkStatus, PeerTrustRecord, PeerTrustState } fr
 import { formatPersistedFingerprint, isDeveloperScreenEnabled } from '@hop/protocol';
 
 import { Text, View } from '@/components/Themed';
+import { ApiEnvironmentBanner } from '@/components/ApiEnvironmentBanner';
 import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import {
@@ -294,6 +295,7 @@ export default function DeviceDiagnosticsScreen() {
     <ScrollView
       style={[styles.wrap, { backgroundColor: colors.background }]}
       contentContainerStyle={styles.content}>
+      <ApiEnvironmentBanner compact />
       <Text style={styles.title}>Device diagnostics</Text>
       <Text style={[styles.lede, { color: colors.muted }]}>
         Development-device validation only — not a product feature. One-phone technical state is

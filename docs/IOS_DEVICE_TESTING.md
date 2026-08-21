@@ -8,6 +8,56 @@ Generated `apps/mobile/ios/` is gitignored (Expo CNG). `app.json` is the source 
 
 There is **no EAS `projectId`** in `app.json` (do not invent one). Cloud iOS development builds need `npx eas-cli login` then `npx eas-cli init` on an Expo account before `eas build`. Skip TestFlight / `preview` / `production` store profiles until a paid Apple team is connected. USB development-client path is still valid if you have Xcode.
 
+## Local development API (Homebrew Postgres — not Fly)
+
+Do **not** point laptop `DATABASE_URL` at `hop-uokqmg-db`. Development uses Homebrew `postgresql@16` + Redis on this Mac. Docker is optional (`infra/docker-compose.yml`) and is not required.
+
+```bash
+brew services start postgresql@16
+brew services start redis
+# first time only:
+#   createuser hop
+#   createdb -O hop hop
+
+cd /Users/jaydae/hop/apps/api
+source .venv/bin/activate
+alembic upgrade head
+python scripts/seed_dev.py
+./scripts/run_dev.sh
+```
+
+`seed_dev.py` does **not** copy production rows (no `jaydae`). It reports the local `users` count (empty schema is expected). Register throwaway handles such as `devtester` from the app.
+
+`ENABLE_DEV_RATE_LIMIT_RESET=true` belongs in **local** `apps/api/.env` only. Leave it unset on Fly.
+
+Confirm the process is DEV, not production:
+
+```bash
+curl -sS http://127.0.0.1:8000/version
+# {"service":"hop-api","version":"0.1.0","env":"development"}
+```
+
+API logs `HOP API DEV`. The app banner shows **DEV** for local/LAN URLs and **PRODUCTION** when `EXPO_PUBLIC_API_URL` is `https://hop-uokqmg.fly.dev` (from that host and from `/version` `env`).
+
+### Physical iPhone → this Mac
+
+Localhost on the phone is the phone. Use the Mac LAN IP:
+
+```bash
+ipconfig getifaddr en0
+# this machine: 192.168.1.170
+```
+
+Metro (gitignored `apps/mobile/.env` / `.env.development`):
+
+```bash
+EXPO_PUBLIC_API_URL=http://192.168.1.170:8000
+```
+
+Restart Metro after changing (`npx expo start --dev-client`). Do **not** rebuild EAS for this JS-only env change. `eas.json` `development` / `production` profiles stay on `https://hop-uokqmg.fly.dev`.
+
+The in-app **DEV** banner (root layout, login, Settings, diagnostics) is based on that URL plus `GET /version` `env` — not a fake client flag. Hidden 7-tap diagnostics reset talks to **this** LAN API’s Redis.
+
 ## iPhone 16 Pro — copy-paste (production API)
 
 On the Mac, with the iPhone 16 Pro connected by USB, Developer Mode on, and this computer trusted:
@@ -69,20 +119,9 @@ Restart Metro after changing `EXPO_PUBLIC_API_URL` (the value is inlined at bund
 
 ### Optional: Mac LAN API instead of production
 
-Only if you are intentionally hitting a local uvicorn, not Fly:
+Prefer **Local development API** above (Homebrew Postgres + `./scripts/run_dev.sh`). SQLite is pytest-only; do not use it as the iPhone test API when local Postgres is running.
 
-```bash
-ipconfig getifaddr en0
-```
-
-```bash
-cd apps/api
-source .venv/bin/activate   # if you use the project venv
-DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=http://localhost:8081 \
-  uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
-```
-
-Then in `apps/mobile/.env`: `EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000` (example `http://192.168.1.23:8000`). Development clients allow RFC1918 LAN HTTP; release builds (`__DEV__ === false`) refuse it. Restart Metro after changing `EXPO_PUBLIC_API_URL` (inlined at bundle time). Do **not** rebuild EAS for this JS-only env change.
+Then in `apps/mobile/.env`: `EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000` (this Mac: `http://192.168.1.170:8000`). Development clients allow RFC1918 LAN HTTP; release builds (`__DEV__ === false`) refuse it. Restart Metro after changing `EXPO_PUBLIC_API_URL` (inlined at bundle time). Do **not** rebuild EAS for this JS-only env change.
 
 ### Clearing “Too many new accounts from this network” (test API only)
 

@@ -7,7 +7,7 @@ from app.rate_limit import client_ip
 def test_production_disables_openapi_by_default(monkeypatch) -> None:
     monkeypatch.setenv("APP_ENV", "production")
     monkeypatch.delenv("DOCS_ENABLED", raising=False)
-    settings = Settings()
+    settings = Settings(_env_file=None)
     assert settings.is_production is True
     assert settings.openapi_enabled is False
 
@@ -81,6 +81,33 @@ def test_development_allows_local_defaults() -> None:
     settings = Settings()
     assert settings.is_production is False
     assert_production_config(settings)
+
+
+def test_development_refuses_hop_uokqmg_database_url(monkeypatch) -> None:
+    from app.config import (
+        Settings,
+        assert_development_database_is_not_production_fly,
+        database_url_targets_production_fly,
+    )
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv(
+        "DATABASE_URL",
+        "postgresql+psycopg://hop:fake@hop-uokqmg-db.flycast:5432/hop",
+    )
+    settings = Settings()
+    assert database_url_targets_production_fly(settings.database_url) is True
+    with pytest.raises(RuntimeError, match="hop-uokqmg"):
+        assert_development_database_is_not_production_fly(settings)
+
+
+def test_development_allows_local_postgres_url(monkeypatch) -> None:
+    from app.config import Settings, assert_development_database_is_not_production_fly
+
+    monkeypatch.setenv("APP_ENV", "development")
+    monkeypatch.setenv("DATABASE_URL", "postgresql+psycopg://hop@localhost:5432/hop")
+    settings = Settings()
+    assert_development_database_is_not_production_fly(settings)
 
 
 def test_production_rejects_http_api_public_url(monkeypatch) -> None:

@@ -131,6 +131,12 @@ def limit_new_account(request: Request, install_hash: str | None) -> None:
 
 def reset_limiters() -> None:
     _memory_limiter.reset()
+    try:
+        client = _redis_client()
+        for redis_key in client.scan_iter("hop:rl:*"):
+            client.delete(redis_key)
+    except Exception:
+        return
 
 
 def _truthy_env(name: str) -> bool:

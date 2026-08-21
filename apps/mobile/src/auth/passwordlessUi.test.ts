@@ -92,12 +92,14 @@ describe('passwordless consumer auth UI', () => {
     expect(settings).not.toContain('Reset this network/IP and install test counter');
     expect(settings).not.toContain('Reset account-creation test counter');
     expect(settings).not.toContain('devAccountCreationReset');
+    expect(settings).toContain('ApiEnvironmentBanner');
     const login = readApp('app/login.tsx');
     expect(login).not.toContain('/device-diagnostics');
     expect(login).not.toContain('/ble-debug');
     expect(login).not.toContain('Device diagnostics');
     expect(login).not.toContain('Reset this network/IP and install test counter');
     expect(login).not.toContain('Reset account-creation test counter');
+    expect(login).toContain('ApiEnvironmentBanner');
   });
 
   it('Recover my HOP does not call register-device', () => {

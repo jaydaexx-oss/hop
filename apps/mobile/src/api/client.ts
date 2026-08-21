@@ -25,6 +25,19 @@ export function assertSafeApiUrl(url: string): void {
 export const API_URL = resolveApiUrl(process.env.EXPO_PUBLIC_API_URL, isDevClient());
 assertSafeApiUrl(API_URL);
 
+export type VersionResponse = { service: string; version: string; env: string };
+
+export async function getVersion(apiUrl: string = API_URL): Promise<VersionResponse> {
+  assertSafeApiUrl(apiUrl);
+  const response = await fetch(`${apiUrl}/version`, {
+    headers: { Accept: 'application/json' },
+  });
+  if (!response.ok) {
+    throw new Error(`Version check failed: ${response.status}`);
+  }
+  return (await response.json()) as VersionResponse;
+}
+
 /** True when the URL would hit this device, not the Mac running the API. */
 export function apiUrlUsesLoopback(url: string = API_URL): boolean {
   try {

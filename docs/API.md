@@ -30,7 +30,7 @@ Do **not** put session tokens in query strings.
 | GET | `/health` | No | Liveness — process is up |
 | GET | `/live` | No | Alias liveness probe |
 | GET | `/ready` | No | Readiness — Postgres + Redis (503 if not ready) |
-| GET | `/version` | No | Build version and environment |
+| GET | `/version` | No | `{service, version, env}` — `env` is `APP_ENV`. Clients show **DEV** vs **PRODUCTION** from this field plus the API URL host (`hop-uokqmg.fly.dev` → PRODUCTION; localhost/LAN → DEV). |
 | GET | `/metrics` | No | Prometheus text metrics (disable with `METRICS_ENABLED=false`) |
 
 ## Interactive documentation

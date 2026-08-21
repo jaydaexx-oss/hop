@@ -455,9 +455,16 @@ export {
 } from "./relayPolicy.js";
 export { SimulatedNetwork, type SimEvent, type SimulatedNode } from "./simulatedNetwork.js";
 export {
+  PRODUCTION_API_HOST,
   assertSafeApiUrl,
+  classifyApiDeployment,
+  hostnameFromApiUrl,
   isLoopbackApiHost,
   isPrivateLanIpv4,
+  kindFromApiUrl,
+  kindFromVersionEnv,
   resolveApiUrl,
+  type ApiDeploymentClassification,
+  type ApiDeploymentKind,
   type ApiUrlPolicyOptions,
 } from "./apiUrlPolicy.js";

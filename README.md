@@ -47,20 +47,31 @@ cd apps/mobile && npm run typecheck
 
 ## Run locally
 
-API (SQLite, no Docker):
+Local development uses **Homebrew Postgres + Redis on this Mac**, not Fly `hop-uokqmg-db`.
+Docker is optional (`infra/docker-compose.yml`); this repo’s laptop path does not require it.
 
 ```bash
+brew services start postgresql@16
+brew services start redis
+# first time: createuser hop && createdb -O hop hop
+
+cp .env.example .env
+cp apps/mobile/.env.example apps/mobile/.env
+# Physical iPhone: EXPO_PUBLIC_API_URL=http://$(ipconfig getifaddr en0):8000
+
 cd apps/api
 source .venv/bin/activate
-pip install -r requirements-test.txt
-pip install uvicorn
-DATABASE_URL=sqlite:///./hop.db CORS_ORIGINS=http://localhost:8081 \
-  uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+pip install -r requirements-dev.txt
+alembic upgrade head          # local hop database only
+python scripts/seed_dev.py    # reports empty users; does not copy production
+./scripts/run_dev.sh          # uvicorn --host 0.0.0.0 — not hop-uokqmg
 ```
 
 `--host 0.0.0.0` is required so a physical iPhone on your LAN can reach the API. Simulator-only use can stay on 127.0.0.1.
 
-To clear the **network/IP** new-account test limiter on this local API (`APP_ENV=development`), not production:
+The API logs **HOP API DEV** vs **HOP API PRODUCTION**. The mobile app shows a **DEV** / **PRODUCTION** banner from the API URL and `GET /version` `env` (hop-uokqmg.fly.dev → PRODUCTION; local/LAN → DEV).
+
+To clear the **network/IP** new-account test limiter on this local API (`APP_ENV=development`, `ENABLE_DEV_RATE_LIMIT_RESET=true`), not production:
 
 ```bash
 cd apps/api
@@ -70,23 +81,13 @@ npm run reset:account-creation-limits
 
 That curl uses the **Mac's** source IP. It does **not** clear an iPhone pointed at `https://hop-uokqmg.fly.dev`. The script refuses `hop-uokqmg.fly.dev`. For a physical phone, set `EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000`, restart Metro, and use the hidden 7-tap diagnostics reset on the phone.
 
-Postgres migrations (when Postgres is running):
-
-```bash
-cd apps/api
-alembic upgrade head
-```
-
 Mobile (development client — **not Expo Go**):
 
 ```bash
-cp apps/mobile/.env.example apps/mobile/.env
-# Default in .env.example is the live Fly API: https://hop-uokqmg.fly.dev
-# LAN API instead: EXPO_PUBLIC_API_URL=http://<MAC_LAN_IP>:8000
+# apps/mobile/.env should be the LAN/local API for Metro. Leave eas.json Fly URLs alone.
 cd apps/mobile
 npm install
-npx expo prebuild --platform ios
-npx expo run:ios --device
+npx expo start --dev-client
 ```
 
 Install steps, signing, and diagnostics: **`docs/IOS_DEVICE_TESTING.md`**. Nearby BLE procedure: **`docs/BLE_TESTING.md`**. Simulators, Expo Go, and web are not valid BLE tests.

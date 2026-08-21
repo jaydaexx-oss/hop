@@ -48,6 +48,7 @@ services:
       METRICS_ENABLED: ${METRICS_ENABLED:-true}
       UVICORN_WORKERS: ${UVICORN_WORKERS:-1}
       FORWARDED_ALLOW_IPS: ${FORWARDED_ALLOW_IPS:-127.0.0.1}
+      ENABLE_DEV_RATE_LIMIT_RESET: ${ENABLE_DEV_RATE_LIMIT_RESET:-true}
     depends_on:
       postgres:
         condition: service_healthy

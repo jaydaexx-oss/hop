@@ -5,6 +5,7 @@ import { useRouter } from 'expo-router';
 import { bluetoothStatusLabel, LOCAL_AVATAR_COLORS } from '@hop/protocol';
 
 import { ActionSheet } from '@/components/ActionSheet';
+import { ApiEnvironmentBanner } from '@/components/ApiEnvironmentBanner';
 import { Avatar } from '@/components/Avatar';
 import { Text, View } from '@/components/Themed';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -148,6 +149,7 @@ export default function SettingsScreen() {
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={styles.wrap}>
+      <ApiEnvironmentBanner compact />
       <StatusBanner />
       <View style={styles.hero}>
         <Pressable

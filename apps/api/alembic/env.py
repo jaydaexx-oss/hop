@@ -6,7 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 from sqlmodel import SQLModel
 
-from app.config import get_settings
+from app.config import assert_development_database_is_not_production_fly, get_settings
 from app.db_url import normalize_database_url
 from app.models import tables  # noqa: F401
 
@@ -15,6 +15,7 @@ if config.config_file_name is not None:
     fileConfig(config.config_file_name)
 
 _settings = get_settings()
+assert_development_database_is_not_production_fly(_settings)
 config.set_main_option(
     "sqlalchemy.url",
     normalize_database_url(

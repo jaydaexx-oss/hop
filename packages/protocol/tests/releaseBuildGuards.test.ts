@@ -95,7 +95,15 @@ describe("mobile production send path source", () => {
     expect(login).toContain('placeholder="One-time recovery password"');
     const appJson = readRepo("apps/mobile/app.json");
     expect(appJson).toContain("webcredentials:hop-uokqmg.fly.dev");
+    const easJson = readRepo("apps/mobile/eas.json");
+    expect(easJson).toContain("https://hop-uokqmg.fly.dev");
+    expect(easJson).not.toMatch(/192\.168\./);
+    const banner = readRepo("apps/mobile/components/ApiEnvironmentBanner.tsx");
+    expect(banner).toContain("classifyApiDeployment");
+    expect(banner).toContain("getVersion");
+    expect(banner).not.toMatch(/EXPO_PUBLIC_FAKE/);
     const layout = readRepo("apps/mobile/app/_layout.tsx");
+    expect(layout).toContain("ApiEnvironmentBanner");
     expect(layout).toMatch(/\{__DEV__ \? <Stack\.Screen name="device-diagnostics"/);
     expect(layout).toMatch(/\{__DEV__ \? <Stack\.Screen name="ble-debug"/);
     const bleDebug = readRepo("apps/mobile/app/ble-debug.tsx");

@@ -20,10 +20,15 @@ import Colors from '@/constants/Colors';
 import { useColorScheme } from '@/components/useColorScheme';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { chatRoute, openPeerThread } from '@/src/chat/openPeerThread';
-import { INVISIBLE_RADAR_COPY } from '@/src/nearby/nearbyPolicy';
+import {
+  CREATE_EVENT_ROUTE,
+  EVENTS_LIST_ROUTE,
+  planEventModeTap,
+} from '@/src/nearby/eventModeEntry';
+import { EVENT_BLOCKED_COPY, INVISIBLE_RADAR_COPY } from '@/src/nearby/nearbyPolicy';
 import { SCAN_STATE_COPY } from '@/src/nearby/scanState';
-import type { AroundUsPeer, NearbyOperatingMode } from '@/src/nearby/types';
-import { OPERATING_MODE_LABELS, PROXIMITY_LABELS } from '@/src/nearby/types';
+import type { AroundUsPeer, NearbyAudience, NearbyOperatingMode } from '@/src/nearby/types';
+import { AUDIENCE_LABELS, OPERATING_MODE_LABELS, PROXIMITY_LABELS } from '@/src/nearby/types';
 import { useNearbyPeers } from '@/src/nearby/useNearbyPeers';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { useLocalAvatarColor } from '@/src/profile/useLocalAvatarColor';
@@ -52,10 +57,12 @@ function sheetLabel(id: NearbySheetActionId, peer: AroundUsPeer): string {
   return id;
 }
 
-function leadCopy(mode: NearbyOperatingMode): string {
+function leadCopy(mode: NearbyOperatingMode, eventLive: boolean): string {
   if (mode === 'invisible') return INVISIBLE_RADAR_COPY;
   if (mode === 'event') {
-    return 'Gathering discovery is on. Faster Bluetooth for this session only. Tap a person for profile, connect, or a message request — never an automatic chat.';
+    return eventLive
+      ? 'Gathering discovery is on. Faster Bluetooth for this session only. Tap a person for profile, connect, or a message request — never an automatic chat.'
+      : 'Event Mode radar. Create a gathering or select one to start discovery. Tap a person for profile, connect, or a message request — never an automatic chat.';
   }
   return 'Real people this phone can see over Bluetooth. Tap a dot for profile, connect, or a message request — never an automatic chat. Approximate proximity only.';
 }
@@ -89,8 +96,13 @@ export default function NearbyScreen() {
   const [openError, setOpenError] = useState<string | null>(null);
   const [eventError, setEventError] = useState<string | null>(null);
   const [sheetPeer, setSheetPeer] = useState<AroundUsPeer | null>(null);
+  const [eventShell, setEventShell] = useState(false);
+  const [modeSheet, setModeSheet] = useState<'event-blocked' | null>(null);
 
-  const radarTint = operatingMode === 'event' ? colors.event : colors.tint;
+  const showEventRadar = operatingMode === 'event' || eventShell;
+  const displayMode: NearbyOperatingMode = showEventRadar ? 'event' : operatingMode;
+  const eventLive = eventMode.enabled;
+  const radarTint = showEventRadar ? colors.event : colors.tint;
   const scanning =
     operatingMode !== 'invisible' && (scanState === 'searching' || scanState === 'peers_found');
   const emptyCopy =
@@ -155,34 +167,59 @@ export default function NearbyScreen() {
   function onSelectMode(mode: NearbyOperatingMode) {
     setEventError(null);
     if (mode === 'event') {
-      router.push('/events');
+      const plan = planEventModeTap({ operatingMode, eventEnabled: eventMode.enabled });
+      if (plan.openBlockedSheet) {
+        setModeSheet('event-blocked');
+        return;
+      }
+      if (plan.showEventShell) setEventShell(true);
       return;
     }
+    setEventShell(false);
+    setModeSheet(null);
     void setOperatingMode(mode).catch((err) => {
       setEventError(err instanceof Error ? err.message : 'Could not update Nearby mode');
     });
   }
+
+  async function chooseBlockedAudience(next: NearbyAudience) {
+    setModeSheet(null);
+    try {
+      await setOperatingMode('around_us', { audience: next });
+      setEventShell(true);
+    } catch (err) {
+      setEventError(err instanceof Error ? err.message : 'Could not update Nearby mode');
+    }
+  }
+
+  const blockedActions: SheetAction[] = [
+    { label: AUDIENCE_LABELS.contacts, onPress: () => void chooseBlockedAudience('contacts') },
+    { label: AUDIENCE_LABELS.everyone, onPress: () => void chooseBlockedAudience('everyone') },
+  ];
 
   return (
     <ScrollView style={{ flex: 1, backgroundColor: colors.background }} contentContainerStyle={styles.wrap}>
       <StatusBanner />
       <View style={styles.header}>
         <Text style={[styles.brand, { color: colors.tint }]}>HOP</Text>
-        <Text style={[styles.scanBadge, { color: operatingMode === 'event' ? colors.event : colors.muted }]}>
-          {operatingMode === 'event'
-            ? `${eventMode.name ? `${eventMode.name} · ` : 'Event Mode · '}${eventRemainingLabel}`
+        <Text style={[styles.scanBadge, { color: displayMode === 'event' ? colors.event : colors.muted }]}>
+          {displayMode === 'event'
+            ? eventLive
+              ? `${eventMode.name ? `${eventMode.name} · ` : 'Event Mode · '}${eventRemainingLabel}`
+              : 'Event Mode'
             : bluetoothStatusLabel(scanState)}
           {nearbyCount > 0 ? ` · ${nearbyCount}` : ''}
         </Text>
       </View>
-      <Text style={styles.title}>{OPERATING_MODE_LABELS[operatingMode]}</Text>
-      <Text style={[styles.lead, { color: colors.muted }]}>{leadCopy(operatingMode)}</Text>
+      <Text style={styles.title}>{OPERATING_MODE_LABELS[displayMode]}</Text>
+      <Text style={[styles.lead, { color: colors.muted }]}>{leadCopy(displayMode, eventLive)}</Text>
 
       <NearbyModeSelector
-        operatingMode={operatingMode}
+        operatingMode={displayMode}
         audience={audience}
-        eventName={eventMode.name}
+        eventName={eventLive ? eventMode.name : undefined}
         eventRemainingLabel={eventRemainingLabel}
+        eventLive={eventLive}
         tint={colors.tint}
         eventTint={colors.event}
         muted={colors.muted}
@@ -193,7 +230,10 @@ export default function NearbyScreen() {
         onSelectAudience={(next) => {
           void setAudience(next);
         }}
+        onCreateEvent={() => router.push(CREATE_EVENT_ROUTE)}
+        onOpenEvents={() => router.push(EVENTS_LIST_ROUTE)}
         onEndEvent={() => {
+          setEventShell(false);
           void setOperatingMode('around_us').catch((err) => {
             setEventError(err instanceof Error ? err.message : 'Could not end Event Mode');
           });
@@ -211,10 +251,10 @@ export default function NearbyScreen() {
         selfColor={selfColor}
         selfUserId={user?.id}
         emptyCopy={emptyCopy}
-        operatingMode={operatingMode}
+        operatingMode={displayMode}
         reduceMotion={reduceMotion}
-        eventName={eventMode.enabled ? eventMode.name : undefined}
-        eventRemainingLabel={eventMode.enabled ? eventRemainingLabel : undefined}
+        eventName={eventLive ? eventMode.name : undefined}
+        eventRemainingLabel={eventLive ? eventRemainingLabel : undefined}
         onPressPeer={(peer) => {
           void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium).catch(() => undefined);
           setSheetPeer(peer);
@@ -229,9 +269,11 @@ export default function NearbyScreen() {
         ) : (
           <Text style={{ color: colors.muted }}>
             {sessionActive
-              ? operatingMode === 'event'
+              ? eventLive
                 ? `Event Mode scanning · ${eventMode.name ? `${eventMode.name} · ` : ''}${eventRemainingLabel} left`
-                : 'Looking around'
+                : showEventRadar
+                  ? 'Event Mode radar'
+                  : 'Looking around'
               : 'Nearby is idle'}
           </Text>
         )}
@@ -295,6 +337,15 @@ export default function NearbyScreen() {
         avatarUserId={sheetPeer?.userId}
         avatarColor={colors.tint}
         actions={sheetActions}
+      />
+      <ActionSheet
+        visible={modeSheet === 'event-blocked'}
+        onDismiss={() => setModeSheet(null)}
+        title={EVENT_BLOCKED_COPY.title}
+        message={EVENT_BLOCKED_COPY.body}
+        avatarInitials="IN"
+        avatarColor={colors.tint}
+        actions={blockedActions}
       />
     </ScrollView>
   );

@@ -80,7 +80,7 @@ export default function EventsListScreen() {
       <StatusBanner />
       <Text style={[styles.title, { color: colors.text }]}>Events</Text>
       <Text style={{ color: colors.muted, marginBottom: 12 }}>
-        Create or join a gathering. Event Mode radar turns on only after you select an active event.
+        Create or join a gathering. Event Mode opens the radar first — pick an active event here to turn discovery on.
       </Text>
       <Pressable
         onPress={() => router.push('/events/create')}

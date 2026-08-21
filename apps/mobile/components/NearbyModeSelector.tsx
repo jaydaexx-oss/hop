@@ -21,6 +21,9 @@ export function NearbyModeSelector({
   onSelectMode,
   onSelectAudience,
   onEndEvent,
+  onCreateEvent,
+  onOpenEvents,
+  eventLive = false,
 }: {
   operatingMode: NearbyOperatingMode;
   audience: NearbyAudience;
@@ -32,9 +35,12 @@ export function NearbyModeSelector({
   border: string;
   text: string;
   busy: boolean;
+  eventLive?: boolean;
   onSelectMode: (mode: NearbyOperatingMode) => void;
   onSelectAudience: (audience: NearbyAudience) => void;
   onEndEvent?: () => void;
+  onCreateEvent?: () => void;
+  onOpenEvents?: () => void;
 }) {
   const activeTint = operatingMode === 'event' ? eventTint : tint;
   const showAudience = operatingMode !== 'invisible';
@@ -81,9 +87,31 @@ export function NearbyModeSelector({
             <Text style={[styles.eventName, { color: eventTint }]}>{eventName}</Text>
           ) : null}
           <Text style={[styles.eventStatus, { color: eventTint }]}>
-            Event Mode active · {eventRemainingLabel} left
+            {eventLive
+              ? `Event Mode active · ${eventRemainingLabel} left`
+              : 'Event Mode radar · create or select a gathering'}
           </Text>
-          {onEndEvent ? (
+          {onCreateEvent ? (
+            <Pressable
+              onPress={onCreateEvent}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel="Create Event"
+              style={[styles.createBtn, { backgroundColor: eventTint }]}>
+              <Text style={styles.createLabel}>Create Event</Text>
+            </Pressable>
+          ) : null}
+          {onOpenEvents ? (
+            <Pressable
+              onPress={onOpenEvents}
+              disabled={busy}
+              accessibilityRole="button"
+              accessibilityLabel="Events"
+              style={[styles.endBtn, { borderColor: eventTint }]}>
+              <Text style={{ color: eventTint, fontWeight: '800', fontSize: 13 }}>Events</Text>
+            </Pressable>
+          ) : null}
+          {eventLive && onEndEvent ? (
             <Pressable
               onPress={onEndEvent}
               disabled={busy}
@@ -152,6 +180,14 @@ const styles = StyleSheet.create({
   eventStatus: { fontSize: 13, fontWeight: '800', textAlign: 'center' },
   eventBlock: { gap: 6, alignItems: 'center' },
   eventName: { fontSize: 18, fontWeight: '800', textAlign: 'center' },
+  createBtn: {
+    alignSelf: 'stretch',
+    borderRadius: 12,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    alignItems: 'center',
+  },
+  createLabel: { color: '#042f2e', fontWeight: '800', fontSize: 15 },
   endBtn: { borderWidth: 1.5, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 8 },
   audienceBlock: { gap: 8 },
   audienceCaption: { fontSize: 12, fontWeight: '600' },

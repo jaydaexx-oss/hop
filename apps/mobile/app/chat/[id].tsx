@@ -2,14 +2,11 @@ import { useFocusEffect, useLocalSearchParams, useNavigation, Redirect } from 'e
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   TextInput,
   AppState,
 } from 'react-native';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import {
   CHAT_PAGE_SIZE,
   DEFAULT_TTL_MS,
@@ -33,6 +30,7 @@ import {
   type StoredMessage,
 } from '@hop/protocol';
 
+import { ComposerKeyboardScreen } from '@/components/ComposerKeyboardScreen';
 import { MessageBubble } from '@/components/MessageBubble';
 import { PTTButton, type VoiceClip } from '@/components/PTTButton';
 import { ActionSheet } from '@/components/ActionSheet';
@@ -61,7 +59,6 @@ export default function ChatScreen() {
   const { service, store, syncNow, ready: offlineReady, status, queuedCount, safety, cacheConversation } = useOffline();
   const { peers, connectedId } = useBle();
   const navigation = useNavigation();
-  const insets = useSafeAreaInsets();
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -505,159 +502,161 @@ export default function ChatScreen() {
       : null;
 
   return (
-    <KeyboardAvoidingView
-      style={{ flex: 1, backgroundColor: colors.background }}
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      keyboardVerticalOffset={80}>
-      {error ? (
-        <Text style={styles.error} accessibilityLiveRegion="polite">
-          {error}
-        </Text>
-      ) : queuedHint ? (
-        <Text style={[styles.hint, { color: colors.muted }]} accessibilityLiveRegion="polite">
-          {queuedHint}
-        </Text>
-      ) : null}
-      {safetyRecord?.relationship === 'incoming_request' ? (
-        <View style={[styles.requestBanner, { backgroundColor: colors.card }]}>
-          <Text style={{ color: colors.text }}>
-            Message request. Accept to chat. They cannot send another introduction.
+    <View style={{ flex: 1, backgroundColor: colors.background }}>
+      <ComposerKeyboardScreen
+        style={{ backgroundColor: colors.background }}
+        renderComposer={(paddingBottom) => (
+          <View style={[styles.composer, { backgroundColor: colors.background, paddingBottom }]}>
+            {eventArchived ? (
+              <Text style={{ color: colors.muted, paddingHorizontal: 4 }}>Event Chat is archived. You can still read history.</Text>
+            ) : isEventChat && eventRecipientIds.length === 0 ? (
+              <Text style={{ color: colors.muted, paddingHorizontal: 4 }}>Invite someone who accepted to start Event Chat.</Text>
+            ) : inputMode === 'ptt' && !isEventChat ? (
+              <View style={styles.pttRow}>
+                <PTTButton
+                  tint={colors.tint}
+                  tintForeground="#042f2e"
+                  muted={colors.muted}
+                  card={colors.card}
+                  onSend={sendVoice}
+                />
+                <Pressable
+                  onPress={() => setInputMode('text')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Switch to text"
+                  style={[styles.toggle, { backgroundColor: colors.card }]}>
+                  <Text style={[styles.toggleLabel, { color: colors.text }]}>Aa</Text>
+                </Pressable>
+              </View>
+            ) : (
+              <>
+                <Pressable
+                  onPress={() => setInputMode('ptt')}
+                  accessibilityRole="button"
+                  accessibilityLabel="Switch to push to talk"
+                  style={[styles.toggle, { backgroundColor: colors.card, display: isEventChat ? 'none' : 'flex' }]}>
+                  <Text style={[styles.toggleLabel, { color: colors.tint }]}>PTT</Text>
+                </Pressable>
+                <TextInput
+                  value={draft}
+                  onChangeText={setDraft}
+                  placeholder="Message"
+                  placeholderTextColor={colors.muted}
+                  multiline
+                  maxLength={MAX_APPLICATION_TEXT_CHARS}
+                  accessibilityLabel="Message"
+                  style={[styles.input, { color: colors.text, backgroundColor: colors.card }]}
+                />
+                <Pressable
+                  onPress={send}
+                  disabled={!canSend}
+                  accessibilityRole="button"
+                  accessibilityLabel="Send message"
+                  accessibilityState={{ disabled: !canSend }}
+                  style={[styles.send, { backgroundColor: colors.tint, opacity: canSend ? 1 : 0.45 }]}>
+                  <Text style={styles.sendLabel}>Send</Text>
+                </Pressable>
+              </>
+            )}
+          </View>
+        )}>
+        {error ? (
+          <Text style={styles.error} accessibilityLiveRegion="polite">
+            {error}
           </Text>
-          <View style={styles.requestRow}>
-            <Pressable
-              onPress={() => void runPeerAction('accept')}
-              style={[styles.requestBtn, { backgroundColor: colors.tint }]}>
-              <Text style={styles.sendLabel}>Accept</Text>
-            </Pressable>
-            <Pressable
-              onPress={() => void runPeerAction('decline')}
-              style={[styles.requestBtn, { borderWidth: 1.5, borderColor: colors.tint }]}>
-              <Text style={{ color: colors.tint, fontWeight: '700' }}>Decline</Text>
-            </Pressable>
-          </View>
-        </View>
-      ) : null}
-      {broadcastId ? (
-        <Text style={[styles.hint, { color: colors.muted }]}>
-          Private reply to a nearby broadcast. This is not posted publicly.
-        </Text>
-      ) : null}
-      {safetyRecord?.relationship === 'outgoing_request' ? (
-        <Text style={[styles.hint, { color: colors.muted }]}>
-          Waiting for them to accept. You already sent an introduction.
-        </Text>
-      ) : null}
-      {safetyRecord?.relationship === 'none' ? (
-        <Text style={[styles.hint, { color: colors.muted }]}>
-          Unknown people start as a message request. One introduction until they accept.
-        </Text>
-      ) : null}
-      {safetyRecord?.relationship === 'blocked' ? (
-        <Text style={[styles.hint, { color: '#DC2626' }]}>This person is blocked.</Text>
-      ) : null}
-      {safetyRecord?.muted && safetyRecord.relationship === 'accepted' ? (
-        <Text style={[styles.hint, { color: colors.muted }]}>Muted — messages still arrive, notifications off.</Text>
-      ) : null}
-      <View style={styles.listWrap}>
-        <FlatList
-          ref={listRef}
-          inverted
-          data={invertedData}
-          keyExtractor={(item) => item.message_id}
-          contentContainerStyle={styles.list}
-          initialNumToRender={16}
-          windowSize={8}
-          maxToRenderPerBatch={12}
-          maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
-          onEndReached={loadOlder}
-          onEndReachedThreshold={0.2}
-          onScroll={(event) => {
-            const pinned = isPinnedToLatest(event.nativeEvent.contentOffset.y);
-            pinnedToLatest.current = pinned;
-            if (pinned && newIncoming) setNewIncoming(0);
-          }}
-          scrollEventThrottle={16}
-          renderItem={({ item }) => (
-            <MessageBubble
-              item={item}
-              mine={item.sender_id === me.id}
-              tint={colors.tint}
-              muted={colors.muted}
-              card={colors.card}
-              textColor={colors.text}
-              onRetry={item.sender_id === me.id && isFailedMessageStatus(item.status) ? retryFailed : undefined}
-            />
-          )}
-        />
-        {newIncoming > 0 ? (
-          <Pressable
-            onPress={() => {
-              setNewIncoming(0);
-              pinnedToLatest.current = true;
-              listRef.current?.scrollToOffset({ offset: 0, animated: true });
-            }}
-            accessibilityRole="button"
-            accessibilityLabel={`${newIncoming} new messages`}
-            style={[styles.newPill, { backgroundColor: colors.tint }]}>
-            <Text style={styles.newPillLabel}>
-              {newIncoming === 1 ? 'New message' : `${newIncoming} new messages`}
-            </Text>
-          </Pressable>
+        ) : queuedHint ? (
+          <Text style={[styles.hint, { color: colors.muted }]} accessibilityLiveRegion="polite">
+            {queuedHint}
+          </Text>
         ) : null}
-      </View>
-      <View style={[styles.composer, { backgroundColor: colors.background, paddingBottom: Math.max(12, insets.bottom) }]}>
-        {eventArchived ? (
-          <Text style={{ color: colors.muted, paddingHorizontal: 4 }}>Event Chat is archived. You can still read history.</Text>
-        ) : isEventChat && eventRecipientIds.length === 0 ? (
-          <Text style={{ color: colors.muted, paddingHorizontal: 4 }}>Invite someone who accepted to start Event Chat.</Text>
-        ) : inputMode === 'ptt' && !isEventChat ? (
-          <View style={styles.pttRow}>
-            <PTTButton
-              tint={colors.tint}
-              tintForeground="#042f2e"
-              muted={colors.muted}
-              card={colors.card}
-              onSend={sendVoice}
-            />
-            <Pressable
-              onPress={() => setInputMode('text')}
-              accessibilityRole="button"
-              accessibilityLabel="Switch to text"
-              style={[styles.toggle, { backgroundColor: colors.card }]}>
-              <Text style={[styles.toggleLabel, { color: colors.text }]}>Aa</Text>
-            </Pressable>
+        {safetyRecord?.relationship === 'incoming_request' ? (
+          <View style={[styles.requestBanner, { backgroundColor: colors.card }]}>
+            <Text style={{ color: colors.text }}>
+              Message request. Accept to chat. They cannot send another introduction.
+            </Text>
+            <View style={styles.requestRow}>
+              <Pressable
+                onPress={() => void runPeerAction('accept')}
+                style={[styles.requestBtn, { backgroundColor: colors.tint }]}>
+                <Text style={styles.sendLabel}>Accept</Text>
+              </Pressable>
+              <Pressable
+                onPress={() => void runPeerAction('decline')}
+                style={[styles.requestBtn, { borderWidth: 1.5, borderColor: colors.tint }]}>
+                <Text style={{ color: colors.tint, fontWeight: '700' }}>Decline</Text>
+              </Pressable>
+            </View>
           </View>
-        ) : (
-          <>
+        ) : null}
+        {broadcastId ? (
+          <Text style={[styles.hint, { color: colors.muted }]}>
+            Private reply to a nearby broadcast. This is not posted publicly.
+          </Text>
+        ) : null}
+        {safetyRecord?.relationship === 'outgoing_request' ? (
+          <Text style={[styles.hint, { color: colors.muted }]}>
+            Waiting for them to accept. You already sent an introduction.
+          </Text>
+        ) : null}
+        {safetyRecord?.relationship === 'none' ? (
+          <Text style={[styles.hint, { color: colors.muted }]}>
+            Unknown people start as a message request. One introduction until they accept.
+          </Text>
+        ) : null}
+        {safetyRecord?.relationship === 'blocked' ? (
+          <Text style={[styles.hint, { color: '#DC2626' }]}>This person is blocked.</Text>
+        ) : null}
+        {safetyRecord?.muted && safetyRecord.relationship === 'accepted' ? (
+          <Text style={[styles.hint, { color: colors.muted }]}>Muted — messages still arrive, notifications off.</Text>
+        ) : null}
+        <View style={styles.listWrap}>
+          <FlatList
+            ref={listRef}
+            inverted
+            data={invertedData}
+            keyExtractor={(item) => item.message_id}
+            contentContainerStyle={styles.list}
+            initialNumToRender={16}
+            windowSize={8}
+            maxToRenderPerBatch={12}
+            maintainVisibleContentPosition={{ minIndexForVisible: 0 }}
+            onEndReached={loadOlder}
+            onEndReachedThreshold={0.2}
+            onScroll={(event) => {
+              const pinned = isPinnedToLatest(event.nativeEvent.contentOffset.y);
+              pinnedToLatest.current = pinned;
+              if (pinned && newIncoming) setNewIncoming(0);
+            }}
+            scrollEventThrottle={16}
+            renderItem={({ item }) => (
+              <MessageBubble
+                item={item}
+                mine={item.sender_id === me.id}
+                tint={colors.tint}
+                muted={colors.muted}
+                card={colors.card}
+                textColor={colors.text}
+                onRetry={item.sender_id === me.id && isFailedMessageStatus(item.status) ? retryFailed : undefined}
+              />
+            )}
+          />
+          {newIncoming > 0 ? (
             <Pressable
-              onPress={() => setInputMode('ptt')}
+              onPress={() => {
+                setNewIncoming(0);
+                pinnedToLatest.current = true;
+                listRef.current?.scrollToOffset({ offset: 0, animated: true });
+              }}
               accessibilityRole="button"
-              accessibilityLabel="Switch to push to talk"
-              style={[styles.toggle, { backgroundColor: colors.card, display: isEventChat ? 'none' : 'flex' }]}>
-              <Text style={[styles.toggleLabel, { color: colors.tint }]}>PTT</Text>
+              accessibilityLabel={`${newIncoming} new messages`}
+              style={[styles.newPill, { backgroundColor: colors.tint }]}>
+              <Text style={styles.newPillLabel}>
+                {newIncoming === 1 ? 'New message' : `${newIncoming} new messages`}
+              </Text>
             </Pressable>
-            <TextInput
-              value={draft}
-              onChangeText={setDraft}
-              placeholder="Message"
-              placeholderTextColor={colors.muted}
-              multiline
-              maxLength={MAX_APPLICATION_TEXT_CHARS}
-              accessibilityLabel="Message"
-              style={[styles.input, { color: colors.text, backgroundColor: colors.card }]}
-            />
-            <Pressable
-              onPress={send}
-              disabled={!canSend}
-              accessibilityRole="button"
-              accessibilityLabel="Send message"
-              accessibilityState={{ disabled: !canSend }}
-              style={[styles.send, { backgroundColor: colors.tint, opacity: canSend ? 1 : 0.45 }]}>
-              <Text style={styles.sendLabel}>Send</Text>
-            </Pressable>
-          </>
-        )}
-      </View>
+          ) : null}
+        </View>
+      </ComposerKeyboardScreen>
       <ActionSheet
         visible={sheetOpen}
         onDismiss={() => setSheetOpen(false)}
@@ -683,7 +682,7 @@ export default function ChatScreen() {
           onPress: () => void runPeerAction('report', category),
         }))}
       />
-    </KeyboardAvoidingView>
+    </View>
   );
 }
 

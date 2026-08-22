@@ -27,6 +27,8 @@ export default function TabLayout() {
       screenOptions={{
         tabBarActiveTintColor: Colors[colorScheme ?? 'light'].tint,
         headerShown: useClientOnlyValue(false, true),
+        // Hide the tab bar while typing so it does not stack under the composer.
+        tabBarHideOnKeyboard: true,
       }}>
       <Tabs.Screen
         name="nearby"

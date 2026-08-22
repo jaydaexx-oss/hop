@@ -1,14 +1,12 @@
 import { useState } from 'react';
 import {
   FlatList,
-  KeyboardAvoidingView,
-  Platform,
   Pressable,
   StyleSheet,
   TextInput,
 } from 'react-native';
 import { useRouter } from 'expo-router';
-import { useSafeAreaInsets } from 'react-native-safe-area-context';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import * as Haptics from 'expo-haptics';
 import { SymbolView } from 'expo-symbols';
 import {
@@ -19,6 +17,7 @@ import {
 } from '@hop/protocol';
 
 import { Avatar } from '@/components/Avatar';
+import { ComposerKeyboardScreen } from '@/components/ComposerKeyboardScreen';
 import { StatusBanner } from '@/components/StatusBanner';
 import { Text, View } from '@/components/Themed';
 import Colors from '@/constants/Colors';
@@ -80,7 +79,6 @@ function BroadcastCard({
 export default function BroadcastScreen() {
   const scheme = useColorScheme() ?? 'light';
   const colors = Colors[scheme];
-  const insets = useSafeAreaInsets();
   const router = useRouter();
   const { user, token } = useAuth();
   const { posts, sendBroadcast, sending, error, blockedIds } = useBroadcast();
@@ -118,10 +116,46 @@ export default function BroadcastScreen() {
   }
 
   return (
-    <KeyboardAvoidingView
-      behavior={Platform.OS === 'ios' ? 'padding' : undefined}
-      style={[styles.container, { backgroundColor: colors.background }]}>
-      <View style={{ flex: 1, paddingTop: insets.top }}>
+    <ComposerKeyboardScreen
+      tabBarOwnsSafeArea
+      style={{ backgroundColor: colors.background }}
+      renderComposer={(paddingBottom) => (
+        <View
+          style={[
+            styles.composer,
+            {
+              backgroundColor: colors.card,
+              borderTopColor: colors.border,
+              paddingBottom,
+            },
+          ]}>
+          <TextInput
+            style={[styles.composerInput, { color: colors.text, backgroundColor: colors.background }]}
+            placeholder="Broadcast nearby…"
+            placeholderTextColor={colors.muted}
+            value={input}
+            onChangeText={setInput}
+            maxLength={280}
+            multiline
+            returnKeyType="send"
+            onSubmitEditing={() => void handleSend()}
+          />
+          <Pressable
+            onPress={() => void handleSend()}
+            disabled={!input.trim() || sending}
+            style={[
+              styles.sendBtn,
+              { backgroundColor: input.trim() ? colors.tint : colors.border, opacity: sending ? 0.6 : 1 },
+            ]}>
+            <SymbolView
+              name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }}
+              tintColor={input.trim() ? '#FFFFFF' : colors.muted}
+              size={18}
+            />
+          </Pressable>
+        </View>
+      )}>
+      <SafeAreaView style={styles.container} edges={['top']}>
         <StatusBanner />
         <View style={[styles.header, { borderBottomColor: colors.border }]}>
           <Text style={styles.title}>Broadcast</Text>
@@ -155,42 +189,8 @@ export default function BroadcastScreen() {
         {error || replyError ? (
           <Text style={[styles.error, { color: colors.destructive }]}>{replyError || error}</Text>
         ) : null}
-        <View
-          style={[
-            styles.composer,
-            {
-              backgroundColor: colors.card,
-              borderTopColor: colors.border,
-              paddingBottom: Math.max(12, insets.bottom),
-            },
-          ]}>
-          <TextInput
-            style={[styles.composerInput, { color: colors.text, backgroundColor: colors.background }]}
-            placeholder="Broadcast nearby…"
-            placeholderTextColor={colors.muted}
-            value={input}
-            onChangeText={setInput}
-            maxLength={280}
-            multiline
-            returnKeyType="send"
-            onSubmitEditing={() => void handleSend()}
-          />
-          <Pressable
-            onPress={() => void handleSend()}
-            disabled={!input.trim() || sending}
-            style={[
-              styles.sendBtn,
-              { backgroundColor: input.trim() ? colors.tint : colors.border, opacity: sending ? 0.6 : 1 },
-            ]}>
-            <SymbolView
-              name={{ ios: 'arrow.up', android: 'arrow_upward', web: 'arrow_upward' }}
-              tintColor={input.trim() ? '#FFFFFF' : colors.muted}
-              size={18}
-            />
-          </Pressable>
-        </View>
-      </View>
-    </KeyboardAvoidingView>
+      </SafeAreaView>
+    </ComposerKeyboardScreen>
   );
 }
 

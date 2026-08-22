@@ -1,3 +1,4 @@
+import { MAX_ENCRYPTED_PAYLOAD_BYTES } from "./cryptoBox.js";
 import { ProcessedIdSet } from "./duplicates.js";
 import { createInternetTransport } from "./internetTransport.js";
 import { MAX_OUTBOX_MESSAGES } from "./lifecycle.js";
@@ -50,7 +51,7 @@ export class TransportManager {
    * @returns false if the envelope must be discarded.
    */
   acceptInbound(envelope: EncryptedEnvelope, now = new Date()): boolean {
-    if (envelope.encrypted_payload.length > 65_536) {
+    if (envelope.encrypted_payload.length > MAX_ENCRYPTED_PAYLOAD_BYTES) {
       return false;
     }
     if (isExpired(envelope, now)) {

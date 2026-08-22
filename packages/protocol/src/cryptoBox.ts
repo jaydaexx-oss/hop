@@ -5,8 +5,13 @@ import { readySodium } from "./sodium.js";
 export { readySodium, setSodiumBackend } from "./sodium.js";
 export type { HopSodium } from "./sodium.js";
 
-/** Matches apps/api encrypted_payload max_length / voice.ts MAX_ENCRYPTED_PAYLOAD_BYTES. */
-const MAX_BOX_JSON_CHARS = 65_536;
+/**
+ * Opaque crypto_box JSON cap for private-chat internet payloads.
+ * Raised so a 2-minute AAC clip can ride the existing envelope (no plaintext audio).
+ * Event fan-out and BLE stay on the older 64KiB assembled-frame budget.
+ */
+export const MAX_ENCRYPTED_PAYLOAD_BYTES = 1_048_576;
+const MAX_BOX_JSON_CHARS = MAX_ENCRYPTED_PAYLOAD_BYTES;
 /** Authenticated application text cap. Composer and send paths must not exceed this. */
 export const MAX_APPLICATION_TEXT_CHARS = 32_000;
 const MAX_PLAINTEXT_CHARS = MAX_APPLICATION_TEXT_CHARS;

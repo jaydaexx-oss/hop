@@ -5,9 +5,14 @@ import { afterEach, describe, expect, it } from "vitest";
 
 import {
   MAX_VOICE_AUDIO_B64_CHARS,
+  MAX_VOICE_DURATION_MS,
+  MIN_VOICE_DURATION_MS,
   decryptApplicationMessage,
   encryptApplicationMessage,
   generateIdentityKeyPair,
+  shouldSendVoiceClip,
+  slideLeftCancelsRecording,
+  voiceMicAllowed,
   type IdentityKeyPair,
   type MessageCrypto,
 } from "../src/index.js";
@@ -313,9 +318,9 @@ describe("voice messages", () => {
       session.service.sendVoice({
         ...sendInput,
         audio_b64: AUDIO_B64,
-        duration_ms: 8_001,
+        duration_ms: 120_001,
       }),
-    ).rejects.toThrow(/8 second/i);
+    ).rejects.toThrow(/2 minute/i);
 
     await expect(
       session.service.sendVoice({
@@ -451,5 +456,53 @@ describe("voice messages", () => {
     ).toBe(false);
     expect(await session.store.listMessages(CONVO)).toHaveLength(0);
     session.driver.close();
+  });
+
+  it("accepts a 2-minute clip and refuses anything longer", async () => {
+    const file = tempDb();
+    const world = mockWorld();
+    const alice = await generateIdentityKeyPair();
+    const blake = await generateIdentityKeyPair();
+    const session = await openService(file, world.http, testCrypto(alice, blake.publicKey));
+    const sent = await session.service.sendVoice({
+      ...sendInput,
+      audio_b64: AUDIO_B64,
+      duration_ms: MAX_VOICE_DURATION_MS,
+    });
+    expect(sent.status).toBe(MessageStatus.SENT);
+    await expect(
+      session.service.sendVoice({
+        ...sendInput,
+        audio_b64: AUDIO_B64,
+        duration_ms: MAX_VOICE_DURATION_MS + 1,
+      }),
+    ).rejects.toThrow(/2 minute/i);
+    session.driver.close();
+  });
+});
+
+describe("voice composer rules", () => {
+  it("drops short clips and cancelled holds before send", () => {
+    expect(shouldSendVoiceClip({ durationMs: MIN_VOICE_DURATION_MS - 1, cancelled: false })).toBe(false);
+    expect(shouldSendVoiceClip({ durationMs: 200, cancelled: false })).toBe(false);
+    expect(shouldSendVoiceClip({ durationMs: 800, cancelled: true })).toBe(false);
+    expect(shouldSendVoiceClip({ durationMs: MIN_VOICE_DURATION_MS, cancelled: false })).toBe(true);
+    expect(shouldSendVoiceClip({ durationMs: 1_200, cancelled: false })).toBe(true);
+  });
+
+  it("cancels when the finger slides left past the threshold", () => {
+    expect(slideLeftCancelsRecording(200, 200)).toBe(false);
+    expect(slideLeftCancelsRecording(200, 160)).toBe(false);
+    expect(slideLeftCancelsRecording(200, 120)).toBe(true);
+    expect(slideLeftCancelsRecording(200, 250)).toBe(false);
+  });
+
+  it("allows a mic only in private chat, never on Broadcast", () => {
+    expect(voiceMicAllowed("private_chat")).toBe(true);
+    expect(voiceMicAllowed("event_chat")).toBe(false);
+    expect(voiceMicAllowed("broadcast")).toBe(false);
+    expect(voiceMicAllowed("nearby")).toBe(false);
+    expect(voiceMicAllowed("contacts")).toBe(false);
+    expect(voiceMicAllowed("settings")).toBe(false);
   });
 });

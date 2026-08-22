@@ -6,6 +6,8 @@ import {
   identityFingerprint,
   isEphemeralVoicePlaybackName,
   microphoneDeniedMessage,
+  shouldSendVoiceClip,
+  voiceMicAllowed,
 } from "../src/index.js";
 
 describe("identity fingerprint display helper", () => {
@@ -31,5 +33,10 @@ describe("PTT helpers", () => {
     expect(isEphemeralVoicePlaybackName("hop-voice-rec-deadbeef.m4a")).toBe(true);
     expect(isEphemeralVoicePlaybackName("hop-voice")).toBe(true);
     expect(isEphemeralVoicePlaybackName("messages.db")).toBe(false);
+  });
+
+  it("does not put a mic on Broadcast", () => {
+    expect(voiceMicAllowed("broadcast")).toBe(false);
+    expect(shouldSendVoiceClip({ durationMs: 200, cancelled: false })).toBe(false);
   });
 });

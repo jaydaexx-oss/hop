@@ -89,7 +89,7 @@ def test_oversized_payload_is_rejected(client: TestClient) -> None:
     _auth(client, "sizebb")
     headers = _headers(token_a)
     convo_id = client.post("/conversations", json={"username": "sizebb"}, headers=headers).json()["id"]
-    too_big = "x" * 65_537
+    too_big = "x" * 1_048_577
     sent = client.post(
         f"/conversations/{convo_id}/messages",
         json={"encrypted_payload": too_big},

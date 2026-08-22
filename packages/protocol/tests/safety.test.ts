@@ -535,6 +535,36 @@ describe("message request lifecycle with MessageService", () => {
     ).rejects.toBeInstanceOf(SafetyError);
   });
 
+  it("block and mute apply to voice the same as text", async () => {
+    const { alice, bob } = await pair();
+    await alice.safety.markAccepted(BOB);
+    await bob.safety.markAccepted(ALICE);
+    await alice.safety.block(BOB);
+    await expect(
+      alice.service.sendVoice({
+        conversation_id: CONVO,
+        sender_id: ALICE,
+        recipient_id: BOB,
+        audio_b64: Buffer.from("voice-block").toString("base64"),
+        duration_ms: 800,
+      }),
+    ).rejects.toMatchObject({ code: "blocked" });
+    await alice.safety.unblock(BOB);
+    await alice.safety.setMuted(BOB, true);
+    const sent = await bob.service.sendVoice({
+      conversation_id: CONVO,
+      sender_id: BOB,
+      recipient_id: ALICE,
+      audio_b64: Buffer.from("voice-mute").toString("base64"),
+      duration_ms: 800,
+    });
+    const stored = await bob.store.getMessage(sent.message_id);
+    expect(await alice.service.acceptInbound({ ...stored!, text: null })).toBe(true);
+    expect(await alice.safety.shouldNotify(BOB)).toBe(false);
+    const listed = await alice.service.listMessages(CONVO);
+    expect(listed.some((row) => row.kind === "voice")).toBe(true);
+  });
+
   it("block overrides send and inbound; unblock restores", async () => {
     const { alice, bob } = await pair();
     await alice.safety.markAccepted(BOB);

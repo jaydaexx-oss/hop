@@ -13,6 +13,7 @@ import {
   DEFAULT_TTL_MS,
   MAX_APPLICATION_TEXT_CHARS,
   REPORT_CATEGORIES,
+  voiceMicAllowed,
   applyOptimisticSendFailure,
   conversationTransportStatus,
   formatNetworkStatus,
@@ -68,8 +69,8 @@ export default function ChatScreen() {
   const [draft, setDraft] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [recipientId, setRecipientId] = useState(peerId ?? '');
-  const [inputMode, setInputMode] = useState<'text' | 'ptt'>('text');
   const [sending, setSending] = useState(false);
+  const [voiceRecording, setVoiceRecording] = useState(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [newIncoming, setNewIncoming] = useState(0);
   const [safetyRecord, setSafetyRecord] = useState<PeerSafetyRecord | null>(null);
@@ -432,6 +433,19 @@ export default function ChatScreen() {
         if (retried) {
           outcome = retried;
           mergeRows([storedToChat(retried)]);
+        } else if (existing?.kind === 'voice' && existing.audio_b64) {
+          outcome = await sendChatVoice(service, {
+            conversation_id: id,
+            sender_id: me.id,
+            recipient_id: recipientId,
+            audio_b64: existing.audio_b64,
+            duration_ms: existing.duration_ms ?? 0,
+            mime: existing.mime,
+            message_id: existing.message_id,
+            send_seq: existing.send_seq ?? undefined,
+            onAllocated: (row) => mergeRows([storedToChat(row)]),
+          });
+          mergeRows([storedToChat(outcome)]);
         } else if (existing?.text) {
           outcome = await sendChatText(service, {
             conversation_id: id,
@@ -470,7 +484,11 @@ export default function ChatScreen() {
       return;
     }
     sendLock.current = true;
+    setSending(true);
     setError(null);
+    pinnedToLatest.current = true;
+    setNewIncoming(0);
+    let allocatedId: string | undefined;
     let flushed: StoredMessage | undefined;
     try {
       flushed = await sendChatVoice(service, {
@@ -480,17 +498,27 @@ export default function ChatScreen() {
         audio_b64: clip.audio_b64,
         duration_ms: clip.duration_ms,
         mime: clip.mime,
+        onAllocated: (row) => {
+          allocatedId = row.message_id;
+          sendLock.current = false;
+          setSending(false);
+          mergeRows([storedToChat(row)]);
+          listRef.current?.scrollToOffset({ offset: 0, animated: true });
+        },
       });
       mergeRows([storedToChat(flushed)]);
-      pinnedToLatest.current = true;
-      listRef.current?.scrollToOffset({ offset: 0, animated: true });
       await syncNow();
       await loadLatest();
     } catch (err) {
       await loadLatest().catch(() => undefined);
+      const failedId = allocatedId;
+      if (!flushed && failedId) {
+        setMessages((current) => applyOptimisticSendFailure(current, failedId));
+      }
       setError(flushed ? userFacingLoadError(err) : userFacingSendError(err));
     } finally {
       sendLock.current = false;
+      setSending(false);
     }
   }
 
@@ -513,49 +541,37 @@ export default function ChatScreen() {
               <Text style={{ color: colors.muted, paddingHorizontal: 4 }}>Event Chat is archived. You can still read history.</Text>
             ) : isEventChat && eventRecipientIds.length === 0 ? (
               <Text style={{ color: colors.muted, paddingHorizontal: 4 }}>Invite someone who accepted to start Event Chat.</Text>
-            ) : inputMode === 'ptt' && !isEventChat ? (
-              <View style={styles.pttRow}>
-                <PTTButton
-                  tint={colors.tint}
-                  tintForeground="#042f2e"
-                  muted={colors.muted}
-                  card={colors.card}
-                  onSend={sendVoice}
-                />
-                <Pressable
-                  onPress={() => setInputMode('text')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Switch to text"
-                  style={[styles.toggle, { backgroundColor: colors.card }]}>
-                  <Text style={[styles.toggleLabel, { color: colors.text }]}>Aa</Text>
-                </Pressable>
-              </View>
             ) : (
               <>
-                <Pressable
-                  onPress={() => setInputMode('ptt')}
-                  accessibilityRole="button"
-                  accessibilityLabel="Switch to push to talk"
-                  style={[styles.toggle, { backgroundColor: colors.card, display: isEventChat ? 'none' : 'flex' }]}>
-                  <Text style={[styles.toggleLabel, { color: colors.tint }]}>PTT</Text>
-                </Pressable>
+                {voiceMicAllowed(isEventChat ? 'event_chat' : 'private_chat') ? (
+                  <PTTButton
+                    tint={colors.tint}
+                    tintForeground="#042f2e"
+                    muted={colors.muted}
+                    card={colors.card}
+                    disabled={sending}
+                    onSend={sendVoice}
+                    onRecordingChange={setVoiceRecording}
+                  />
+                ) : null}
                 <TextInput
                   value={draft}
                   onChangeText={setDraft}
-                  placeholder="Message"
+                  placeholder={voiceRecording ? 'Recording…' : 'Message'}
                   placeholderTextColor={colors.muted}
                   multiline
+                  editable={!voiceRecording}
                   maxLength={MAX_APPLICATION_TEXT_CHARS}
                   accessibilityLabel="Message"
                   style={[styles.input, { color: colors.text, backgroundColor: colors.card }]}
                 />
                 <Pressable
                   onPress={send}
-                  disabled={!canSend}
+                  disabled={!canSend || voiceRecording}
                   accessibilityRole="button"
                   accessibilityLabel="Send message"
-                  accessibilityState={{ disabled: !canSend }}
-                  style={[styles.send, { backgroundColor: colors.tint, opacity: canSend ? 1 : 0.45 }]}>
+                  accessibilityState={{ disabled: !canSend || voiceRecording }}
+                  style={[styles.send, { backgroundColor: colors.tint, opacity: canSend && !voiceRecording ? 1 : 0.45 }]}>
                   <Text style={styles.sendLabel}>Send</Text>
                 </Pressable>
               </>
@@ -704,7 +720,6 @@ const styles = StyleSheet.create({
   listWrap: { flex: 1, backgroundColor: 'transparent' },
   list: { padding: 16, gap: 10 },
   composer: { flexDirection: 'row', gap: 8, paddingHorizontal: 12, paddingTop: 12, alignItems: 'flex-end' },
-  pttRow: { flex: 1, flexDirection: 'row', alignItems: 'center', gap: 8 },
   input: {
     flex: 1,
     borderRadius: 16,
@@ -716,8 +731,6 @@ const styles = StyleSheet.create({
   },
   send: { borderRadius: 16, paddingHorizontal: 16, minHeight: 44, justifyContent: 'center' },
   sendLabel: { color: '#042f2e', fontWeight: '700' },
-  toggle: { borderRadius: 16, paddingHorizontal: 12, minHeight: 44, justifyContent: 'center' },
-  toggleLabel: { fontWeight: '700', fontSize: 13 },
   error: { color: '#DC2626', paddingHorizontal: 16, paddingTop: 8 },
   hint: { paddingHorizontal: 16, paddingTop: 8, fontSize: 13 },
   newPill: {

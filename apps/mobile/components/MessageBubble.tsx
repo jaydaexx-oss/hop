@@ -90,6 +90,8 @@ export const MessageBubble = memo(MessageBubbleInner, (prev, next) => {
     prev.item.text === next.item.text &&
     prev.item.retry_attempts === next.item.retry_attempts &&
     prev.item.kind === next.item.kind &&
+    prev.item.audio_b64 === next.item.audio_b64 &&
+    prev.item.duration_ms === next.item.duration_ms &&
     prev.mine === next.mine &&
     prev.tint === next.tint &&
     prev.muted === next.muted &&

@@ -43,6 +43,9 @@ export async function sendChatVoice(
     audio_b64: string;
     duration_ms: number;
     mime?: string;
+    message_id?: string;
+    send_seq?: number;
+    onAllocated?: (row: StoredMessage) => void;
   },
 ): Promise<StoredMessage> {
   const recipient_id = requirePeerRecipient(input.sender_id, input.recipient_id);

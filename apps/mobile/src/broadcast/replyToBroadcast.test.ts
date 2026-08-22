@@ -5,6 +5,7 @@ import {
   createNearbyBroadcast,
   planBroadcastReply,
   viewBroadcastCreatesConversation,
+  voiceMicAllowed,
 } from '@hop/protocol';
 
 import { buildChatRoute } from '@/src/chat/chatRoute';
@@ -51,5 +52,9 @@ describe('broadcast reply vs view', () => {
     expect(feed.list()).toEqual([]);
     expect(planBroadcastReply(post, { selfId: 'maya', blockedIds: [] }).action).toBe('open_private_chat');
     expect(buildChatRoute('convo-1', { id: 'blake', username: 'blake' }, { broadcastId: post.id })).toBe(replyRoute);
+  });
+
+  it('Broadcast composer has no microphone', () => {
+    expect(voiceMicAllowed('broadcast')).toBe(false);
   });
 });

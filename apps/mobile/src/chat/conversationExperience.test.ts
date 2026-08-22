@@ -180,6 +180,33 @@ describe('mobile conversation experience', () => {
     }).text).toBe('visible');
   });
 
+  it('optimistic voice send keeps one bubble and the same message_id', () => {
+    const allocated = storedToChat({
+      message_id: '22222222-2222-4222-8222-222222222222',
+      conversation_id: 'convo-a',
+      sender_id: 'alice',
+      recipient_id: 'bob',
+      text: 'Voice message',
+      encrypted_payload: '',
+      status: MessageStatus.ENCRYPTING,
+      transport: 'local',
+      created_at: '2026-08-16T00:00:00.000Z',
+      expires_at: '2026-08-23T00:00:00.000Z',
+      ttl: 1,
+      hop_count: 0,
+      send_seq: 2,
+      kind: 'voice',
+      duration_ms: 1500,
+      audio_b64: 'QQ==',
+    });
+    const flushed = { ...allocated, status: MessageStatus.QUEUED, encrypted_payload: 'box' };
+    const merged = mergeChatWindow([allocated], [flushed]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0]?.message_id).toBe(allocated.message_id);
+    expect(merged[0]?.kind).toBe('voice');
+    expect(merged[0]?.status).toBe(MessageStatus.QUEUED);
+  });
+
   it('does not let a post-send load error mark a SENT bubble Failed', () => {
     const allocated = chat('msg-1', { status: MessageStatus.ENCRYPTING });
     const sent = chat('msg-1', { status: MessageStatus.SENT });

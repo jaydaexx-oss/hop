@@ -12,6 +12,7 @@ import {
   voiceDataUri,
   writeEphemeralPlaybackFile,
 } from '@/src/voice/cache';
+import { claimVoicePlayback, releaseVoicePlayback } from '@/src/voice/playback';
 
 type VoiceMessageBubbleProps = {
   messageId: string;
@@ -31,6 +32,7 @@ function fmt(ms: number): string {
 }
 
 export function VoiceMessageBubble({
+  messageId,
   audioB64,
   durationMs = 0,
   mime = 'audio/mp4',
@@ -54,23 +56,25 @@ export function VoiceMessageBubble({
     soundRef.current = null;
   };
 
+  const stopAndScrubTemp = async () => {
+    releasePlayer();
+    const uri = tempUriRef.current;
+    tempUriRef.current = null;
+    await deleteEphemeralPlaybackFile(uri);
+    releaseVoicePlayback(messageId);
+    setPlaying(false);
+    setProgress(0);
+  };
+
   useEffect(() => {
     return () => {
       releasePlayer();
       const uri = tempUriRef.current;
       tempUriRef.current = null;
       deleteEphemeralPlaybackFile(uri).catch(() => undefined);
+      releaseVoicePlayback(messageId);
     };
-  }, []);
-
-  const stopAndScrubTemp = async () => {
-    releasePlayer();
-    const uri = tempUriRef.current;
-    tempUriRef.current = null;
-    await deleteEphemeralPlaybackFile(uri);
-    setPlaying(false);
-    setProgress(0);
-  };
+  }, [messageId]);
 
   const togglePlay = async () => {
     if (!audioB64) {
@@ -83,6 +87,9 @@ export function VoiceMessageBubble({
       return;
     }
     try {
+      claimVoicePlayback(messageId, () => {
+        void stopAndScrubTemp();
+      });
       await setAudioModeAsync({ playsInSilentMode: true, allowsRecording: false });
       if (!soundRef.current) {
         let uri = voiceDataUri(audioB64, mime);
@@ -119,7 +126,11 @@ export function VoiceMessageBubble({
 
   return (
     <View style={[styles.bubble, { backgroundColor: bubbleBg }]}>
-      <Pressable onPress={togglePlay} style={[styles.playBtn, { backgroundColor: `${iconColor}22` }]}>
+      <Pressable
+        onPress={togglePlay}
+        accessibilityRole="button"
+        accessibilityLabel={playing ? 'Pause voice message' : 'Play voice message'}
+        style={[styles.playBtn, { backgroundColor: `${iconColor}22` }]}>
         <Text style={[styles.playIcon, { color: iconColor }]}>{playing ? '||' : '>'}</Text>
       </Pressable>
       <View style={[styles.track, { backgroundColor: `${iconColor}33` }]}>
@@ -155,7 +166,7 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   playIcon: { fontSize: 14, fontWeight: '700' },
-  track: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden' },
+  track: { flex: 1, height: 4, borderRadius: 2, overflow: 'hidden', minWidth: 64 },
   fill: { height: 4, borderRadius: 2 },
-  dur: { fontSize: 12, fontWeight: '600', minWidth: 30 },
+  dur: { fontSize: 12, fontWeight: '600', minWidth: 36 },
 });

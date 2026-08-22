@@ -78,6 +78,10 @@ export interface SendVoiceInput {
   codec?: string;
   text?: string;
   now?: Date;
+  /** Reuse a canonical id after an in-memory encrypt failure. Never invent a second identity. */
+  message_id?: string;
+  send_seq?: number;
+  onAllocated?: (row: StoredMessage) => void;
 }
 
 export interface MessageCrypto {
@@ -373,13 +377,32 @@ export class MessageService {
       throw new Error("Refusing to send without libsodium crypto_box keys");
     }
     const recipient_id = requirePeerRecipient(input.sender_id, input.recipient_id);
-    const outboundDecision = await this.assertOutboundAllowed(recipient_id);
+    const outboundDecision = await this.assertOutboundAllowed(recipient_id, input.message_id);
     assertVoiceFitsBudget({ audio_b64: input.audio_b64, duration_ms: input.duration_ms });
+    if (input.message_id) {
+      const existing = await this.store.getMessage(input.message_id);
+      if (existing) {
+        if (existing.sender_id !== input.sender_id || existing.conversation_id !== input.conversation_id) {
+          throw new Error("Could not send this message");
+        }
+        if (existing.status === MessageStatus.FAILED) {
+          const retried = await this.retryFailedUnlocked(existing.message_id, input.now ?? new Date());
+          if (retried) {
+            const opened = await this.materializePlaintext(retried);
+            this.notifyAllocated(opened, input.onAllocated);
+            return opened;
+          }
+        }
+        const opened = await this.materializePlaintext(existing);
+        this.notifyAllocated(opened, input.onAllocated);
+        return opened;
+      }
+    }
     const now = input.now ?? new Date();
     const created_at = now.toISOString();
     const expires_at = new Date(now.getTime() + DEFAULT_TTL_MS).toISOString();
-    const message_id = createMessageId();
-    const send_seq = await this.store.nextSendSeq(input.conversation_id, input.sender_id);
+    const message_id = input.message_id ?? createMessageId();
+    const send_seq = input.send_seq ?? (await this.store.nextSendSeq(input.conversation_id, input.sender_id));
     const caption = input.text?.trim() ? input.text.trim() : DEFAULT_VOICE_CAPTION;
     const plain: ApplicationPlaintext = {
       message_id,
@@ -421,21 +444,34 @@ export class MessageService {
       kind: "voice",
     };
     record = this.withStatus(record, MessageStatus.ENCRYPTING);
-    const encrypted_payload = await this.crypto.encrypt(plain);
-    if (!isCryptoBoxPayload(encrypted_payload)) {
-      throw new Error("encrypt() must return a libsodium crypto_box payload");
+    this.notifyAllocated(withDecryptedPlain(record, plain), input.onAllocated);
+    let local_seal: string | null = null;
+    try {
+      const encrypted_payload = await this.crypto.encrypt(plain);
+      if (!isCryptoBoxPayload(encrypted_payload)) {
+        throw new Error("encrypt() must return a libsodium crypto_box payload");
+      }
+      assertEncryptedPayloadSize(encrypted_payload);
+      local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
+      record = { ...record, encrypted_payload, local_seal };
+      record = this.withStatus(record, MessageStatus.ENCRYPTED);
+      await this.persistMessage(record);
+      record = this.withStatus(record, MessageStatus.QUEUED);
+      if (this.safety && outboundDecision?.allow && outboundDecision.asRequest) {
+        await this.safety.recordOutboundIntro(recipient_id, record.message_id);
+      }
+      const sent = await this.persistAndFlush(record, now, null);
+      return withDecryptedPlain(sent, plain);
+    } catch (err) {
+      if (local_seal && isCryptoBoxPayload(local_seal)) {
+        const failed = this.withStatus(
+          { ...record, local_seal, text: null, encrypted_payload: record.encrypted_payload || "" },
+          MessageStatus.FAILED,
+        );
+        await this.persistMessage(failed);
+      }
+      throw err;
     }
-    assertEncryptedPayloadSize(encrypted_payload);
-    const local_seal = this.crypto.sealLocal ? await this.crypto.sealLocal(plain) : null;
-    record = { ...record, encrypted_payload, local_seal };
-    record = this.withStatus(record, MessageStatus.ENCRYPTED);
-    await this.persistMessage(record);
-    record = this.withStatus(record, MessageStatus.QUEUED);
-    if (this.safety && outboundDecision?.allow && outboundDecision.asRequest) {
-      await this.safety.recordOutboundIntro(recipient_id, record.message_id);
-    }
-    const sent = await this.persistAndFlush(record, now, null);
-    return withDecryptedPlain(sent, plain);
   }
 
   private async persistAndFlush(

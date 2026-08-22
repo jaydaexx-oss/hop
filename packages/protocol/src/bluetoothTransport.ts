@@ -28,6 +28,8 @@ export class BluetoothTransport implements Transport {
   }
 
   async canSend(envelope: EncryptedEnvelope): Promise<boolean> {
+    // BLE assembled frames stay at 70 KiB. 2-minute voice uses the internet box.
+    if (envelope.encrypted_payload.length > 65_536) return false;
     return (await this.isAvailable()) && this.getPeerDeviceId(envelope) !== null;
   }
 

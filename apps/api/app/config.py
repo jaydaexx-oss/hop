@@ -16,8 +16,8 @@ load_dotenv()
 PLACEHOLDER = "CHANGE_ME"
 DEFAULT_DATABASE_URL = "postgresql+psycopg://hop@localhost:5432/hop"
 PRODUCTION_FLY_DB_MARKER = "hop-uokqmg"
-# Opaque crypto_box JSON is capped at 64KiB; allow headers/JSON wrapping headroom.
-MAX_REQUEST_BYTES = 262_144
+# Opaque crypto_box JSON is capped at 1 MiB (2-minute private voice). Allow HTTP wrapping headroom.
+MAX_REQUEST_BYTES = 1_200_000
 
 
 class Settings(BaseSettings):

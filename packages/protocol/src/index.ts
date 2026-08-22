@@ -252,14 +252,20 @@ export {
   MAX_VOICE_AUDIO_B64_CHARS,
   MAX_VOICE_DURATION_MS,
   MICROPHONE_DENIED_MESSAGE,
+  MIN_VOICE_DURATION_MS,
+  SLIDE_CANCEL_DISTANCE_PX,
   assertEncryptedPayloadSize,
   assertVoiceFitsBudget,
   estimateBoxedPayloadBytes,
   isEphemeralVoicePlaybackName,
   microphoneDeniedMessage,
   newEphemeralVoiceFileId,
+  shouldSendVoiceClip,
+  slideLeftCancelsRecording,
   voiceAudioB64,
+  voiceMicAllowed,
   withDecryptedPlain,
+  type VoiceMicSurface,
 } from "./voice.js";
 export { PublicKeyTofu, sqlitePeerTrustPersistence, type PeerTrustPersistence, type PeerTrustRecord, type PeerTrustState } from "./tofu.js";
 export {

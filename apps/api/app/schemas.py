@@ -157,9 +157,9 @@ class EventMessageCopyIn(BaseModel):
 
 class TextMessageIn(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    # Opaque libsodium crypto_box JSON only. Voice uses the same envelope as text;
-    # clients cap clips at ~8 seconds so boxed payloads fit. Plaintext audio is never stored.
-    encrypted_payload: Optional[str] = Field(default=None, min_length=32, max_length=65536)
+    # Opaque libsodium crypto_box JSON only. Private-chat voice uses the same envelope
+    # (clients cap clips at 2 minutes). Event copies stay on the 64KiB budget. No plaintext audio.
+    encrypted_payload: Optional[str] = Field(default=None, min_length=32, max_length=1_048_576)
     message_id: Optional[str] = Field(
         default=None,
         pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",

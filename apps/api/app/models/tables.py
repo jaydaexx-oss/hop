@@ -189,3 +189,25 @@ class IdentityWrap(SQLModel, table=True):
     wrapped_blob: str = Field(sa_column=sa.Column(sa.Text, nullable=False))
     alg: str = "crypto_box_xsalsa20poly1305"
     updated_at: datetime = Field(default_factory=utcnow)
+
+
+class NearbyBroadcast(SQLModel, table=True):
+    """Public nearby feed post. Not a private crypto_box conversation message."""
+
+    __tablename__ = "nearby_broadcasts"
+
+    id: str = Field(primary_key=True)
+    author_id: str = Field(foreign_key="users.id", index=True)
+    display_name: str = Field(max_length=20)
+    body: str = Field(max_length=280)
+    created_at: datetime = Field(default_factory=utcnow)
+    expires_at: datetime
+    ttl_ms: int
+
+
+class NearbyBroadcastDelivery(SQLModel, table=True):
+    __tablename__ = "nearby_broadcast_deliveries"
+
+    broadcast_id: str = Field(foreign_key="nearby_broadcasts.id", primary_key=True)
+    recipient_id: str = Field(foreign_key="users.id", primary_key=True)
+    created_at: datetime = Field(default_factory=utcnow)

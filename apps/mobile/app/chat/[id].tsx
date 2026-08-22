@@ -48,13 +48,14 @@ import { clearVoicePlaybackTemps } from '@/src/voice/cache';
 import { useHopSocket } from '@/src/ws';
 
 export default function ChatScreen() {
-  const { id, peer, peerId, kind, eventId, archived } = useLocalSearchParams<{
+  const { id, peer, peerId, kind, eventId, archived, broadcastId } = useLocalSearchParams<{
     id: string;
     peer?: string;
     peerId?: string;
     kind?: string;
     eventId?: string;
     archived?: string;
+    broadcastId?: string;
   }>();
   const { token, user } = useAuth();
   const { service, store, syncNow, ready: offlineReady, status, queuedCount, safety, cacheConversation } = useOffline();
@@ -535,6 +536,11 @@ export default function ChatScreen() {
             </Pressable>
           </View>
         </View>
+      ) : null}
+      {broadcastId ? (
+        <Text style={[styles.hint, { color: colors.muted }]}>
+          Private reply to a nearby broadcast. This is not posted publicly.
+        </Text>
       ) : null}
       {safetyRecord?.relationship === 'outgoing_request' ? (
         <Text style={[styles.hint, { color: colors.muted }]}>

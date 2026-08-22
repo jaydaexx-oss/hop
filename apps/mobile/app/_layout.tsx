@@ -9,6 +9,7 @@ import { ApiEnvironmentBanner } from '@/components/ApiEnvironmentBanner';
 import { useColorScheme } from '@/components/useColorScheme';
 import { AuthProvider, useAuth } from '@/src/auth/AuthProvider';
 import { BleProvider } from '@/src/ble/BleProvider';
+import { BroadcastProvider } from '@/src/broadcast/BroadcastProvider';
 import { NearbyProvider } from '@/src/nearby/NearbyProvider';
 import { OfflineProvider } from '@/src/offline/OfflineProvider';
 import { clearVoicePlaybackTemps } from '@/src/voice/cache';
@@ -45,7 +46,9 @@ export default function RootLayout() {
       <OfflineProvider>
         <BleProvider>
           <NearbyProvider>
-            <RootLayoutNav />
+            <BroadcastProvider>
+              <RootLayoutNav />
+            </BroadcastProvider>
           </NearbyProvider>
         </BleProvider>
       </OfflineProvider>

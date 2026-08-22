@@ -81,6 +81,16 @@ export type HopEvent = {
   members: EventMember[];
   pending_invites: EventInvite[];
 };
+export type NearbyBroadcastRow = {
+  id: string;
+  author_id: string;
+  display_name: string;
+  body: string;
+  created_at: string;
+  expires_at: string;
+  ttl_ms: number;
+};
+
 export type ChatMessage = {
   message_id: string;
   sender_id: string;
@@ -295,6 +305,11 @@ export const api = {
   removeEventMember: (token: string, eventId: string, userId: string) =>
     request<HopEvent>(`/events/${eventId}/members/${userId}`, { method: 'DELETE', token }),
   endEvent: (token: string, eventId: string) => request<HopEvent>(`/events/${eventId}/end`, { method: 'POST', token }),
+  postNearbyBroadcast: (
+    token: string,
+    body: { id?: string; body: string; nearby_user_ids: string[]; ttl_ms?: number },
+  ) => request<NearbyBroadcastRow>('/nearby/broadcasts', { method: 'POST', token, body }),
+  listNearbyBroadcasts: (token: string) => request<NearbyBroadcastRow[]>('/nearby/broadcasts', { token }),
 };
 
 export function wsUrl(): string {

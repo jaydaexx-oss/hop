@@ -251,3 +251,27 @@ class MessageOut(BaseModel):
     transport: str
     status: str
     e2ee: bool = False
+
+
+class NearbyBroadcastIn(BaseModel):
+    """Public nearby post. nearby_user_ids come from BLE discovery, never GPS."""
+
+    model_config = ConfigDict(extra="forbid")
+    id: Optional[str] = Field(
+        default=None,
+        pattern=r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$",
+        max_length=36,
+    )
+    body: str = Field(min_length=1, max_length=280)
+    nearby_user_ids: list[str] = Field(default_factory=list, max_length=32)
+    ttl_ms: Optional[int] = Field(default=None, ge=60_000, le=24 * 60 * 60 * 1000)
+
+
+class NearbyBroadcastOut(BaseModel):
+    id: str
+    author_id: str
+    display_name: str
+    body: str
+    created_at: datetime
+    expires_at: datetime
+    ttl_ms: int

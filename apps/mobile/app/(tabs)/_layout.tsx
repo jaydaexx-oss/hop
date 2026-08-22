@@ -56,6 +56,20 @@ export default function TabLayout() {
         }}
       />
       <Tabs.Screen
+        name="broadcast"
+        options={{
+          title: 'Broadcast',
+          headerShown: false,
+          tabBarIcon: ({ color }) => (
+            <SymbolView
+              name={{ ios: 'megaphone.fill', android: 'campaign', web: 'campaign' }}
+              tintColor={color}
+              size={26}
+            />
+          ),
+        }}
+      />
+      <Tabs.Screen
         name="contacts"
         options={{
           title: 'Contacts',

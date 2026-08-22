@@ -10,4 +10,4 @@ def test_alembic_has_initial_revision() -> None:
     config.set_main_option("script_location", str(Path(__file__).resolve().parents[1] / "alembic"))
     script = ScriptDirectory.from_config(config)
     heads = script.get_heads()
-    assert heads == ["006_block_anti_abuse"]
+    assert heads == ["007_nearby_broadcasts"]

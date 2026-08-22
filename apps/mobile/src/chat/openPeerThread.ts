@@ -1,6 +1,7 @@
 import { SafetyError, type PeerSafetyRecord, type SafetyService } from '@hop/protocol';
 
 import { openOrCreatePeerConversation, type ConversationCache } from '@/src/chat/openPeerConversation';
+import { buildChatRoute } from '@/src/chat/chatRoute';
 import type { Conversation } from '@/src/api/hop';
 
 export type PeerThreadKind = 'chat' | 'request';
@@ -30,6 +31,6 @@ export async function openPeerThread(input: {
   return { conversation, kind, record };
 }
 
-export function chatRoute(conversation: Conversation): string {
-  return `/chat/${conversation.id}?peer=${encodeURIComponent(conversation.peer.username)}&peerId=${encodeURIComponent(conversation.peer.id)}`;
+export function chatRoute(conversation: Conversation, extra?: { broadcastId?: string }): string {
+  return buildChatRoute(conversation.id, conversation.peer, extra);
 }

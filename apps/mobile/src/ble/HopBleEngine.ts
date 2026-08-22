@@ -17,8 +17,10 @@ import {
   chunkBytes,
   decodeEnvelope,
   decodeHandshakeAnnouncement,
+  decodeNearbyBroadcastFrame,
   displayNameFromAdvertisement,
   encodeEnvelope,
+  encodeNearbyBroadcastFrame,
   encodeAuthenticatedHandshake,
   encodeHandshakeAnnouncement,
   encodeAuthenticatedBleAck,
@@ -46,6 +48,7 @@ import {
   type BleScanMode,
   type BleSessionOptions,
   type EncryptedEnvelope,
+  type NearbyBroadcast,
   type SendResult,
 } from '@hop/protocol';
 
@@ -131,6 +134,7 @@ export class HopBleEngine implements BleLink {
   private readonly inbound = new Set<
     (envelope: EncryptedEnvelope, from: BlePeer) => void | boolean | Promise<void | boolean>
   >();
+  private readonly nearbyBroadcastListeners = new Set<(post: NearbyBroadcast, from: BlePeer) => void>();
   private readonly peerListeners = new Set<() => void>();
   private readonly connectionListeners = new Set<(deviceId: string, connected: boolean) => void>();
   private readonly processed = new ProcessedIdSet();
@@ -537,11 +541,50 @@ export class HopBleEngine implements BleLink {
     return result;
   }
 
+  async sendNearbyBroadcast(deviceId: string, post: NearbyBroadcast): Promise<SendResult> {
+    const native = this.native;
+    if (!native) {
+      return { ok: false, transport: 'bluetooth', error: 'Native BLE module is unavailable.' };
+    }
+    if (!this.connected.has(deviceId)) {
+      try {
+        await this.connect(deviceId);
+      } catch (err) {
+        return { ok: false, transport: 'bluetooth', error: err instanceof Error ? err.message : 'Connect failed' };
+      }
+    }
+    const peer = this.peers.get(deviceId);
+    if (!peer?.sessionEstablished) {
+      return { ok: false, transport: 'bluetooth', error: 'Secure session is not established' };
+    }
+    this.touchSession(deviceId);
+    const bytes = encodeNearbyBroadcastFrame(post);
+    try {
+      try {
+        await this.writeChunks(native, deviceId, bytes, BLE_DEFAULT_CHUNK_BYTES);
+      } catch {
+        await this.writeChunks(native, deviceId, bytes, BLE_FALLBACK_CHUNK_BYTES);
+      }
+      return { ok: true, transport: 'bluetooth' };
+    } catch (err) {
+      return {
+        ok: false,
+        transport: 'bluetooth',
+        error: err instanceof Error ? err.message : 'Nearby broadcast write failed',
+      };
+    }
+  }
+
   subscribe(
     handler: (envelope: EncryptedEnvelope, from: BlePeer) => void | boolean | Promise<void | boolean>,
   ): () => void {
     this.inbound.add(handler);
     return () => this.inbound.delete(handler);
+  }
+
+  subscribeNearbyBroadcast(handler: (post: NearbyBroadcast, from: BlePeer) => void): () => void {
+    this.nearbyBroadcastListeners.add(handler);
+    return () => this.nearbyBroadcastListeners.delete(handler);
   }
 
   onPeersChanged(handler: () => void): () => void {
@@ -806,6 +849,26 @@ export class HopBleEngine implements BleLink {
     }
     const complete = assembler.push(frame);
     if (!complete) return;
+    const broadcast = decodeNearbyBroadcastFrame(complete, 'bluetooth');
+    if (broadcast) {
+      this.touchSession(centralId);
+      const peer: BlePeer = this.peers.get(centralId) ?? {
+        deviceId: centralId,
+        displayName: 'HOP user',
+        lastSeenAt: Date.now(),
+      };
+      if (peer.userId && broadcast.authorId !== peer.userId) return;
+      if (this.processed.has(broadcast.id)) return;
+      this.processed.remember(broadcast.id);
+      for (const handler of this.nearbyBroadcastListeners) {
+        try {
+          handler(broadcast, peer);
+        } catch {
+          /* feed ingest must not break inbox */
+        }
+      }
+      return;
+    }
     const envelope = decodeEnvelope(complete);
     if (!envelope?.encrypted_payload) return;
     if (!isCryptoBoxPayload(envelope.encrypted_payload)) return;

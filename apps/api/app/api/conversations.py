@@ -77,6 +77,34 @@ def _require_member(session: Session, conversation_id: str, user: User) -> Conve
     return convo
 
 
+def _membership(session: Session, conversation_id: str, user_id: str) -> Optional[ConversationMember]:
+    return session.get(ConversationMember, (conversation_id, user_id))
+
+
+def _hide_for_user(membership: ConversationMember, now) -> None:
+    membership.hidden_at = now
+    membership.cleared_at = now
+
+
+def _unhide_for_user(session: Session, conversation_id: str, user_id: str) -> None:
+    membership = _membership(session, conversation_id, user_id)
+    if membership is None or membership.hidden_at is None:
+        return
+    membership.hidden_at = None
+    session.add(membership)
+
+
+def _event_role(session: Session, event: Event, user_id: str) -> Optional[str]:
+    if event.host_id == user_id:
+        return "host"
+    member = session.exec(
+        select(EventMember).where(EventMember.event_id == event.id).where(EventMember.user_id == user_id)
+    ).first()
+    if member is None:
+        return None
+    return "host" if member.role == "host" else "guest"
+
+
 def _message_out(row: Message) -> MessageOut:
     boxed = is_crypto_box_payload(row.encrypted_payload)
     return MessageOut(
@@ -118,6 +146,7 @@ def _conversation_out(session: Session, convo: Conversation, me: User) -> Conver
             title=event.name,
             event_id=event.id,
             archived=convo.archived_at is not None,
+            my_role=_event_role(session, event, me.id),
             members=member_outs,
         )
     peer = _peer(session, convo.id, me)
@@ -159,6 +188,8 @@ def create_conversation(
     assert_contact_allowed(session, user, peer, detail="Cannot start a conversation with this user")
     existing = _find_direct(session, user.id, peer.id)
     if existing:
+        _unhide_for_user(session, existing.id, user.id)
+        session.commit()
         return _conversation_out(session, existing, user)
     convo = Conversation()
     session.add(convo)
@@ -178,6 +209,8 @@ def list_conversations(
     memberships = session.exec(select(ConversationMember).where(ConversationMember.user_id == user.id)).all()
     out: list[ConversationOut] = []
     for membership in memberships:
+        if membership.hidden_at is not None:
+            continue
         convo = session.get(Conversation, membership.conversation_id)
         if not convo:
             continue
@@ -203,11 +236,31 @@ def list_messages(
         .where(Message.expires_at > now)
         .order_by(col(Message.created_at))
     )
+    membership = _membership(session, conversation_id, user.id)
+    if membership is not None and membership.cleared_at is not None:
+        query = query.where(Message.created_at > membership.cleared_at)
     convo = session.get(Conversation, conversation_id)
     if convo is not None and _conversation_kind(convo) == "event":
         query = query.where(Message.recipient_id == user.id)
     rows = session.exec(query).all()
     return [_message_out(row) for row in rows]
+
+
+@router.post("/conversations/{conversation_id}/hide")
+def hide_conversation(
+    conversation_id: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> dict[str, str]:
+    """Hide this conversation on the current user's inbox only. Never deletes peer history."""
+    _require_member(session, conversation_id, user)
+    membership = _membership(session, conversation_id, user.id)
+    if membership is None:
+        raise HTTPException(status_code=403, detail="Not a member of this conversation")
+    _hide_for_user(membership, utcnow())
+    session.add(membership)
+    session.commit()
+    return {"status": "hidden"}
 
 
 def _store_message(
@@ -302,6 +355,8 @@ async def _send_event_message(
         )
     if not stored:
         raise HTTPException(status_code=400, detail="Cannot send without a real recipient")
+    for row in stored:
+        _unhide_for_user(session, conversation_id, row.recipient_id)
     try:
         session.commit()
     except IntegrityError:
@@ -365,6 +420,7 @@ async def send_message(
     session.add(
         MessageDelivery(message_id=row.id, recipient_user_id=peer.id, status=status),
     )
+    _unhide_for_user(session, conversation_id, peer.id)
     try:
         session.commit()
     except IntegrityError:

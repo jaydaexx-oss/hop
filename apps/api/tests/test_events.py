@@ -175,6 +175,45 @@ def test_leave_and_remove_lose_future_event_chat(client: TestClient) -> None:
     assert guest_remove.status_code == 403
 
 
+def test_event_owner_hides_inbox_row_without_ending_and_guest_leaves(client: TestClient) -> None:
+    host_token, host_id = _auth(client, "hosthide")
+    guest_token, guest_id = _auth(client, "guesthide")
+    created = client.post(
+        "/events",
+        json={"name": "Yard sale", "invite_usernames": ["guesthide"]},
+        headers=_headers(host_token),
+    )
+    event_id = created.json()["id"]
+    convo_id = created.json()["conversation_id"]
+    client.post(f"/events/{event_id}/accept", headers=_headers(guest_token))
+
+    host_row = next(row for row in client.get("/conversations", headers=_headers(host_token)).json() if row["id"] == convo_id)
+    guest_row = next(row for row in client.get("/conversations", headers=_headers(guest_token)).json() if row["id"] == convo_id)
+    assert host_row["my_role"] == "host"
+    assert guest_row["my_role"] == "guest"
+
+    hidden = client.post(f"/conversations/{convo_id}/hide", headers=_headers(host_token))
+    assert hidden.status_code == 200
+    host_list = client.get("/conversations", headers=_headers(host_token)).json()
+    assert all(row["id"] != convo_id for row in host_list)
+    guest_still = client.get("/conversations", headers=_headers(guest_token)).json()
+    assert any(row["id"] == convo_id for row in guest_still)
+    event = client.get(f"/events/{event_id}", headers=_headers(host_token)).json()
+    assert event["status"] != "ended"
+    assert event["conversation_archived"] is False
+    assert any(member["id"] == guest_id for member in event["members"])
+    assert any(member["id"] == host_id for member in event["members"])
+
+    host_leave = client.post(f"/events/{event_id}/leave", headers=_headers(host_token))
+    assert host_leave.status_code == 400
+    left = client.post(f"/events/{event_id}/leave", headers=_headers(guest_token))
+    assert left.status_code == 200
+    assert client.get(f"/conversations/{convo_id}/messages", headers=_headers(guest_token)).status_code == 403
+    still_live = client.get(f"/events/{event_id}", headers=_headers(host_token)).json()
+    assert still_live["status"] != "ended"
+    assert all(member["id"] != guest_id for member in still_live["members"])
+
+
 def test_host_can_invite_later_and_cancel_pending(client: TestClient) -> None:
     host_token, _ = _auth(client, "hostff")
     later_token, later_id = _auth(client, "laterff")

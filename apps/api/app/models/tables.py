@@ -95,6 +95,8 @@ class ConversationMember(SQLModel, table=True):
     conversation_id: str = Field(foreign_key="conversations.id", primary_key=True)
     user_id: str = Field(foreign_key="users.id", primary_key=True)
     joined_at: datetime = Field(default_factory=utcnow)
+    hidden_at: Optional[datetime] = None
+    cleared_at: Optional[datetime] = None
 
 
 class Message(SQLModel, table=True):

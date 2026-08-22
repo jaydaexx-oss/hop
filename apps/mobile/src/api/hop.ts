@@ -36,6 +36,7 @@ export type Conversation = {
   title?: string | null;
   event_id?: string | null;
   archived?: boolean;
+  my_role?: EventMemberRole | null;
   members?: Array<{
     id: string;
     username: string;
@@ -259,6 +260,11 @@ export const api = {
   conversations: (token: string) => request<Conversation[]>('/conversations', { token }),
   createConversation: (token: string, username: string) =>
     request<Conversation>('/conversations', { method: 'POST', token, body: { username } }),
+  hideConversation: (token: string, conversationId: string) =>
+    request<{ status: string }>(`/conversations/${encodeURIComponent(conversationId)}/hide`, {
+      method: 'POST',
+      token,
+    }),
   messages: (token: string, conversationId: string) =>
     request<ChatMessage[]>(`/conversations/${conversationId}/messages`, { token }),
   sendMessage: (token: string, conversationId: string, encryptedPayload: string, messageId?: string) =>

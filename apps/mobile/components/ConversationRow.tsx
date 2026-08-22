@@ -26,6 +26,7 @@ export type ConversationRowProps = {
   textColor: string;
   onPress: () => void;
   onLongPress?: () => void;
+  onMenu?: () => void;
   peerId?: string;
   hasAvatar?: boolean;
 };
@@ -45,6 +46,7 @@ function ConversationRowInner({
   textColor,
   onPress,
   onLongPress,
+  onMenu,
   peerId,
   hasAvatar,
 }: ConversationRowProps) {
@@ -108,6 +110,16 @@ function ConversationRowInner({
           ) : null}
         </View>
       </View>
+      {onMenu ? (
+        <Pressable
+          onPress={onMenu}
+          hitSlop={10}
+          accessibilityRole="button"
+          accessibilityLabel={`Manage ${name}`}
+          style={styles.menuBtn}>
+          <Text style={[styles.menuDots, { color: muted }]}>•••</Text>
+        </Pressable>
+      ) : null}
     </Pressable>
   );
 }
@@ -167,4 +179,10 @@ const styles = StyleSheet.create({
     paddingHorizontal: 6,
   },
   unreadLabel: { color: '#042f2e', fontWeight: '800', fontSize: 12 },
+  menuBtn: {
+    paddingHorizontal: 4,
+    paddingVertical: 8,
+    backgroundColor: 'transparent',
+  },
+  menuDots: { fontSize: 16, fontWeight: '800', letterSpacing: 1 },
 });

@@ -140,6 +140,7 @@ class ConversationOut(BaseModel):
     title: Optional[str] = None
     event_id: Optional[str] = None
     archived: bool = False
+    my_role: Optional[Literal["host", "guest"]] = None
     members: list[MemberOut] = Field(default_factory=list)
 
 

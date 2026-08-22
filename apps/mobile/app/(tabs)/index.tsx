@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { FlatList, Pressable, StyleSheet } from 'react-native';
+import { Alert, FlatList, Pressable, StyleSheet } from 'react-native';
 import { useRouter } from 'expo-router';
 import {
-  REPORT_CATEGORIES,
   conversationHasUndeliveredOutbox,
   conversationTransportStatus,
   formatUnreadBadge,
@@ -10,7 +9,6 @@ import {
   internetStatusAvailable,
   sortInboxConversations,
   userFacingLoadError,
-  type ReportCategory,
 } from '@hop/protocol';
 
 import { ActionSheet } from '@/components/ActionSheet';
@@ -22,7 +20,12 @@ import { useColorScheme } from '@/components/useColorScheme';
 import { api, type Conversation } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
-import { CHATS_SECTION_TITLES } from '@/src/chat/chatsInboxSections';
+import {
+  CHATS_SECTION_TITLES,
+  inboxRowMenuActions,
+  isEventInboxOwner,
+  type InboxMenuAction,
+} from '@/src/chat/chatsInboxSections';
 import { hideInboxConversation, loadHiddenInboxIds, restoreInboxConversation } from '@/src/chat/inboxHide';
 import { createPersistentKv } from '@/src/nearby/kvStore';
 import { useOffline } from '@/src/offline/OfflineProvider';
@@ -101,7 +104,6 @@ export default function ChatsScreen() {
   const [error, setError] = useState<string | null>(null);
   const [requestCount, setRequestCount] = useState(0);
   const [sheetRow, setSheetRow] = useState<InboxRow | null>(null);
-  const [reportRow, setReportRow] = useState<InboxRow | null>(null);
   const [undoId, setUndoId] = useState<string | null>(null);
   const [undoNote, setUndoNote] = useState<string | null>(null);
 
@@ -133,6 +135,7 @@ export default function ChatsScreen() {
             title: row.title ?? null,
             event_id: row.event_id ?? null,
             archived: Boolean(row.archived),
+            my_role: row.kind === 'event' && user?.id && row.peer_id === user.id ? 'host' : row.kind === 'event' ? 'guest' : null,
           },
           {
             preview: row.preview,
@@ -166,6 +169,10 @@ export default function ChatsScreen() {
     try {
       const remote = await api.conversations(token);
       for (const convo of remote) {
+        if (user && hidden.has(convo.id)) {
+          await restoreInboxConversation(hideKv, user.id, convo.id);
+          hidden.delete(convo.id);
+        }
         await cacheConversation(convo);
       }
       await syncNow();
@@ -204,10 +211,17 @@ export default function ChatsScreen() {
   }, [refresh, safety]);
 
   useHopSocket(token, (event) => {
-    if (event.type === 'message') refresh();
+    if (event.type === 'message') {
+      const conversationId = event.message?.conversation_id;
+      if (user && conversationId) {
+        void restoreInboxConversation(hideKv, user.id, conversationId).then(() => refresh());
+        return;
+      }
+      refresh();
+    }
   });
 
-  async function hideRow(row: InboxRow) {
+  async function hideRow(row: InboxRow, opts?: { undoNote?: string }) {
     if (!user) return;
     let hasOutbox = false;
     if (store) {
@@ -218,12 +232,14 @@ export default function ChatsScreen() {
       );
     }
     const policy = inboxThreadClearPolicy({ hasUndeliveredOutbox: hasOutbox });
+    if (token) await api.hideConversation(token, row.id).catch(() => undefined);
     await hideInboxConversation(hideKv, user.id, row.id);
     setUndoId(row.id);
     setUndoNote(
-      policy.preservesOutbox && hasOutbox
-        ? 'Chat hidden. Queued messages will still send.'
-        : 'Chat hidden.',
+      opts?.undoNote ??
+        (policy.preservesOutbox && hasOutbox
+          ? 'Removed from your list. Queued messages will still send.'
+          : 'Removed from your list.'),
     );
     await refresh();
   }
@@ -236,11 +252,21 @@ export default function ChatsScreen() {
     await refresh();
   }
 
-  async function runInboxAction(row: InboxRow, action: 'mute' | 'unmute' | 'block' | 'report' | 'hide', category?: ReportCategory) {
+  async function runInboxAction(
+    row: InboxRow,
+    action: 'mute' | 'unmute' | 'block' | 'hide' | 'leave_event',
+  ) {
     const peerId = row.conversation.peer.id;
     const name = row.conversation.peer.username;
     if (action === 'hide') {
       await hideRow(row);
+      return;
+    }
+    if (action === 'leave_event') {
+      const eventId = row.conversation.event_id;
+      if (token && eventId) await api.leaveEvent(token, eventId).catch(() => undefined);
+      await hideInboxConversation(hideKv, user?.id ?? '', row.id);
+      await refresh();
       return;
     }
     if (!safety || !peerId) return;
@@ -249,11 +275,76 @@ export default function ChatsScreen() {
     else if (action === 'block') {
       await safety.block(peerId);
       if (token && name) await api.blockUser(token, name, peerId).catch(() => undefined);
-    } else if (action === 'report' && category) {
-      await safety.report(peerId, category);
-      if (token && name) await api.reportUser(token, name, category).catch(() => undefined);
     }
     await refresh();
+  }
+
+  function confirmInboxAction(row: InboxRow, action: InboxMenuAction) {
+    if (action.id === 'mute' || action.id === 'unmute') {
+      void runInboxAction(row, action.id);
+      return;
+    }
+    if (action.id === 'delete_chat' || action.id === 'remove_from_list') {
+      const ownerHide = action.id === 'remove_from_list';
+      Alert.alert(
+        ownerHide ? 'Remove from your chat list?' : 'Delete this chat?',
+        ownerHide
+          ? 'This hides the event chat for you only. The event stays active for everyone else.'
+          : 'This removes the chat and its history from your list only. The other person keeps their copy. A new message can bring it back.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: ownerHide ? 'Remove' : 'Delete',
+            style: 'destructive',
+            onPress: () => void runInboxAction(row, 'hide'),
+          },
+        ],
+      );
+      return;
+    }
+    if (action.id === 'leave_event') {
+      Alert.alert(
+        'Leave this event?',
+        'You will leave the event. It stays active for everyone else.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Leave',
+            style: 'destructive',
+            onPress: () => void runInboxAction(row, 'leave_event'),
+          },
+        ],
+      );
+      return;
+    }
+    if (action.id === 'block') {
+      Alert.alert(
+        `Block ${row.conversation.peer.username || 'this user'}?`,
+        'They will not be able to message you.',
+        [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Block',
+            style: 'destructive',
+            onPress: () => void runInboxAction(row, 'block'),
+          },
+        ],
+      );
+    }
+  }
+
+  function sheetActions(row: InboxRow): InboxMenuAction[] {
+    return inboxRowMenuActions({
+      kind: row.conversation.kind,
+      myRole: row.conversation.my_role,
+      muted: row.muted,
+      isEventOwner: isEventInboxOwner({
+        kind: row.conversation.kind,
+        myRole: row.conversation.my_role,
+        hostId: row.conversation.peer.id,
+        selfId: user?.id,
+      }),
+    });
   }
 
   const requestBadge = formatUnreadBadge(requestCount);
@@ -341,6 +432,7 @@ export default function ChatsScreen() {
                   hasAvatar={false}
                   onPress={() => router.push(chatHref(item) as `/chat/${string}`)}
                   onLongPress={() => setSheetRow(item)}
+                  onMenu={() => setSheetRow(item)}
                 />
               ))
             )}
@@ -378,6 +470,7 @@ export default function ChatsScreen() {
               hasAvatar={item.conversation.peer.has_avatar}
               onPress={() => router.push(chatHref(item) as `/chat/${string}`)}
               onLongPress={() => setSheetRow(item)}
+              onMenu={() => setSheetRow(item)}
             />
           );
         }}
@@ -391,45 +484,27 @@ export default function ChatsScreen() {
       <ActionSheet
         visible={sheetRow != null}
         onDismiss={() => setSheetRow(null)}
-        title={sheetRow?.conversation.peer.username || 'Chat'}
-        subtitle="Mute, block, or hide locally"
+        title={
+          sheetRow?.conversation.kind === 'event'
+            ? sheetRow.conversation.title || sheetRow.conversation.peer.username || 'Event'
+            : sheetRow?.conversation.peer.username || 'Chat'
+        }
+        subtitle={
+          sheetRow?.conversation.kind === 'event'
+            ? 'This only changes your event chat list'
+            : 'This only changes your chat list'
+        }
         avatarColor={defaultLocalAvatarColor(sheetRow?.conversation.peer.id || 'hop')}
         avatarUserId={sheetRow?.conversation.peer.id}
         actions={
           sheetRow
-            ? [
-                {
-                  label: sheetRow.muted ? 'Unmute' : 'Mute',
-                  onPress: () => void runInboxAction(sheetRow, sheetRow.muted ? 'unmute' : 'mute'),
-                },
-                {
-                  label: 'Hide chat',
-                  onPress: () => void runInboxAction(sheetRow, 'hide'),
-                },
-                {
-                  label: 'Report',
-                  onPress: () => setReportRow(sheetRow),
-                },
-                {
-                  label: 'Block',
-                  destructive: true,
-                  onPress: () => void runInboxAction(sheetRow, 'block'),
-                },
-              ]
+            ? sheetActions(sheetRow).map((action) => ({
+                label: action.label,
+                destructive: action.destructive,
+                onPress: () => confirmInboxAction(sheetRow, action),
+              }))
             : []
         }
-      />
-      <ActionSheet
-        visible={reportRow != null}
-        onDismiss={() => setReportRow(null)}
-        title="Report"
-        subtitle="HOP does not attach the conversation transcript."
-        actions={REPORT_CATEGORIES.map((category) => ({
-          label: category,
-          onPress: () => {
-            if (reportRow) void runInboxAction(reportRow, 'report', category);
-          },
-        }))}
       />
     </View>
   );

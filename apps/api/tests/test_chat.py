@@ -125,3 +125,38 @@ def test_client_message_id_is_idempotent(client: TestClient) -> None:
 
     inbox = client.get(f"/conversations/{convo_id}/messages", headers=headers_a)
     assert len(inbox.json()) == 1
+
+
+def test_hide_conversation_is_for_me_only_and_unhides_on_inbound(client: TestClient) -> None:
+    token_a, _ = _auth(client, "hideaa")
+    token_b, id_b = _auth(client, "hidebb")
+    token_c, _ = _auth(client, "hidecc")
+    headers_a = {"Authorization": f"Bearer {token_a}"}
+    headers_b = {"Authorization": f"Bearer {token_b}"}
+    headers_c = {"Authorization": f"Bearer {token_c}"}
+
+    convo_id = client.post("/conversations", json={"username": "hidebb"}, headers=headers_a).json()["id"]
+    sent = client.post(f"/conversations/{convo_id}/messages", json=boxed(), headers=headers_a)
+    assert sent.status_code == 200
+    assert client.get(f"/conversations/{convo_id}/messages", headers=headers_b).status_code == 200
+
+    hidden = client.post(f"/conversations/{convo_id}/hide", headers=headers_a)
+    assert hidden.status_code == 200
+    assert hidden.json()["status"] == "hidden"
+    assert [row["id"] for row in client.get("/conversations", headers=headers_a).json()] == []
+    peer_list = client.get("/conversations", headers=headers_b).json()
+    assert [row["id"] for row in peer_list] == [convo_id]
+    peer_inbox = client.get(f"/conversations/{convo_id}/messages", headers=headers_b)
+    assert len(peer_inbox.json()) == 1
+    assert client.get(f"/conversations/{convo_id}/messages", headers=headers_a).json() == []
+
+    outsider = client.post(f"/conversations/{convo_id}/hide", headers=headers_c)
+    assert outsider.status_code == 403
+    assert [row["id"] for row in client.get("/conversations", headers=headers_b).json()] == [convo_id]
+
+    inbound = client.post(f"/conversations/{convo_id}/messages", json=boxed(), headers=headers_b)
+    assert inbound.status_code == 200
+    assert [row["id"] for row in client.get("/conversations", headers=headers_a).json()] == [convo_id]
+    reopened = client.get(f"/conversations/{convo_id}/messages", headers=headers_a).json()
+    assert len(reopened) == 1
+    assert reopened[0]["message_id"] == inbound.json()["message_id"]

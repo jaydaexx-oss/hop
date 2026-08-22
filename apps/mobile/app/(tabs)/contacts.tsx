@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Pressable, StyleSheet, TextInput } from 'react-native';
+import { Keyboard, Pressable, ScrollView, StyleSheet, TextInput } from 'react-native';
 import { useRouter } from 'expo-router';
 
 import { Text, View } from '@/components/Themed';
@@ -10,6 +10,11 @@ import { api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { chatRoute, openPeerThread } from '@/src/chat/openPeerThread';
 import { useOffline } from '@/src/offline/OfflineProvider';
+import {
+  contactsUsernameKeyboardProps,
+  dismissKeyboardOnOutsideTap,
+  keyboardDismissScrollProps,
+} from '@/src/ui/keyboardDismiss';
 
 export default function ContactsScreen() {
   const { token, user } = useAuth();
@@ -23,6 +28,7 @@ export default function ContactsScreen() {
 
   async function startChat() {
     if (!token || !user) return;
+    Keyboard.dismiss();
     setBusy(true);
     setError(null);
     try {
@@ -48,37 +54,56 @@ export default function ContactsScreen() {
 
   return (
     <View style={styles.wrap}>
-      <StatusBanner />
-      <Text style={styles.title}>Start a chat</Text>
-      <Text style={{ color: colors.muted, marginBottom: 12 }}>
-        Enter a HOP username. Contacts are never uploaded from your address book. Unknown people
-        open as a message request.
-      </Text>
-      <TextInput
-        autoCapitalize="none"
-        autoCorrect={false}
-        placeholder="username"
-        placeholderTextColor={colors.muted}
-        value={username}
-        onChangeText={setUsername}
-        style={[styles.input, { color: colors.text, backgroundColor: colors.card, borderColor: colors.tabIconDefault }]}
-      />
-      {error ? <Text style={styles.error}>{error}</Text> : null}
-      <Pressable
-        onPress={startChat}
-        disabled={busy || username.trim().length < 3}
-        style={[styles.button, { backgroundColor: colors.tint, opacity: busy ? 0.6 : 1 }]}>
-        <Text style={styles.buttonLabel}>Message</Text>
-      </Pressable>
+      <ScrollView
+        style={styles.scroll}
+        contentContainerStyle={styles.content}
+        {...keyboardDismissScrollProps}>
+        <Pressable
+          onPress={() => dismissKeyboardOnOutsideTap(Keyboard.dismiss)}
+          accessible={false}>
+          <StatusBanner />
+          <Text style={styles.title}>Start a chat</Text>
+          <Text style={{ color: colors.muted, marginBottom: 12 }}>
+            Enter a HOP username. Contacts are never uploaded from your address book. Unknown people
+            open as a message request.
+          </Text>
+        </Pressable>
+        <TextInput
+          autoCapitalize="none"
+          autoCorrect={false}
+          placeholder="username"
+          placeholderTextColor={colors.muted}
+          value={username}
+          onChangeText={setUsername}
+          {...contactsUsernameKeyboardProps}
+          onSubmitEditing={() => dismissKeyboardOnOutsideTap(Keyboard.dismiss)}
+          style={[styles.input, { color: colors.text, backgroundColor: colors.card, borderColor: colors.tabIconDefault }]}
+        />
+        {error ? <Text style={styles.error}>{error}</Text> : null}
+        <Pressable
+          onPress={startChat}
+          disabled={busy || username.trim().length < 3}
+          style={[styles.button, { backgroundColor: colors.tint, opacity: busy ? 0.6 : 1 }]}>
+          <Text style={styles.buttonLabel}>Message</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => dismissKeyboardOnOutsideTap(Keyboard.dismiss)}
+          accessible={false}
+          style={styles.dismissPad}
+        />
+      </ScrollView>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  wrap: { flex: 1, padding: 20 },
+  wrap: { flex: 1 },
+  scroll: { flex: 1 },
+  content: { flexGrow: 1, padding: 20 },
   title: { fontSize: 28, fontWeight: '700', marginBottom: 8 },
   input: { borderWidth: 1, borderRadius: 12, paddingHorizontal: 14, paddingVertical: 12, fontSize: 16 },
   button: { marginTop: 12, borderRadius: 12, paddingVertical: 14, alignItems: 'center' },
   buttonLabel: { color: '#042f2e', fontWeight: '700', fontSize: 16 },
   error: { color: '#DC2626', marginTop: 8 },
+  dismissPad: { flexGrow: 1, minHeight: 80 },
 });

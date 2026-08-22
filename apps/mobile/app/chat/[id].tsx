@@ -2,6 +2,7 @@ import { useFocusEffect, useLocalSearchParams, useNavigation, Redirect } from 'e
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import {
   FlatList,
+  Keyboard,
   Pressable,
   StyleSheet,
   TextInput,
@@ -42,6 +43,7 @@ import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
 import { sendChatText, sendChatVoice, sendEventChatText } from '@/src/chat/sendChat';
 import { storedToChat, useOffline } from '@/src/offline/OfflineProvider';
+import { dismissKeyboardOnOutsideTap, keyboardDismissScrollProps } from '@/src/ui/keyboardDismiss';
 import { clearVoicePlaybackTemps } from '@/src/voice/cache';
 import { useHopSocket } from '@/src/ws';
 
@@ -560,15 +562,17 @@ export default function ChatScreen() {
             )}
           </View>
         )}>
-        {error ? (
-          <Text style={styles.error} accessibilityLiveRegion="polite">
-            {error}
-          </Text>
-        ) : queuedHint ? (
-          <Text style={[styles.hint, { color: colors.muted }]} accessibilityLiveRegion="polite">
-            {queuedHint}
-          </Text>
-        ) : null}
+        <Pressable onPress={() => dismissKeyboardOnOutsideTap(Keyboard.dismiss)} accessible={false}>
+          {error ? (
+            <Text style={styles.error} accessibilityLiveRegion="polite">
+              {error}
+            </Text>
+          ) : queuedHint ? (
+            <Text style={[styles.hint, { color: colors.muted }]} accessibilityLiveRegion="polite">
+              {queuedHint}
+            </Text>
+          ) : null}
+        </Pressable>
         {safetyRecord?.relationship === 'incoming_request' ? (
           <View style={[styles.requestBanner, { backgroundColor: colors.card }]}>
             <Text style={{ color: colors.text }}>
@@ -588,32 +592,35 @@ export default function ChatScreen() {
             </View>
           </View>
         ) : null}
-        {broadcastId ? (
-          <Text style={[styles.hint, { color: colors.muted }]}>
-            Private reply to a nearby broadcast. This is not posted publicly.
-          </Text>
-        ) : null}
-        {safetyRecord?.relationship === 'outgoing_request' ? (
-          <Text style={[styles.hint, { color: colors.muted }]}>
-            Waiting for them to accept. You already sent an introduction.
-          </Text>
-        ) : null}
-        {safetyRecord?.relationship === 'none' ? (
-          <Text style={[styles.hint, { color: colors.muted }]}>
-            Unknown people start as a message request. One introduction until they accept.
-          </Text>
-        ) : null}
-        {safetyRecord?.relationship === 'blocked' ? (
-          <Text style={[styles.hint, { color: '#DC2626' }]}>This person is blocked.</Text>
-        ) : null}
-        {safetyRecord?.muted && safetyRecord.relationship === 'accepted' ? (
-          <Text style={[styles.hint, { color: colors.muted }]}>Muted — messages still arrive, notifications off.</Text>
-        ) : null}
+        <Pressable onPress={() => dismissKeyboardOnOutsideTap(Keyboard.dismiss)} accessible={false}>
+          {broadcastId ? (
+            <Text style={[styles.hint, { color: colors.muted }]}>
+              Private reply to a nearby broadcast. This is not posted publicly.
+            </Text>
+          ) : null}
+          {safetyRecord?.relationship === 'outgoing_request' ? (
+            <Text style={[styles.hint, { color: colors.muted }]}>
+              Waiting for them to accept. You already sent an introduction.
+            </Text>
+          ) : null}
+          {safetyRecord?.relationship === 'none' ? (
+            <Text style={[styles.hint, { color: colors.muted }]}>
+              Unknown people start as a message request. One introduction until they accept.
+            </Text>
+          ) : null}
+          {safetyRecord?.relationship === 'blocked' ? (
+            <Text style={[styles.hint, { color: '#DC2626' }]}>This person is blocked.</Text>
+          ) : null}
+          {safetyRecord?.muted && safetyRecord.relationship === 'accepted' ? (
+            <Text style={[styles.hint, { color: colors.muted }]}>Muted — messages still arrive, notifications off.</Text>
+          ) : null}
+        </Pressable>
         <View style={styles.listWrap}>
           <FlatList
             ref={listRef}
             inverted
             data={invertedData}
+            {...keyboardDismissScrollProps}
             keyExtractor={(item) => item.message_id}
             contentContainerStyle={styles.list}
             initialNumToRender={16}

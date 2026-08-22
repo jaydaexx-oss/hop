@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import {
   FlatList,
+  Keyboard,
   Pressable,
   StyleSheet,
   TextInput,
@@ -27,6 +28,7 @@ import { useBroadcast } from '@/src/broadcast/BroadcastProvider';
 import { broadcastReplyRoute, replyToBroadcast } from '@/src/broadcast/replyToBroadcast';
 import { useOffline } from '@/src/offline/OfflineProvider';
 import { defaultLocalAvatarColor } from '@/src/profile/avatarAppearance';
+import { dismissKeyboardOnOutsideTap, keyboardDismissScrollProps } from '@/src/ui/keyboardDismiss';
 
 function BroadcastCard({
   item,
@@ -156,11 +158,16 @@ export default function BroadcastScreen() {
         </View>
       )}>
       <SafeAreaView style={styles.container} edges={['top']}>
-        <StatusBanner />
-        <View style={[styles.header, { borderBottomColor: colors.border }]}>
+        <Pressable onPress={() => dismissKeyboardOnOutsideTap(Keyboard.dismiss)} accessible={false}>
+          <StatusBanner />
+        </Pressable>
+        <Pressable
+          onPress={() => dismissKeyboardOnOutsideTap(Keyboard.dismiss)}
+          accessible={false}
+          style={[styles.header, { borderBottomColor: colors.border }]}>
           <Text style={styles.title}>Broadcast</Text>
           <Text style={[styles.subtitle, { color: colors.muted }]}>Visible to everyone nearby</Text>
-        </View>
+        </Pressable>
         <FlatList
           data={posts}
           keyExtractor={(item) => item.id}
@@ -174,8 +181,12 @@ export default function BroadcastScreen() {
           )}
           contentContainerStyle={styles.list}
           ItemSeparatorComponent={() => <View style={{ height: 10 }} />}
+          {...keyboardDismissScrollProps}
           ListEmptyComponent={
-            <View style={styles.empty}>
+            <Pressable
+              onPress={() => dismissKeyboardOnOutsideTap(Keyboard.dismiss)}
+              accessible={false}
+              style={styles.empty}>
               <SymbolView
                 name={{ ios: 'megaphone', android: 'campaign', web: 'campaign' }}
                 tintColor={colors.muted}
@@ -183,11 +194,13 @@ export default function BroadcastScreen() {
               />
               <Text style={styles.emptyTitle}>No broadcasts yet</Text>
               <Text style={[styles.emptyText, { color: colors.muted }]}>Send the first message to people nearby</Text>
-            </View>
+            </Pressable>
           }
         />
         {error || replyError ? (
-          <Text style={[styles.error, { color: colors.destructive }]}>{replyError || error}</Text>
+          <Pressable onPress={() => dismissKeyboardOnOutsideTap(Keyboard.dismiss)} accessible={false}>
+            <Text style={[styles.error, { color: colors.destructive }]}>{replyError || error}</Text>
+          </Pressable>
         ) : null}
       </SafeAreaView>
     </ComposerKeyboardScreen>

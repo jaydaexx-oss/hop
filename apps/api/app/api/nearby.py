@@ -74,6 +74,7 @@ def list_broadcasts(
     session: Session = Depends(get_session),
     user: User = Depends(get_current_user),
 ) -> list[NearbyBroadcastOut]:
+    """Inbox is BLE-scoped deliveries plus the caller's own non-expired posts."""
     now = utcnow()
     delivered_ids = [
         row.broadcast_id
@@ -81,15 +82,18 @@ def list_broadcasts(
             select(NearbyBroadcastDelivery).where(NearbyBroadcastDelivery.recipient_id == user.id)
         ).all()
     ]
-    if not delivered_ids:
-        return []
-    rows = session.exec(select(NearbyBroadcast).where(col(NearbyBroadcast.id).in_(delivered_ids))).all()
-    visible: list[NearbyBroadcast] = []
-    for row in rows:
+    by_id: dict[str, NearbyBroadcast] = {}
+    authored = session.exec(select(NearbyBroadcast).where(NearbyBroadcast.author_id == user.id)).all()
+    delivered = (
+        session.exec(select(NearbyBroadcast).where(col(NearbyBroadcast.id).in_(delivered_ids))).all()
+        if delivered_ids
+        else []
+    )
+    for row in (*authored, *delivered):
         if row.expires_at <= now:
             continue
-        if is_blocked(session, user.id, row.author_id):
+        if row.author_id != user.id and is_blocked(session, user.id, row.author_id):
             continue
-        visible.append(row)
-    visible.sort(key=lambda item: item.created_at, reverse=True)
+        by_id[row.id] = row
+    visible = sorted(by_id.values(), key=lambda item: item.created_at, reverse=True)
     return [_out(row) for row in visible]

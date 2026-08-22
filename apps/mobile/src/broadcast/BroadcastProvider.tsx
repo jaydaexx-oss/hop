@@ -10,13 +10,12 @@ import {
 } from 'react';
 import {
   NearbyBroadcastFeed,
-  mergeBroadcastFeed,
   nearbyBroadcastFanoutTargets,
   parseNearbyBroadcastWire,
   type NearbyBroadcast,
 } from '@hop/protocol';
 
-import { api } from '@/src/api/hop';
+import { ApiError, api } from '@/src/api/hop';
 import { useAuth } from '@/src/auth/AuthProvider';
 import { useBle } from '@/src/ble/BleProvider';
 import { createPersistentKv } from '@/src/nearby/kvStore';
@@ -24,6 +23,12 @@ import { useNearby } from '@/src/nearby/NearbyProvider';
 import { useOffline } from '@/src/offline/OfflineProvider';
 
 import { loadBroadcastFeed, saveBroadcastFeed } from './broadcastStore';
+import {
+  applyBroadcastDiscovery,
+  applyPersistedBroadcasts,
+  applyServerBroadcastAck,
+  discoveryErrorKeepsLocalFeed,
+} from './broadcastFeedSync';
 
 type BroadcastContextValue = {
   posts: NearbyBroadcast[];
@@ -67,6 +72,8 @@ export function BroadcastProvider({ children }: { children: ReactNode }) {
   const { safety } = useOffline();
   const kvRef = useRef(createPersistentKv());
   const feedRef = useRef(new NearbyBroadcastFeed(() => user?.id ?? null, () => blockedRef.current));
+  const boundUserIdRef = useRef<string | null>(null);
+  const hydratedRef = useRef(false);
   const [posts, setPosts] = useState<NearbyBroadcast[]>([]);
   const [sending, setSending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -75,26 +82,40 @@ export function BroadcastProvider({ children }: { children: ReactNode }) {
   blockedRef.current = blockedIds;
   const userId = user?.id ?? null;
 
-  const publish = useCallback((next: NearbyBroadcast[]) => {
-    setPosts(next);
+  const persistFeed = useCallback((next: NearbyBroadcast[]) => {
     if (userId) saveBroadcastFeed(kvRef.current, userId, next).catch(() => undefined);
   }, [userId]);
 
+  const publish = useCallback((next: NearbyBroadcast[], persist = true) => {
+    setPosts(next);
+    if (persist) persistFeed(next);
+  }, [persistFeed]);
+
   useEffect(() => {
-    feedRef.current = new NearbyBroadcastFeed(() => user?.id ?? null, () => blockedRef.current);
     if (!userId) {
       setPosts([]);
       return;
     }
+    if (boundUserIdRef.current !== userId) {
+      feedRef.current = new NearbyBroadcastFeed(() => userId, () => blockedRef.current);
+      boundUserIdRef.current = userId;
+      hydratedRef.current = false;
+    }
     let cancelled = false;
     loadBroadcastFeed(kvRef.current, userId).then((stored) => {
       if (cancelled) return;
-      publish(feedRef.current.replaceAll(stored));
+      const next = applyPersistedBroadcasts(feedRef.current.list(), stored, {
+        selfId: userId,
+        blockedIds: blockedRef.current,
+      });
+      feedRef.current.replaceAll(next);
+      hydratedRef.current = true;
+      publish(next);
     });
     return () => {
       cancelled = true;
     };
-  }, [publish, userId, user?.id]);
+  }, [publish, userId]);
 
   useEffect(() => {
     if (!safety) {
@@ -116,8 +137,8 @@ export function BroadcastProvider({ children }: { children: ReactNode }) {
   }, [safety]);
 
   useEffect(() => {
-    publish(feedRef.current.list());
-  }, [blockedIds, publish]);
+    setPosts(feedRef.current.list());
+  }, [blockedIds]);
 
   useEffect(() => {
     const off = engine.subscribeNearbyBroadcast((incoming, from) => {
@@ -131,17 +152,20 @@ export function BroadcastProvider({ children }: { children: ReactNode }) {
     if (!token) return;
     try {
       const rows = await api.listNearbyBroadcasts(token);
+      if (!Array.isArray(rows)) return;
       const incoming = rows.map(fromApiRow).filter((row): row is NearbyBroadcast => Boolean(row));
-      const next = mergeBroadcastFeed(feedRef.current.list(), incoming, {
+      const next = applyBroadcastDiscovery(feedRef.current.list(), incoming, {
         selfId: userId,
         blockedIds: blockedRef.current,
       });
       feedRef.current.replaceAll(next);
-      publish(next);
-    } catch {
-      /* offline: BLE + local feed still work */
+      setPosts(next);
+      if (hydratedRef.current || next.length > 0) persistFeed(next);
+    } catch (err) {
+      if (err instanceof ApiError && discoveryErrorKeepsLocalFeed(err.status)) return;
+      /* any fetch failure keeps BLE + locally sent posts */
     }
-  }, [publish, token, userId]);
+  }, [persistFeed, token, userId]);
 
   useEffect(() => {
     void syncInternet();
@@ -173,14 +197,25 @@ export function BroadcastProvider({ children }: { children: ReactNode }) {
           await engine.sendNearbyBroadcast(target.deviceId, created).catch(() => undefined);
         }
         if (token) {
-          await api
-            .postNearbyBroadcast(token, {
+          try {
+            const row = await api.postNearbyBroadcast(token, {
               id: created.id,
               body: created.body,
               nearby_user_ids: targets.map((row) => row.userId),
               ttl_ms: created.ttlMs,
-            })
-            .catch(() => undefined);
+            });
+            const server = fromApiRow(row);
+            if (server) {
+              const next = applyServerBroadcastAck(feedRef.current.list(), created.id, server, {
+                selfId: user.id,
+                blockedIds: blockedRef.current,
+              });
+              feedRef.current.replaceAll(next);
+              publish(next);
+            }
+          } catch {
+            /* keep the optimistic local post */
+          }
         }
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Could not send broadcast');

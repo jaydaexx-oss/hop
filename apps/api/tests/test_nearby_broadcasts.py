@@ -38,7 +38,22 @@ def test_nearby_broadcast_appears_for_ble_scoped_peer_not_the_world(client: Test
     assert stranger == []
 
     author_inbox = client.get("/nearby/broadcasts", headers=_headers(author_token)).json()
-    assert author_inbox == []
+    assert [row["id"] for row in author_inbox] == [post["id"]]
+    assert author_inbox[0]["body"] == "Coffee on the patio"
+    assert author_inbox[0]["created_at"].endswith("Z")
+    assert author_inbox[0]["expires_at"].endswith("Z")
+
+
+def test_author_sees_own_broadcast_without_nearby_deliveries(client: TestClient) -> None:
+    token, _ = _auth(client, "soloaa")
+    created = client.post(
+        "/nearby/broadcasts",
+        json={"body": "Just me nearby", "nearby_user_ids": []},
+        headers=_headers(token),
+    )
+    assert created.status_code == 200
+    inbox = client.get("/nearby/broadcasts", headers=_headers(token)).json()
+    assert [row["id"] for row in inbox] == [created.json()["id"]]
 
 
 def test_broadcast_does_not_create_a_conversation(client: TestClient) -> None:

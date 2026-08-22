@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timedelta, timezone
 from typing import Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_serializer
 
 
 class EnvelopeIn(BaseModel):
@@ -275,3 +275,8 @@ class NearbyBroadcastOut(BaseModel):
     created_at: datetime
     expires_at: datetime
     ttl_ms: int
+
+    @field_serializer("created_at", "expires_at")
+    def serialize_broadcast_timestamp(self, value: datetime) -> str:
+        aware = value.replace(tzinfo=timezone.utc) if value.tzinfo is None else value.astimezone(timezone.utc)
+        return aware.isoformat().replace("+00:00", "Z")

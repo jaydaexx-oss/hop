@@ -5,13 +5,16 @@ import {
   NEARBY_BROADCAST_TTL_MS,
   NEARBY_BROADCAST_TYPE,
   NearbyBroadcastFeed,
+  adoptServerBroadcast,
   createNearbyBroadcast,
   decodeNearbyBroadcastFrame,
   encodeNearbyBroadcastFrame,
   formatBroadcastTime,
   isOwnBroadcast,
+  mergeBroadcastFeed,
   nearbyBroadcastFanoutTargets,
   nearbyBroadcastFeedHasSecrets,
+  parseBroadcastTimestamp,
   parseNearbyBroadcastWire,
   planBroadcastReply,
   pruneExpiredBroadcasts,
@@ -147,6 +150,57 @@ describe("nearby broadcast protocol", () => {
   it("formats approximate time like the Replit feed", () => {
     expect(formatBroadcastTime(NOW.toISOString(), NOW.getTime())).toBe("just now");
     expect(formatBroadcastTime(new Date(NOW.getTime() - 5 * 60_000).toISOString(), NOW.getTime())).toBe("5m ago");
+  });
+
+  it("merges local sent posts with received copies and never replaces with an empty fetch", () => {
+    const mine = post({ id: "11111111-1111-4111-8111-111111111111", authorId: "maya", displayName: "maya" });
+    const peer = post({ id: "22222222-2222-4222-8222-222222222222", authorId: "blake", displayName: "blake" });
+    const ctx = { selfId: "maya", blockedIds: [], now: NOW.getTime() };
+    expect(mergeBroadcastFeed([mine, peer], [], ctx).map((row) => row.id)).toEqual([mine.id, peer.id]);
+    const dup = { ...peer, source: "internet" as const };
+    expect(mergeBroadcastFeed([mine, peer], [dup], ctx).map((row) => row.id)).toEqual([mine.id, peer.id]);
+    const feed = new NearbyBroadcastFeed(() => "maya", () => [], () => NOW.getTime());
+    feed.post({ authorId: "maya", displayName: "maya", body: "Hello nearby", id: mine.id });
+    expect(feed.mergeIncoming([]).some((row) => row.authorId === "maya")).toBe(true);
+  });
+
+  it("adopts a server id/timestamp in place of the optimistic post", () => {
+    const optimistic = post({ id: "44444444-4444-4444-8444-444444444444", authorId: "maya", displayName: "maya" });
+    const server = post({
+      id: "55555555-5555-4555-8555-555555555555",
+      authorId: "maya",
+      displayName: "maya",
+      now: new Date(NOW.getTime() + 1000),
+      source: "internet",
+    });
+    const next = adoptServerBroadcast([optimistic], optimistic.id, server, {
+      selfId: "maya",
+      blockedIds: [],
+      now: NOW.getTime(),
+    });
+    expect(next).toHaveLength(1);
+    expect(next[0]?.id).toBe(server.id);
+    expect(next[0]?.createdAt).toBe(server.createdAt);
+  });
+
+  it("treats naive API timestamps as UTC so TTL does not shift by timezone", () => {
+    expect(parseBroadcastTimestamp("2026-08-21T22:00:00")).toBe(Date.parse("2026-08-21T22:00:00.000Z"));
+    const naive = parseNearbyBroadcastWire(
+      {
+        v: 1,
+        type: NEARBY_BROADCAST_TYPE,
+        id: "66666666-6666-4666-8666-666666666666",
+        author_id: "maya",
+        display_name: "maya",
+        body: "hi",
+        created_at: "2026-08-21T21:00:00",
+        expires_at: "2026-08-21T21:01:00",
+        ttl_ms: 60_000,
+      },
+      "internet",
+    );
+    expect(naive?.expiresAt).toBe("2026-08-21T21:01:00.000Z");
+    expect(pruneExpiredBroadcasts(naive ? [naive] : [], NOW.getTime())).toEqual([]);
   });
 
   it("rejects a spoofed BLE author that does not match the session", () => {

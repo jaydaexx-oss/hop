@@ -62,9 +62,21 @@ export function isOwnBroadcast(post: Pick<NearbyBroadcast, "authorId">, selfId: 
   return Boolean(selfId && post.authorId === selfId);
 }
 
+/**
+ * API `utcnow()` is naive UTC. Treat ISO datetimes without an offset as UTC
+ * so TTL expiry does not shift with the phone timezone.
+ */
+export function parseBroadcastTimestamp(value: string): number | null {
+  const trimmed = value.trim();
+  if (!trimmed) return null;
+  const hasOffset = /(?:Z|[+-]\d{2}:?\d{2})$/i.test(trimmed);
+  const ts = Date.parse(hasOffset ? trimmed : /T/i.test(trimmed) ? `${trimmed}Z` : trimmed);
+  return Number.isFinite(ts) ? ts : null;
+}
+
 export function isNearbyBroadcastExpired(post: Pick<NearbyBroadcast, "expiresAt">, now = Date.now()): boolean {
-  const expires = Date.parse(post.expiresAt);
-  if (!Number.isFinite(expires)) return true;
+  const expires = parseBroadcastTimestamp(post.expiresAt);
+  if (expires === null) return true;
   return now >= expires;
 }
 
@@ -73,8 +85,8 @@ export function viewBroadcastCreatesConversation(): false {
 }
 
 export function formatBroadcastTime(createdAt: string, now = Date.now()): string {
-  const ts = Date.parse(createdAt);
-  if (!Number.isFinite(ts)) return "";
+  const ts = parseBroadcastTimestamp(createdAt);
+  if (ts === null) return "";
   const diff = Math.max(0, now - ts);
   if (diff < 60_000) return "just now";
   if (diff < 3_600_000) return `${Math.floor(diff / 60_000)}m ago`;
@@ -149,9 +161,9 @@ export function parseNearbyBroadcastWire(data: unknown, source: NearbyBroadcastS
   const expiresAt = typeof row.expires_at === "string" ? row.expires_at : "";
   const ttlMs = clampNearbyBroadcastTtl(typeof row.ttl_ms === "number" ? row.ttl_ms : undefined);
   if (!id || !authorId || !body || !createdAt || !expiresAt) return null;
-  const created = Date.parse(createdAt);
-  const expires = Date.parse(expiresAt);
-  if (!Number.isFinite(created) || !Number.isFinite(expires)) return null;
+  const created = parseBroadcastTimestamp(createdAt);
+  const expires = parseBroadcastTimestamp(expiresAt);
+  if (created === null || expires === null) return null;
   return {
     id,
     authorId,
@@ -184,6 +196,11 @@ export function broadcastVisibleInFeed(
   return true;
 }
 
+function preferBroadcastRecord(prev: NearbyBroadcast, incoming: NearbyBroadcast): NearbyBroadcast {
+  if (incoming.source === "internet" && prev.source !== "internet") return incoming;
+  return prev;
+}
+
 export function mergeBroadcastFeed(
   existing: NearbyBroadcast[],
   incoming: NearbyBroadcast[],
@@ -191,11 +208,34 @@ export function mergeBroadcastFeed(
 ): NearbyBroadcast[] {
   const now = input.now ?? Date.now();
   const byId = new Map<string, NearbyBroadcast>();
-  for (const post of [...existing, ...incoming]) {
+  for (const post of existing) {
     if (!broadcastVisibleInFeed(post, { ...input, now })) continue;
-    if (!byId.has(post.id)) byId.set(post.id, post);
+    byId.set(post.id, post);
   }
-  return [...byId.values()].sort((a, b) => Date.parse(b.createdAt) - Date.parse(a.createdAt));
+  for (const post of incoming) {
+    if (!broadcastVisibleInFeed(post, { ...input, now })) continue;
+    const prev = byId.get(post.id);
+    byId.set(post.id, prev ? preferBroadcastRecord(prev, post) : post);
+  }
+  return [...byId.values()].sort((a, b) => {
+    const aCreated = parseBroadcastTimestamp(a.createdAt) ?? 0;
+    const bCreated = parseBroadcastTimestamp(b.createdAt) ?? 0;
+    return bCreated - aCreated;
+  });
+}
+
+/** Replace an optimistic local id with the server row without duplicating the post. */
+export function adoptServerBroadcast(
+  existing: NearbyBroadcast[],
+  optimisticId: string,
+  server: NearbyBroadcast,
+  input: { selfId: string | null; blockedIds: Iterable<string>; now?: number },
+): NearbyBroadcast[] {
+  const withoutOptimistic = existing.filter((post) => post.id !== optimisticId);
+  if (!broadcastVisibleInFeed(server, input)) {
+    return mergeBroadcastFeed(existing, [], input);
+  }
+  return mergeBroadcastFeed(withoutOptimistic, [server], input);
 }
 
 export function pruneExpiredBroadcasts(posts: NearbyBroadcast[], now = Date.now()): NearbyBroadcast[] {
@@ -288,6 +328,24 @@ export class NearbyBroadcastFeed {
 
   replaceAll(posts: NearbyBroadcast[]): NearbyBroadcast[] {
     this.posts = mergeBroadcastFeed([], posts, {
+      selfId: this.selfId(),
+      blockedIds: this.blockedIds(),
+      now: this.now(),
+    });
+    return this.list();
+  }
+
+  mergeIncoming(incoming: NearbyBroadcast[]): NearbyBroadcast[] {
+    this.posts = mergeBroadcastFeed(this.posts, incoming, {
+      selfId: this.selfId(),
+      blockedIds: this.blockedIds(),
+      now: this.now(),
+    });
+    return this.list();
+  }
+
+  acknowledgeServer(optimisticId: string, server: NearbyBroadcast): NearbyBroadcast[] {
+    this.posts = adoptServerBroadcast(this.posts, optimisticId, server, {
       selfId: this.selfId(),
       blockedIds: this.blockedIds(),
       now: this.now(),

@@ -141,6 +141,7 @@ async function request<T>(
   } catch (err) {
     throw new ApiError(err instanceof Error ? err.message : 'Network error', 0);
   }
+  if (response.status === 204) return {} as T;
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
     const detail = typeof data.detail === 'string' ? data.detail : `Request failed (${response.status})`;
@@ -310,6 +311,11 @@ export const api = {
     body: { id?: string; body: string; nearby_user_ids: string[]; ttl_ms?: number },
   ) => request<NearbyBroadcastRow>('/nearby/broadcasts', { method: 'POST', token, body }),
   listNearbyBroadcasts: (token: string) => request<NearbyBroadcastRow[]>('/nearby/broadcasts', { token }),
+  deleteNearbyBroadcast: (token: string, broadcastId: string) =>
+    request<Record<string, never>>(`/nearby/broadcasts/${encodeURIComponent(broadcastId)}`, {
+      method: 'DELETE',
+      token,
+    }),
 };
 
 export function wsUrl(): string {

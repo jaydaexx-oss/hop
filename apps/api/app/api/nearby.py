@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from sqlmodel import Session, col, select
 
 from app.blocks import assert_contact_allowed, is_blocked
@@ -90,6 +90,8 @@ def list_broadcasts(
         else []
     )
     for row in (*authored, *delivered):
+        if row.deleted_at is not None:
+            continue
         if row.expires_at <= now:
             continue
         if row.author_id != user.id and is_blocked(session, user.id, row.author_id):
@@ -97,3 +99,21 @@ def list_broadcasts(
         by_id[row.id] = row
     visible = sorted(by_id.values(), key=lambda item: item.created_at, reverse=True)
     return [_out(row) for row in visible]
+
+
+@router.delete("/broadcasts/{broadcast_id}", status_code=204)
+def delete_broadcast(
+    broadcast_id: str,
+    session: Session = Depends(get_session),
+    user: User = Depends(get_current_user),
+) -> Response:
+    """Author-only soft-delete. Private reply conversations are not touched."""
+    row = session.get(NearbyBroadcast, broadcast_id)
+    if row is None or row.deleted_at is not None:
+        raise HTTPException(status_code=404, detail="Broadcast not found")
+    if row.author_id != user.id:
+        raise HTTPException(status_code=403, detail="Only the author can delete this broadcast")
+    row.deleted_at = utcnow()
+    session.add(row)
+    session.commit()
+    return Response(status_code=204)

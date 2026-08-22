@@ -12,6 +12,8 @@ import {
   applyPersistedBroadcasts,
   applyServerBroadcastAck,
   discoveryErrorKeepsLocalFeed,
+  removeBroadcastFromFeed,
+  restoreBroadcastFeedAfterFailedDelete,
 } from './broadcastFeedSync';
 import { loadBroadcastFeed, saveBroadcastFeed } from './broadcastStore';
 
@@ -101,5 +103,73 @@ describe('broadcast feed persistence', () => {
   it('stale empty disk read does not overwrite a just-sent in-memory post', () => {
     const mine = sent();
     expect(applyPersistedBroadcasts([mine], [], CTX)).toEqual([mine]);
+  });
+
+  it("drops the author's own internet copy when GET no longer returns it", () => {
+    const mine = sent({ source: 'internet' });
+    expect(applyBroadcastDiscovery([mine], [], CTX)).toEqual([]);
+  });
+
+  it('empty GET drops previously known remote posts but not local authored or BLE-only', () => {
+    const mine = sent();
+    const remote = createNearbyBroadcast({
+      authorId: 'blake',
+      displayName: 'blake',
+      body: 'Anyone here?',
+      now: NOW,
+      id: '22222222-2222-4222-8222-222222222222',
+      source: 'internet',
+    });
+    const bleOnly = createNearbyBroadcast({
+      authorId: 'drew',
+      displayName: 'drew',
+      body: 'BLE only',
+      now: NOW,
+      id: '66666666-6666-4666-8666-666666666666',
+      source: 'bluetooth',
+    });
+    const next = applyBroadcastDiscovery([mine, remote, bleOnly], [], CTX);
+    expect(next.map((row) => row.id)).toEqual([mine.id, bleOnly.id]);
+  });
+
+  it('GET omitting one received id drops only that remote post', () => {
+    const mine = sent();
+    const keep = createNearbyBroadcast({
+      authorId: 'blake',
+      displayName: 'blake',
+      body: 'keep me',
+      now: NOW,
+      id: '77777777-7777-4777-8777-777777777777',
+      source: 'internet',
+    });
+    const gone = createNearbyBroadcast({
+      authorId: 'drew',
+      displayName: 'drew',
+      body: 'deleted elsewhere',
+      now: NOW,
+      id: '88888888-8888-4888-8888-888888888888',
+      source: 'internet',
+    });
+    const next = applyBroadcastDiscovery([mine, keep, gone], [keep, mine], CTX);
+    expect(next.map((row) => row.id)).toEqual([mine.id, keep.id]);
+  });
+
+  it('rolls the author post back when delete fails', () => {
+    const mine = sent();
+    const peer = createNearbyBroadcast({
+      authorId: 'blake',
+      displayName: 'blake',
+      body: 'Anyone here?',
+      now: NOW,
+      id: '22222222-2222-4222-8222-222222222222',
+      source: 'bluetooth',
+    });
+    const snapshot = [mine, peer];
+    const optimistic = removeBroadcastFromFeed(snapshot, mine.id);
+    expect(optimistic.map((row) => row.id)).toEqual([peer.id]);
+    const restored = restoreBroadcastFeedAfterFailedDelete(optimistic, snapshot, CTX);
+    expect(restored).toHaveLength(2);
+    expect(restored.map((row) => row.id).sort()).toEqual([mine.id, peer.id].sort());
+    expect(restored.find((row) => row.id === mine.id)?.body).toBe(mine.body);
   });
 });

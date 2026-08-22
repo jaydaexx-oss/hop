@@ -3,6 +3,7 @@ import { HOP_USERNAME_RE } from "./hopQr.js";
 import { createMessageId } from "./ids.js";
 
 export const NEARBY_BROADCAST_TYPE = "nearby_broadcast" as const;
+export const NEARBY_BROADCAST_RETRACT_TYPE = "nearby_broadcast_retract" as const;
 export const NEARBY_BROADCAST_MAX_CHARS = 280;
 export const NEARBY_BROADCAST_TTL_MS = 24 * 60 * 60 * 1000;
 export const NEARBY_BROADCAST_MIN_TTL_MS = 60_000;
@@ -31,6 +32,19 @@ export interface NearbyBroadcastWire {
   created_at: string;
   expires_at: string;
   ttl_ms: number;
+}
+
+/** BLE retract for a previously fanout nearby post. Distinct from private chat. */
+export interface NearbyBroadcastRetract {
+  id: string;
+  authorId: string;
+}
+
+export interface NearbyBroadcastRetractWire {
+  v: 1;
+  type: typeof NEARBY_BROADCAST_RETRACT_TYPE;
+  id: string;
+  author_id: string;
 }
 
 export type BroadcastReplyPlan =
@@ -185,6 +199,42 @@ export function decodeNearbyBroadcastFrame(bytes: Uint8Array, source: NearbyBroa
   }
 }
 
+export function toNearbyBroadcastRetractWire(retract: NearbyBroadcastRetract): NearbyBroadcastRetractWire {
+  return {
+    v: 1,
+    type: NEARBY_BROADCAST_RETRACT_TYPE,
+    id: retract.id,
+    author_id: retract.authorId,
+  };
+}
+
+export function encodeNearbyBroadcastRetractFrame(retract: NearbyBroadcastRetract): Uint8Array {
+  return utf8ToBytes(JSON.stringify(toNearbyBroadcastRetractWire(retract)));
+}
+
+export function parseNearbyBroadcastRetractWire(data: unknown): NearbyBroadcastRetract | null {
+  if (!data || typeof data !== "object") return null;
+  const row = data as Record<string, unknown>;
+  if (row.v !== 1 || row.type !== NEARBY_BROADCAST_RETRACT_TYPE) return null;
+  if ("encrypted_payload" in row || "ciphertext" in row || "alg" in row) return null;
+  for (const key of Object.keys(row)) {
+    if (FORBIDDEN_FEED_KEYS.test(key)) return null;
+  }
+  const id = boundedId(row.id);
+  const authorId = boundedId(row.author_id);
+  if (!id || !authorId) return null;
+  return { id, authorId };
+}
+
+export function decodeNearbyBroadcastRetractFrame(bytes: Uint8Array): NearbyBroadcastRetract | null {
+  if (bytes.length === 0 || bytes.length > 8_192) return null;
+  try {
+    return parseNearbyBroadcastRetractWire(JSON.parse(bytesToUtf8(bytes)));
+  } catch {
+    return null;
+  }
+}
+
 export function broadcastVisibleInFeed(
   post: NearbyBroadcast,
   input: { selfId: string | null; blockedIds: Iterable<string>; now?: number },
@@ -289,6 +339,7 @@ export function nearbyBroadcastFeedHasSecrets(post: NearbyBroadcast): boolean {
 
 export class NearbyBroadcastFeed {
   private posts: NearbyBroadcast[] = [];
+  private readonly deletedIds = new Set<string>();
 
   constructor(
     private readonly selfId: () => string | null,
@@ -296,12 +347,43 @@ export class NearbyBroadcastFeed {
     private readonly now: () => number = () => Date.now(),
   ) {}
 
+  private feedCtx(): { selfId: string | null; blockedIds: Iterable<string>; now: number } {
+    return { selfId: this.selfId(), blockedIds: this.blockedIds(), now: this.now() };
+  }
+
+  private withoutDeleted(posts: NearbyBroadcast[]): NearbyBroadcast[] {
+    if (this.deletedIds.size === 0) return posts;
+    return posts.filter((post) => !this.deletedIds.has(post.id));
+  }
+
   list(): NearbyBroadcast[] {
     this.posts = pruneExpiredBroadcasts(
-      this.posts.filter((post) => broadcastVisibleInFeed(post, { selfId: this.selfId(), blockedIds: this.blockedIds(), now: this.now() })),
+      this.withoutDeleted(
+        this.posts.filter((post) => broadcastVisibleInFeed(post, this.feedCtx())),
+      ),
       this.now(),
     );
     return [...this.posts];
+  }
+
+  remove(id: string): NearbyBroadcast[] {
+    this.deletedIds.add(id);
+    this.posts = this.posts.filter((post) => post.id !== id);
+    return this.list();
+  }
+
+  restore(post: NearbyBroadcast): NearbyBroadcast[] {
+    this.deletedIds.delete(post.id);
+    this.posts = mergeBroadcastFeed(this.posts, [post], this.feedCtx());
+    return this.list();
+  }
+
+  ingestRetract(retract: NearbyBroadcastRetract, claimedAuthorId?: string): boolean {
+    if (claimedAuthorId && retract.authorId !== claimedAuthorId) return false;
+    const existing = this.posts.find((post) => post.id === retract.id);
+    if (existing && existing.authorId !== retract.authorId) return false;
+    this.remove(retract.id);
+    return true;
   }
 
   post(input: { authorId: string; displayName: string; body: string; ttlMs?: number; id?: string }): NearbyBroadcast {
@@ -315,32 +397,21 @@ export class NearbyBroadcastFeed {
   }
 
   ingest(incoming: NearbyBroadcast, claimedAuthorId?: string): NearbyBroadcast | null {
+    if (this.deletedIds.has(incoming.id)) return null;
     if (claimedAuthorId && incoming.authorId !== claimedAuthorId) return null;
-    const next = mergeBroadcastFeed(this.posts, [{ ...incoming }], {
-      selfId: this.selfId(),
-      blockedIds: this.blockedIds(),
-      now: this.now(),
-    });
+    const next = mergeBroadcastFeed(this.posts, [{ ...incoming }], this.feedCtx());
     const accepted = next.find((row) => row.id === incoming.id) ?? null;
     this.posts = next;
     return accepted;
   }
 
   replaceAll(posts: NearbyBroadcast[]): NearbyBroadcast[] {
-    this.posts = mergeBroadcastFeed([], posts, {
-      selfId: this.selfId(),
-      blockedIds: this.blockedIds(),
-      now: this.now(),
-    });
+    this.posts = mergeBroadcastFeed([], this.withoutDeleted(posts), this.feedCtx());
     return this.list();
   }
 
   mergeIncoming(incoming: NearbyBroadcast[]): NearbyBroadcast[] {
-    this.posts = mergeBroadcastFeed(this.posts, incoming, {
-      selfId: this.selfId(),
-      blockedIds: this.blockedIds(),
-      now: this.now(),
-    });
+    this.posts = mergeBroadcastFeed(this.posts, this.withoutDeleted(incoming), this.feedCtx());
     return this.list();
   }
 

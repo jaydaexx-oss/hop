@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import {
+  Alert,
   FlatList,
   Keyboard,
   Pressable,
@@ -17,6 +18,7 @@ import {
   type NearbyBroadcast,
 } from '@hop/protocol';
 
+import { ActionSheet } from '@/components/ActionSheet';
 import { Avatar } from '@/components/Avatar';
 import { ComposerKeyboardScreen } from '@/components/ComposerKeyboardScreen';
 import { StatusBanner } from '@/components/StatusBanner';
@@ -35,11 +37,13 @@ function BroadcastCard({
   isOwn,
   colors,
   onReply,
+  onMenu,
 }: {
   item: NearbyBroadcast;
   isOwn: boolean;
   colors: (typeof Colors)['light'];
   onReply: () => void;
+  onMenu: () => void;
 }) {
   return (
     <Pressable
@@ -60,7 +64,18 @@ function BroadcastCard({
               </View>
             ) : null}
           </View>
-          <Text style={[styles.cardTime, { color: colors.muted }]}>{formatBroadcastTime(item.createdAt)}</Text>
+          <View style={styles.cardMetaRight}>
+            <Text style={[styles.cardTime, { color: colors.muted }]}>{formatBroadcastTime(item.createdAt)}</Text>
+            {isOwn ? (
+              <Pressable
+                onPress={onMenu}
+                hitSlop={10}
+                accessibilityLabel="Broadcast options"
+                accessibilityRole="button">
+                <Text style={[styles.menuDots, { color: colors.muted }]}>•••</Text>
+              </Pressable>
+            ) : null}
+          </View>
         </View>
         <Text style={styles.cardContent}>{item.body}</Text>
         {!isOwn ? (
@@ -83,10 +98,18 @@ export default function BroadcastScreen() {
   const colors = Colors[scheme];
   const router = useRouter();
   const { user, token } = useAuth();
-  const { posts, sendBroadcast, sending, error, blockedIds } = useBroadcast();
+  const { posts, sendBroadcast, deleteBroadcast, sending, error, blockedIds } = useBroadcast();
   const { cacheConversation, listCachedConversations, safety } = useOffline();
   const [input, setInput] = useState('');
   const [replyError, setReplyError] = useState<string | null>(null);
+  const [menuPost, setMenuPost] = useState<NearbyBroadcast | null>(null);
+
+  function confirmDelete(post: NearbyBroadcast) {
+    Alert.alert('Delete this broadcast?', undefined, [
+      { text: 'Cancel', style: 'cancel' },
+      { text: 'Delete', style: 'destructive', onPress: () => void deleteBroadcast(post.id) },
+    ]);
+  }
 
   async function handleReply(item: NearbyBroadcast) {
     if (!user) return;
@@ -177,6 +200,7 @@ export default function BroadcastScreen() {
               isOwn={isOwnBroadcast(item, user?.id)}
               colors={colors}
               onReply={() => void handleReply(item)}
+              onMenu={() => setMenuPost(item)}
             />
           )}
           contentContainerStyle={styles.list}
@@ -203,6 +227,24 @@ export default function BroadcastScreen() {
           </Pressable>
         ) : null}
       </SafeAreaView>
+      <ActionSheet
+        visible={menuPost != null && isOwnBroadcast(menuPost, user?.id)}
+        onDismiss={() => setMenuPost(null)}
+        title="Broadcast"
+        message={menuPost?.body}
+        avatarInitials={menuPost?.displayName?.slice(0, 2).toUpperCase() ?? 'YO'}
+        avatarUserId={menuPost?.authorId}
+        avatarColor={colors.tint}
+        actions={[
+          {
+            label: 'Delete broadcast',
+            destructive: true,
+            onPress: () => {
+              if (menuPost && isOwnBroadcast(menuPost, user?.id)) confirmDelete(menuPost);
+            },
+          },
+        ]}
+      />
     </ComposerKeyboardScreen>
   );
 }
@@ -236,7 +278,14 @@ const styles = StyleSheet.create({
   cardName: { fontSize: 13, fontWeight: '600' },
   ownBadge: { paddingHorizontal: 7, paddingVertical: 2, borderRadius: 8 },
   ownBadgeText: { fontSize: 10, fontWeight: '600' },
+  cardMetaRight: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: 8,
+    backgroundColor: 'transparent',
+  },
   cardTime: { fontSize: 11 },
+  menuDots: { fontSize: 16, fontWeight: '700', letterSpacing: 1 },
   cardContent: { fontSize: 14, lineHeight: 21 },
   replyHint: { flexDirection: 'row', alignItems: 'center', gap: 4, marginTop: 7, backgroundColor: 'transparent' },
   replyHintText: { fontSize: 11, fontWeight: '500' },

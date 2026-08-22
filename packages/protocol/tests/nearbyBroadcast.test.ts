@@ -2,19 +2,23 @@ import { describe, expect, it } from "vitest";
 
 import { decodeEnvelope, encodeEnvelope } from "../src/bleCodec.js";
 import {
+  NEARBY_BROADCAST_RETRACT_TYPE,
   NEARBY_BROADCAST_TTL_MS,
   NEARBY_BROADCAST_TYPE,
   NearbyBroadcastFeed,
   adoptServerBroadcast,
   createNearbyBroadcast,
   decodeNearbyBroadcastFrame,
+  decodeNearbyBroadcastRetractFrame,
   encodeNearbyBroadcastFrame,
+  encodeNearbyBroadcastRetractFrame,
   formatBroadcastTime,
   isOwnBroadcast,
   mergeBroadcastFeed,
   nearbyBroadcastFanoutTargets,
   nearbyBroadcastFeedHasSecrets,
   parseBroadcastTimestamp,
+  parseNearbyBroadcastRetractWire,
   parseNearbyBroadcastWire,
   planBroadcastReply,
   pruneExpiredBroadcasts,
@@ -208,5 +212,38 @@ describe("nearby broadcast protocol", () => {
     const spoof = post({ authorId: "attacker", displayName: "blake" });
     expect(feed.ingest(spoof, "blake")).toBeNull();
     expect(feed.list()).toEqual([]);
+  });
+
+  it("retracts a received post and refuses a spoofed retract author", () => {
+    const created = post({ authorId: "blake", displayName: "blake" });
+    const feed = new NearbyBroadcastFeed(() => "maya");
+    feed.ingest(created, "blake");
+    expect(feed.list()).toHaveLength(1);
+    const frame = encodeNearbyBroadcastRetractFrame({ id: created.id, authorId: "blake" });
+    expect(decodeNearbyBroadcastFrame(frame)).toBeNull();
+    expect(decodeNearbyBroadcastRetractFrame(frame)).toEqual({ id: created.id, authorId: "blake" });
+    expect(feed.ingestRetract({ id: created.id, authorId: "attacker" }, "blake")).toBe(false);
+    expect(feed.list()).toHaveLength(1);
+    expect(feed.ingestRetract({ id: created.id, authorId: "blake" }, "blake")).toBe(true);
+    expect(feed.list()).toEqual([]);
+    expect(feed.ingest(created, "blake")).toBeNull();
+    expect(
+      parseNearbyBroadcastRetractWire({
+        v: 1,
+        type: NEARBY_BROADCAST_RETRACT_TYPE,
+        id: created.id,
+        author_id: "blake",
+        identity_public_key: "leak",
+      }),
+    ).toBeNull();
+  });
+
+  it("restore after a failed delete puts the author's post back", () => {
+    const mine = post({ authorId: "maya", displayName: "maya" });
+    const feed = new NearbyBroadcastFeed(() => "maya");
+    feed.ingest(mine);
+    feed.remove(mine.id);
+    expect(feed.list()).toEqual([]);
+    expect(feed.restore(mine).map((row) => row.id)).toEqual([mine.id]);
   });
 });

@@ -203,6 +203,7 @@ class NearbyBroadcast(SQLModel, table=True):
     created_at: datetime = Field(default_factory=utcnow)
     expires_at: datetime
     ttl_ms: int
+    deleted_at: Optional[datetime] = None
 
 
 class NearbyBroadcastDelivery(SQLModel, table=True):

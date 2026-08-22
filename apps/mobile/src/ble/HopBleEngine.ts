@@ -18,9 +18,11 @@ import {
   decodeEnvelope,
   decodeHandshakeAnnouncement,
   decodeNearbyBroadcastFrame,
+  decodeNearbyBroadcastRetractFrame,
   displayNameFromAdvertisement,
   encodeEnvelope,
   encodeNearbyBroadcastFrame,
+  encodeNearbyBroadcastRetractFrame,
   encodeAuthenticatedHandshake,
   encodeHandshakeAnnouncement,
   encodeAuthenticatedBleAck,
@@ -49,6 +51,7 @@ import {
   type BleSessionOptions,
   type EncryptedEnvelope,
   type NearbyBroadcast,
+  type NearbyBroadcastRetract,
   type SendResult,
 } from '@hop/protocol';
 
@@ -135,6 +138,7 @@ export class HopBleEngine implements BleLink {
     (envelope: EncryptedEnvelope, from: BlePeer) => void | boolean | Promise<void | boolean>
   >();
   private readonly nearbyBroadcastListeners = new Set<(post: NearbyBroadcast, from: BlePeer) => void>();
+  private readonly nearbyBroadcastRetractListeners = new Set<(retract: NearbyBroadcastRetract, from: BlePeer) => void>();
   private readonly peerListeners = new Set<() => void>();
   private readonly connectionListeners = new Set<(deviceId: string, connected: boolean) => void>();
   private readonly processed = new ProcessedIdSet();
@@ -542,6 +546,14 @@ export class HopBleEngine implements BleLink {
   }
 
   async sendNearbyBroadcast(deviceId: string, post: NearbyBroadcast): Promise<SendResult> {
+    return this.writeNearbyBroadcastBytes(deviceId, encodeNearbyBroadcastFrame(post));
+  }
+
+  async sendNearbyBroadcastRetract(deviceId: string, retract: NearbyBroadcastRetract): Promise<SendResult> {
+    return this.writeNearbyBroadcastBytes(deviceId, encodeNearbyBroadcastRetractFrame(retract));
+  }
+
+  private async writeNearbyBroadcastBytes(deviceId: string, bytes: Uint8Array): Promise<SendResult> {
     const native = this.native;
     if (!native) {
       return { ok: false, transport: 'bluetooth', error: 'Native BLE module is unavailable.' };
@@ -558,7 +570,6 @@ export class HopBleEngine implements BleLink {
       return { ok: false, transport: 'bluetooth', error: 'Secure session is not established' };
     }
     this.touchSession(deviceId);
-    const bytes = encodeNearbyBroadcastFrame(post);
     try {
       try {
         await this.writeChunks(native, deviceId, bytes, BLE_DEFAULT_CHUNK_BYTES);
@@ -585,6 +596,11 @@ export class HopBleEngine implements BleLink {
   subscribeNearbyBroadcast(handler: (post: NearbyBroadcast, from: BlePeer) => void): () => void {
     this.nearbyBroadcastListeners.add(handler);
     return () => this.nearbyBroadcastListeners.delete(handler);
+  }
+
+  subscribeNearbyBroadcastRetract(handler: (retract: NearbyBroadcastRetract, from: BlePeer) => void): () => void {
+    this.nearbyBroadcastRetractListeners.add(handler);
+    return () => this.nearbyBroadcastRetractListeners.delete(handler);
   }
 
   onPeersChanged(handler: () => void): () => void {
@@ -849,6 +865,27 @@ export class HopBleEngine implements BleLink {
     }
     const complete = assembler.push(frame);
     if (!complete) return;
+    const retract = decodeNearbyBroadcastRetractFrame(complete);
+    if (retract) {
+      this.touchSession(centralId);
+      const peer: BlePeer = this.peers.get(centralId) ?? {
+        deviceId: centralId,
+        displayName: 'HOP user',
+        lastSeenAt: Date.now(),
+      };
+      if (peer.userId && retract.authorId !== peer.userId) return;
+      if (this.processed.has(`retract:${retract.id}`)) return;
+      this.processed.remember(`retract:${retract.id}`);
+      this.processed.remember(retract.id);
+      for (const handler of this.nearbyBroadcastRetractListeners) {
+        try {
+          handler(retract, peer);
+        } catch {
+          /* retract must not break inbox */
+        }
+      }
+      return;
+    }
     const broadcast = decodeNearbyBroadcastFrame(complete, 'bluetooth');
     if (broadcast) {
       this.touchSession(centralId);

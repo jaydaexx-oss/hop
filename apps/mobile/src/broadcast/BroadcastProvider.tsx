@@ -10,6 +10,7 @@ import {
 } from 'react';
 import {
   NearbyBroadcastFeed,
+  isOwnBroadcast,
   nearbyBroadcastFanoutTargets,
   parseNearbyBroadcastWire,
   type NearbyBroadcast,
@@ -35,6 +36,7 @@ type BroadcastContextValue = {
   sending: boolean;
   error: string | null;
   sendBroadcast: (body: string) => Promise<void>;
+  deleteBroadcast: (id: string) => Promise<void>;
   blockedIds: string[];
 };
 
@@ -141,11 +143,19 @@ export function BroadcastProvider({ children }: { children: ReactNode }) {
   }, [blockedIds]);
 
   useEffect(() => {
-    const off = engine.subscribeNearbyBroadcast((incoming, from) => {
+    const offPost = engine.subscribeNearbyBroadcast((incoming, from) => {
       const accepted = feedRef.current.ingest(incoming, from.userId);
       if (accepted) publish(feedRef.current.list());
     });
-    return off;
+    const offRetract = engine.subscribeNearbyBroadcastRetract((retract, from) => {
+      if (feedRef.current.ingestRetract(retract, from.userId)) {
+        publish(feedRef.current.list());
+      }
+    });
+    return () => {
+      offPost();
+      offRetract();
+    };
   }, [engine, publish]);
 
   const syncInternet = useCallback(async () => {
@@ -226,9 +236,51 @@ export function BroadcastProvider({ children }: { children: ReactNode }) {
     [engine, peers, publish, token, user],
   );
 
+  const deleteBroadcast = useCallback(
+    async (id: string) => {
+      if (!user) return;
+      const snapshot = feedRef.current.list();
+      const target = snapshot.find((post) => post.id === id);
+      if (!target || !isOwnBroadcast(target, user.id)) return;
+      setError(null);
+      feedRef.current.remove(id);
+      publish(feedRef.current.list());
+      try {
+        const targets = nearbyBroadcastFanoutTargets(
+          peers.map((peer) => ({
+            userId: peer.userId,
+            deviceId: peer.deviceId,
+            sessionEstablished: peer.encrypted,
+          })),
+          { selfId: user.id, blockedIds: blockedRef.current },
+        );
+        for (const peer of targets) {
+          await engine.sendNearbyBroadcastRetract(peer.deviceId, {
+            id,
+            authorId: user.id,
+          }).catch(() => undefined);
+        }
+        if (token) {
+          try {
+            await api.deleteNearbyBroadcast(token, id);
+          } catch (err) {
+            if (!(err instanceof ApiError && err.status === 404)) throw err;
+          }
+        } else if (target.source === 'internet') {
+          throw new Error('Could not delete broadcast');
+        }
+      } catch (err) {
+        feedRef.current.restore(target);
+        publish(feedRef.current.list());
+        setError(err instanceof Error ? err.message : 'Could not delete broadcast');
+      }
+    },
+    [engine, peers, publish, token, user],
+  );
+
   const value = useMemo(
-    () => ({ posts, sending, error, sendBroadcast, blockedIds }),
-    [blockedIds, error, posts, sendBroadcast, sending],
+    () => ({ posts, sending, error, sendBroadcast, deleteBroadcast, blockedIds }),
+    [blockedIds, deleteBroadcast, error, posts, sendBroadcast, sending],
   );
 
   return <BroadcastContext.Provider value={value}>{children}</BroadcastContext.Provider>;

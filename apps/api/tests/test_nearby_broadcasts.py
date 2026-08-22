@@ -93,3 +93,70 @@ def test_rejects_gps_and_device_fields(client: TestClient) -> None:
         headers=_headers(token),
     )
     assert rejected.status_code == 422
+
+
+def _boxed() -> dict:
+    import json
+
+    return {
+        "encrypted_payload": json.dumps(
+            {
+                "v": 1,
+                "alg": "crypto_box_xsalsa20poly1305",
+                "sender_pk": "pk",
+                "nonce": "nonce",
+                "ciphertext": "ct",
+            }
+        )
+    }
+
+
+def test_author_can_delete_broadcast_other_user_forbidden(client: TestClient) -> None:
+    author_token, _ = _auth(client, "delaut")
+    peer_token, peer_id = _auth(client, "delpee")
+    created = client.post(
+        "/nearby/broadcasts",
+        json={"body": "Take this down", "nearby_user_ids": [peer_id]},
+        headers=_headers(author_token),
+    )
+    assert created.status_code == 200
+    broadcast_id = created.json()["id"]
+
+    assert client.delete(f"/nearby/broadcasts/{broadcast_id}").status_code == 401
+    forbidden = client.delete(f"/nearby/broadcasts/{broadcast_id}", headers=_headers(peer_token))
+    assert forbidden.status_code == 403
+    assert client.get("/nearby/broadcasts", headers=_headers(peer_token)).json()[0]["id"] == broadcast_id
+
+    deleted = client.delete(f"/nearby/broadcasts/{broadcast_id}", headers=_headers(author_token))
+    assert deleted.status_code == 204
+    assert client.get("/nearby/broadcasts", headers=_headers(author_token)).json() == []
+    assert client.get("/nearby/broadcasts", headers=_headers(peer_token)).json() == []
+    assert client.delete(f"/nearby/broadcasts/{broadcast_id}", headers=_headers(author_token)).status_code == 404
+
+
+def test_delete_broadcast_leaves_private_reply_conversation(client: TestClient) -> None:
+    author_token, _ = _auth(client, "delhst")
+    peer_token, peer_id = _auth(client, "delrpt")
+    created = client.post(
+        "/nearby/broadcasts",
+        json={"body": "Anyone for coffee?", "nearby_user_ids": [peer_id]},
+        headers=_headers(author_token),
+    )
+    assert created.status_code == 200
+    convo = client.post("/conversations", json={"username": "delhst"}, headers=_headers(peer_token))
+    assert convo.status_code == 200
+    convo_id = convo.json()["id"]
+    sent = client.post(
+        f"/conversations/{convo_id}/messages",
+        json=_boxed(),
+        headers=_headers(peer_token),
+    )
+    assert sent.status_code == 200
+
+    deleted = client.delete(f"/nearby/broadcasts/{created.json()['id']}", headers=_headers(author_token))
+    assert deleted.status_code == 204
+    assert [row["id"] for row in client.get("/conversations", headers=_headers(peer_token)).json()] == [convo_id]
+    inbox = client.get(f"/conversations/{convo_id}/messages", headers=_headers(author_token))
+    assert inbox.status_code == 200
+    assert inbox.json()[0]["message_id"] == sent.json()["message_id"]
+    assert client.get("/nearby/broadcasts", headers=_headers(author_token)).json() == []
